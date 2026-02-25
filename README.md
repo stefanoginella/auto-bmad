@@ -81,6 +81,24 @@ Outputs a system message at session start listing the required BMAD plugins, so 
 
 ## Installation
 
+### From marketplace (recommended)
+
+```
+/plugin marketplace add stefanoginella/auto-bmad
+```
+
+Then install the plugin from the **Discover** tab:
+
+```
+/plugin
+```
+
+Or install directly:
+
+```
+/plugin install auto-bmad@auto-bmad-marketplace
+```
+
 ### As a local plugin (development)
 
 ```bash

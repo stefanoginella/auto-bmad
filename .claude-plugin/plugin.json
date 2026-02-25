@@ -4,7 +4,7 @@
   "description": "Automated (and opinionated) BMAD pipeline orchestration: plan, epic-start, story, and epic-end workflows with configurable safe-bash auto-approval",
   "author": {
     "name": "Stefano Ginella",
-    "email": "stefano@stefanoginella.com"
+    "url": "https://github.com/stefanoginella"
   },
   "license": "MIT",
   "keywords": ["bmad", "pipeline", "automation", "orchestration", "sdlc"]
