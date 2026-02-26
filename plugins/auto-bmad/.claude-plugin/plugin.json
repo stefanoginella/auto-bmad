@@ -1,6 +1,6 @@
 {
   "name": "auto-bmad",
-  "version": "0.1.0",
+  "version": "0.1.0.1",
   "description": "Automated and opinionated BMAD pipeline orchestration: plan, epic-start, story, and epic-end workflows with configurable safe-bash auto-approval, check https://github.com/stefanoginella/claude-code-plugins/blob/main/plugins/auto-bmad/README.md for details",
   "author": {
     "name": "Stefano Ginella"

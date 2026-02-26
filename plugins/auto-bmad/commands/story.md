@@ -138,7 +138,7 @@ Do not proceed and create a checkpoint if the Step 2 (Story Validate) hasn't bee
 
 ## Development
 
-4. **Story {{STORY_ID}} Develop**: `/bmad-bmm-dev-story {{STORY_FILE}} yolo — When implementing, if context7 MCP tools are available (resolve-library-id → query-docs), use them to look up current API patterns for libraries being used rather than relying on training data.`
+4. **Story {{STORY_ID}} Develop**: `/bmad-bmm-dev-story {{STORY_FILE}} yolo — When implementing, if context7 MCP tools are available (resolve-library-id → query-docs), use them to look up current API patterns for libraries being used rather than relying on training data. Update {{STORY_FILE}} when you're done.`
 
 5. **Story {{STORY_ID}} Frontend Polish**
    - **Skip if:** the story file's `ui_impact` field is explicitly `false`, or the field is absent and the story's acceptance criteria and tasks clearly involve no user-facing UI changes (coordinator reads `{{STORY_FILE}}` to check). Log "No frontend polish needed — backend-only story".
@@ -164,9 +164,9 @@ Do not proceed and create a checkpoint if the Step 2 (Story Validate) hasn't bee
 
 ## Code Reviews (iterative)
 
-11. **Story {{STORY_ID}} Code Review #1**: `/bmad-bmm-code-review {{STORY_FILE}} yolo - automatically fix all critical, high, medium, and low severity issues. In your Step Summary, report the exact count of issues found per severity level (critical/high/medium/low).`
-12. **Story {{STORY_ID}} Code Review #2**: `/bmad-bmm-code-review {{STORY_FILE}} yolo - automatically fix all critical, high, medium, and low severity issues. In your Step Summary, report the exact count of issues found per severity level (critical/high/medium/low).`
-13. **Story {{STORY_ID}} Code Review #3**: `/bmad-bmm-code-review {{STORY_FILE}} yolo - automatically fix all critical, high, medium, and low severity issues. Additionally, use any available security guidance tools to check for OWASP top 10 vulnerabilities, authentication/authorization flaws, and injection risks. In your Step Summary, report the exact count of issues found per severity level (critical/high/medium/low).`
+11. **Story {{STORY_ID}} Code Review #1**: `/bmad-bmm-code-review {{STORY_FILE}} yolo - automatically fix all critical, high, medium, and low severity issues. Update {{STORY_FILE}} when you're done. In your Step Summary, report the exact count of issues found per severity level (critical/high/medium/low).`
+12. **Story {{STORY_ID}} Code Review #2**: `/bmad-bmm-code-review {{STORY_FILE}} yolo - automatically fix all critical, high, medium, and low severity issues. Update {{STORY_FILE}} when you're done. In your Step Summary, report the exact count of issues found per severity level (critical/high/medium/low).`
+13. **Story {{STORY_ID}} Code Review #3**: `/bmad-bmm-code-review {{STORY_FILE}} yolo - automatically fix all critical, high, medium, and low severity issues. Additionally, use any available security guidance tools to check for OWASP top 10 vulnerabilities, authentication/authorization flaws, and injection risks. Update {{STORY_FILE}} when you're done. In your Step Summary, report the exact count of issues found per severity level (critical/high/medium/low).`
 
 ## Security Scan
 
