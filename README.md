@@ -36,6 +36,12 @@ Then install individual plugins from the **Discover** tab of `/plugin` or direct
 
 Got an idea for a plugin or improvement? Open an issue or submit a PR. Check [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for details.
 
+## ⚠️ Disclaimer
+
+- **Experimental software.** These plugins are provided as-is, with no guarantees of stability, correctness, or fitness for production use. Use at your own risk.
+- **Token usage.** Plugin operations can consume significant API tokens and credits. Pipelines involving multiple agents or long-running tasks may be especially costly. Monitor your usage.
+- **AI-generated output.** All content produced by these plugins is AI-generated. Always review outputs before acting on them or committing them to your project.
+
 ## 📄 License
 
 [MIT License](./LICENSE)
