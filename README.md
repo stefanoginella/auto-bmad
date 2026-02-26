@@ -1,7 +1,6 @@
 # 🧩 Claude Code Plugins
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin_Marketplace-blueviolet)](https://docs.anthropic.com/en/docs/claude-code)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE) [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin_Marketplace-blueviolet)](https://docs.anthropic.com/en/docs/claude-code)
 
 My collection of opinionated Claude Code plugins — built by a solo dev for solo devs.
 
