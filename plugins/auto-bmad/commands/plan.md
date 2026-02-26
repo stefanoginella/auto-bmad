@@ -296,6 +296,7 @@ Compile the report from the Step Summary sections collected from each agent. Use
 - **Artifacts credited**: list of existing artifacts that supplemented user input, or "none"
 - **Assumptions made**: key assumptions the pipeline proceeded with (from the assumption audit)
 - **Git start**: `{{START_COMMIT_HASH}}`
+- **Duration**: approximate wall-clock time from start to finish of the pipeline
 - **Pipeline result**: success | partial failure at step N
 - **Steps run**: N of 13 (M skipped — artifacts already existed)
 

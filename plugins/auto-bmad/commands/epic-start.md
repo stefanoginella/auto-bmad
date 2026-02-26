@@ -166,6 +166,7 @@ Compile the report from the Step Summary sections collected from each agent. Use
 ## Overview
 - **Epic**: {{EPIC_ID}} — [epic title from epics.md]
 - **Git start**: `{{START_COMMIT_HASH}}`
+- **Duration**: approximate wall-clock time from start to finish of the pipeline
 - **Pipeline result**: success | partial failure at step N
 - **Previous epic retro**: reviewed | no retro found | N/A (first epic)
 - **Baseline test count**: {{BASELINE_TEST_COUNT}}

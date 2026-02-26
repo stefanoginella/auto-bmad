@@ -212,6 +212,7 @@ Compile the report from the Step Summary sections collected from each agent. Use
 ## Overview
 - **Story file**: {{STORY_FILE}}
 - **Git start**: `{{START_COMMIT_HASH}}`
+- **Duration**: approximate wall-clock time from start to finish of the pipeline
 - **Pipeline result**: success | partial failure at step N
 - **Migrations**: list any Alembic migration files created (file path + what it does), or "None"
 
