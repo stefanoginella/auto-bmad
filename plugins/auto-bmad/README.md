@@ -6,6 +6,8 @@ Automated (and very opinionated) BMAD pipeline orchestration for Claude Code.
 
 Four sequential pipeline commands that drive and augment the full BMAD software development lifecycle — from planning through story delivery — plus a safe-bash auto-approval hook for frictionless autonomous execution. The pipelines augment the core BMAD workflow with additional non-BMAD steps for a more thorough development process: frontend design polish, semgrep security scanning, CLAUDE.md maintenance, and various readiness checks.
 
+> 👀 The pipelines are quite long and token hungry (the story pipeline alone can run for more than 90 minutes). Some steps might seem redundant, but I am satisfied with the code quality and consistency I get out of this. I recommend having a Claude Code Max x5 or x20 subscription to not hit limits mid-run.
+
 ## 🚀 Commands
 
 | Command | Description |
