@@ -1,8 +1,8 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "custom-claude-code-plugins",
-  "version": "1.0.0",
-  "description": "Automated and opinionated BMAD pipeline orchestration plugin for Claude Code",
+  "version": "1.0.1",
+  "description": "Collection of opinionated Claude Code plugins — built by a solo dev for solo devs. Check check https://github.com/stefanoginella/claude-code-plugins/ for details.",
   "owner": {
     "name": "Stefano Ginella",
     "email": "stefano+ccplugins@stefanoginella.com"
@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "auto-bmad",
-      "description": "Automated (and opinionated) BMAD pipeline orchestration: plan, epic-start, story, and epic-end workflows with configurable safe-bash auto-approval, check https://github.com/stefanoginella/claude-code-plugins/ for details",
+      "description": "Automated and opinionated BMAD pipeline orchestration: plan, epic-start, story, and epic-end workflows with configurable safe-bash auto-approval, check https://github.com/stefanoginella/claude-code-plugins/blob/main/plugins/auto-bmad/README.md for details",
       "source": "./plugins/auto-bmad",
       "category": "development"
     }
