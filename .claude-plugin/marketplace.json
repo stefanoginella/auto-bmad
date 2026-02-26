@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claude-code-plugins",
+  "name": "custom-cc-plugins",
   "version": "1.0.0",
   "description": "Automated and opinionated BMAD pipeline orchestration plugin for Claude Code",
   "owner": {
