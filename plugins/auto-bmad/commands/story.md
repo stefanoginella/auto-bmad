@@ -1,5 +1,5 @@
 ---
-name: 'story'
+name: 'auto-bmad-story'
 description: 'Develop a full BMAD story from start to finish using sequential agents'
 ---
 

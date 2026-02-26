@@ -1,5 +1,5 @@
 ---
-name: 'epic-start'
+name: 'auto-bmad-epic-start'
 description: 'Prepare and start a new epic: resolve previous retro actions, establish baseline, and plan'
 ---
 

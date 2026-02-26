@@ -5,8 +5,7 @@
   "author": {
     "name": "Stefano Ginella"
   },
-  "homepage": "https://github.com/stefanoginella/auto-bmad",
-  "repository": "https://github.com/stefanoginella/auto-bmad.git",
+  "homepage": "https://github.com/stefanoginella/claude-code-plugins/blob/main/plugins/auto-bmad/README.md",
   "license": "MIT",
   "keywords": ["bmad", "pipeline", "automation", "orchestration", "sdlc"]
 }

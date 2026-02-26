@@ -1,5 +1,5 @@
 ---
-name: 'epic-end'
+name: 'auto-bmad-epic-end'
 description: 'Close an epic: aggregate story data, run retrospective, traceability gate, and prepare for next epic'
 ---
 

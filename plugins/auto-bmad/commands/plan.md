@@ -1,5 +1,5 @@
 ---
-name: 'plan'
+name: 'auto-bmad-plan'
 description: 'Run the full BMAD pre-implementation pipeline: analysis, planning, solutioning, and sprint setup'
 ---
 
