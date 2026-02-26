@@ -17,6 +17,10 @@ Read `_bmad/bmm/config.yaml` and `_bmad/tea/config.yaml` and set the following v
 
 All paths in this command that reference BMAD output directories MUST use these variables — never hardcode `_bmad-output` paths.
 
+# Load Project Context
+
+Read `{{output_folder}}/project-context.md` if it exists. This gives you general context about the project — its purpose, stack, conventions, and current state. Use this context to make informed decisions throughout the pipeline.
+
 # Detect Epic Number
 
 An epic number is a single integer identifying the epic (e.g., `1`, `2`, `3`).

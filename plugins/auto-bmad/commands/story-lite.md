@@ -17,6 +17,10 @@ Read `_bmad/bmm/config.yaml` and `_bmad/tea/config.yaml` and set the following v
 
 All paths in this command that reference BMAD output directories MUST use these variables — never hardcode `_bmad-output` paths.
 
+# Load Project Context
+
+Read `{{output_folder}}/project-context.md` if it exists. This gives you general context about the project — its purpose, stack, conventions, and current state. Use this context to make informed decisions throughout the pipeline.
+
 # Detect Story ID
 
 A story ID is composed by exactly 2 numbers: the epic number and the story number within that epic, separated by a dash, a dot, or a space. For example, "1-1" would be the first story in the first epic, "2-3" would be the third story in the second epic, and so on. A story ID can also be inferred from the path name if a path is provided when launching the workflow (e.g., `{{implementation_artifacts}}/1-2-authentication-system.yaml` would set the story ID to "1-2").
