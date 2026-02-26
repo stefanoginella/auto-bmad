@@ -29,7 +29,7 @@ ELSE ask to provide a epic-story number to identify the story to work on and set
 
 # Lite Story Pipeline
 
-Run the BMAD story pipeline for story {{STORY_ID}} as a minimal sequence of BMAD slash commands — no orchestration overhead, no reports, no git operations. For testing BMAD workflows.
+Run the BMAD story pipeline for story {{STORY_ID}} as a minimal sequence of BMAD slash commands — lightweight orchestration with git safety, no reports.
 
 Each step MUST run in its own **foreground Task tool call** (subagent_type: "general-purpose") so that each agent gets a fresh context window.
 
@@ -39,7 +39,13 @@ Each step MUST run in its own **foreground Task tool call** (subagent_type: "gen
 - **DO NOT** launch multiple Task calls simultaneously. Wait for each to return before launching the next.
 - **DO NOT** execute any step yourself — always delegate to a Task agent.
 
-**Retry policy:** If a step fails, retry it **once**. If the retry also fails, stop the pipeline and report to the user which step failed and why.
+**Retry policy:** If a step fails, run `git reset --hard HEAD` to discard its partial changes, then retry **once**. If the retry also fails, stop the pipeline and tell the user:
+- Which step failed and why
+- Recovery commands: `git reset --hard {{START_COMMIT_HASH}}` to roll back the entire pipeline, or `git reset --hard HEAD` to retry the failed step.
+
+## Pre-flight
+
+Record the starting git commit hash as {{START_COMMIT_HASH}}.
 
 ## Story File Path Resolution
 
@@ -47,7 +53,7 @@ After step 1 (Create) succeeds, glob `{{implementation_artifacts}}/{{STORY_ID}}-
 
 # Pipeline Steps
 
-After each step completes, print a 1-line progress update: `Step N/12: <step-name> — <status>`
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/12 <step-name> - done"` and prints a 1-line progress update: `Step N/12: <step-name> — <status>`
 
 ## Story Creation & Validation
 
@@ -55,52 +61,78 @@ After each step completes, print a 1-line progress update: `Step N/12: <step-nam
    - **Skip if:** a story file for {{STORY_ID}} already exists in `{{implementation_artifacts}}/` (glob for `{{STORY_ID}}-*.md`). Log "Story file already exists" with the file path. Set `{{STORY_FILE}}` to the existing file path.
    - **Task prompt:** `/bmad-bmm-create-story story {{STORY_ID}} yolo`
 
-2. **Story {{STORY_ID}} Validate** *(always runs — never skip)*
+2. **Story {{STORY_ID}} Validate**
    - **Task prompt:** `/bmad-bmm-create-story validate story {{STORY_ID}} yolo — fix all issues, recommendations and optimizations.`
 
 ## Test-First
 
-3. **Story {{STORY_ID}} ATDD** *(always runs — never skip)*
+3. **Story {{STORY_ID}} ATDD**
    - **Task prompt:** `/bmad-tea-testarch-atdd {{STORY_FILE}} yolo`
 
 ## Development
 
-4. **Story {{STORY_ID}} Develop** *(always runs — never skip)*
+4. **Story {{STORY_ID}} Develop**
    - **Task prompt:** `/bmad-bmm-dev-story {{STORY_FILE}} yolo`
-
-## NFR Gate
-
-5. **Story {{STORY_ID}} NFR** *(always runs — never skip)*
-   - **Task prompt:** `/bmad-tea-testarch-nfr {{STORY_FILE}} yolo`
 
 ## Code Reviews
 
-6. **Story {{STORY_ID}} Code Review #1** *(always runs — never skip)*
+5. **Story {{STORY_ID}} Code Review #1**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues.`
 
-7. **Story {{STORY_ID}} Code Review #2** *(always runs — never skip)*
+6. **Story {{STORY_ID}} Code Review #2**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues.`
 
-8. **Story {{STORY_ID}} Code Review #3** *(always runs — never skip)*
+7. **Story {{STORY_ID}} Code Review #3**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues.`
+
+## NFR Gate
+
+8. **Story {{STORY_ID}} NFR**
+   - **Task prompt:** `/bmad-tea-testarch-nfr {{STORY_FILE}} yolo`
 
 ## E2E Tests
 
 9. **Story {{STORY_ID}} E2E**
-   - **Skip if:** the story file's `ui_impact` field is explicitly `false`, or the field is absent and the story's acceptance criteria and tasks clearly involve no user-facing UI changes (coordinator reads `{{STORY_FILE}}` to check). Log "No E2E tests needed — backend-only story".
    - **Task prompt:** `/bmad-bmm-qa-generate-e2e-tests {{STORY_FILE}} yolo`
 
 ## Traceability & Test Automation
 
-10. **Story {{STORY_ID}} Trace** *(always runs — never skip)*
-    - **Task prompt:** `/bmad-tea-testarch-trace {{STORY_FILE}} yolo`
+10. **Story {{STORY_ID}} Trace**
+   - **Task prompt:** `/bmad-tea-testarch-trace {{STORY_FILE}} yolo`
 
 11. **Story {{STORY_ID}} Test Automate**
-    - **Skip if:** step 10 (Trace) did NOT report any uncovered acceptance criteria. Log "All ACs covered — no test automation needed".
-    - **Task prompt:** `/bmad-tea-testarch-automate {{STORY_FILE}} yolo`
+   - **Task prompt:** `/bmad-tea-testarch-automate {{STORY_FILE}} yolo`
 
-12. **Story {{STORY_ID}} Test Review** *(always runs — never skip)*
-    - **Task prompt:** `/bmad-tea-testarch-test-review {{STORY_FILE}} yolo`
+12. **Story {{STORY_ID}} Test Review**
+   - **Task prompt:** `/bmad-tea-testarch-test-review {{STORY_FILE}} yolo`
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Read {{STORY_FILE}} to determine the story type and what was built, then commit:
+
+```
+git add -A && git commit -m "<type>({{STORY_ID}}): <one-line summary>
+
+<2-5 line summary or list of what was implemented>"
+```
+
+Derive `<type>` from the story using this table (default to `feat` if ambiguous):
+
+| Type | When to use |
+|------|------------|
+| `feat` | New user-facing feature or capability |
+| `fix` | Bug fix |
+| `refactor` | Code restructuring, no behavior change |
+| `perf` | Performance improvement |
+| `chore` | Dependencies, configs, tooling, maintenance |
+| `docs` | Documentation only |
+| `test` | Tests only, no production code |
+| `style` | Formatting, whitespace, no logic change |
+| `ci` | CI/CD pipeline changes |
+| `build` | Build system or external dependency changes |
+
+The one-line summary should describe the user-facing outcome, not "story complete".
 
 # Done
 
