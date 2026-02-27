@@ -23,7 +23,7 @@ Read `{{output_folder}}/project-context.md` if it exists. This gives you general
 
 # Lite Pre-Implementation Pipeline
 
-Run the BMAD pre-implementation lifecycle as a minimal sequence of BMAD slash commands — no orchestration overhead, no reports, no git operations. For testing BMAD workflows.
+Run the BMAD pre-implementation lifecycle as a minimal sequence of BMAD slash commands — lightweight orchestration with git safety.
 
 Each step MUST run in its own **foreground Task tool call** (subagent_type: "general-purpose") so that each agent gets a fresh context window.
 
@@ -40,7 +40,9 @@ The user MUST provide input alongside the command — a product idea, a descript
 - **DO NOT** launch multiple Task calls simultaneously. Wait for each to return before launching the next.
 - **DO NOT** execute any step, fix, or implement new code yourself — always delegate to a Task agent.
 
-**Retry policy:** If a step fails, retry it **once**. If the retry also fails, stop the pipeline and report to the user which step failed and why.
+**Retry policy:** If a step fails, run `git reset --hard HEAD` to discard its partial changes, then retry **once**. If the retry also fails, stop the pipeline and tell the user:
+- Which step failed and why
+- Recovery commands: `git reset --hard {{START_COMMIT_HASH}}` to roll back the entire pipeline, or `git reset --hard HEAD` to retry the failed step.
 
 ## Artifact Scan
 
@@ -69,7 +71,7 @@ Before running any steps, record:
 
 # Pipeline Steps
 
-After each step completes, print a 1-line progress update: `Step N/11: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip(plan): step N/11 <step-name> - done"` and prints a 1-line progress update: `Step N/11: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
 
 ## Phase 1: Analysis
 
@@ -109,17 +111,23 @@ After each step completes, print a 1-line progress update: `Step N/11: <step-nam
    - **Skip if:** epics already exist. Log "Epics already exist".
    - **Task prompt:** `/bmad-bmm-create-epics-and-stories yolo`
 
-9. **Check Implementation Readiness** *(always runs — never skip)*
+9. **Check Implementation Readiness**
    - **Task prompt:** `/bmad-bmm-check-implementation-readiness yolo — automatically fix all issues.`
 
 ## Phase 4: Sprint Setup
 
-10. **Generate Project Context** *(always runs — never skip)*
+10. **Generate Project Context**
     - **Task prompt:** `/bmad-bmm-generate-project-context yolo`
 
 11. **Sprint Planning**
     - **Skip if:** sprint-status.yaml already exists. Log "Sprint plan already exists".
     - **Task prompt:** `/bmad-bmm-sprint-planning yolo`
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Commit with: `git add -A && git commit -m "chore: BMAD plan — pre-implementation pipeline complete"`
+3. Record the final git commit hash and print it to the user.
 
 # Pipeline Report
 

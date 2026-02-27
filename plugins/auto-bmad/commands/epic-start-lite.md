@@ -31,7 +31,7 @@ ELSE ask the user to provide the epic number to start and set {{EPIC_ID}} to the
 
 # Lite Epic Start Pipeline
 
-Prepare epic {{EPIC_ID}} with a single BMAD slash command — epic-level test design. No orchestration overhead, no reports, no git operations. For testing BMAD workflows.
+Prepare epic {{EPIC_ID}} with a single BMAD slash command — epic-level test design. Lightweight orchestration with git safety.
 
 The step MUST run in its own **foreground Task tool call** (subagent_type: "general-purpose") so that the agent gets a fresh context window.
 
@@ -40,7 +40,9 @@ The step MUST run in its own **foreground Task tool call** (subagent_type: "gene
 - **DO NOT** use TeamCreate, SendMessage, TaskOutput, TaskCreate, or TaskList.
 - **DO NOT** execute any step, fix, or implement new code yourself — always delegate to a Task agent.
 
-**Retry policy:** If the step fails, retry it **once**. If the retry also fails, stop and report to the user.
+**Retry policy:** If the step fails, run `git reset --hard HEAD` to discard its partial changes, then retry **once**. If the retry also fails, stop the pipeline and tell the user:
+- Which step failed and why
+- Recovery commands: `git reset --hard {{START_COMMIT_HASH}}` to roll back the entire pipeline, or `git reset --hard HEAD` to retry the failed step.
 
 # Pre-flight
 
@@ -50,10 +52,16 @@ Before running any steps, record:
 
 # Pipeline Steps
 
-After the step completes, print a 1-line progress update: `Step 1/1: <step-name> — <status>`. The coordinator must also track `(step_name, status, start_time, end_time)` — note the wall-clock time before and after the Task call to use in the final report.
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip(epic-{{EPIC_ID}}-start): step N/1 <step-name> - done"` and prints a 1-line progress update: `Step 1/1: <step-name> — <status>`. The coordinator must also track `(step_name, status, start_time, end_time)` — note the wall-clock time before and after the Task call to use in the final report.
 
-1. **Epic {{EPIC_ID}} Test Design** *(always runs — never skip)*
+1. **Epic {{EPIC_ID}} Test Design**
    - **Task prompt:** `/bmad-tea-testarch-test-design yolo — run in epic-level mode for epic {{EPIC_ID}}.`
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Commit with: `git add -A && git commit -m "chore(epic-{{EPIC_ID}}): epic start — test design complete"`
+3. Record the final git commit hash and print it to the user.
 
 # Pipeline Report
 

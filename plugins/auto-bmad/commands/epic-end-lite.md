@@ -31,7 +31,7 @@ ELSE ask the user to provide the epic number to close and set {{EPIC_ID}} to the
 
 # Lite Epic End Pipeline
 
-Close epic {{EPIC_ID}} with BMAD slash commands only — traceability, retrospective, and project context refresh. No orchestration overhead, no reports, no git operations. For testing BMAD workflows.
+Close epic {{EPIC_ID}} with BMAD slash commands only — traceability, retrospective, retro action resolution, and project context refresh. Lightweight orchestration with git safety, no reports beyond the pipeline report.
 
 Each step MUST run in its own **foreground Task tool call** (subagent_type: "general-purpose") so that each agent gets a fresh context window.
 
@@ -41,7 +41,9 @@ Each step MUST run in its own **foreground Task tool call** (subagent_type: "gen
 - **DO NOT** launch multiple Task calls simultaneously. Wait for each to return before launching the next.
 - **DO NOT** execute any step, fix, or implement new code yourself — always delegate to a Task agent.
 
-**Retry policy:** If a step fails, retry it **once**. If the retry also fails, stop the pipeline and report to the user which step failed and why.
+**Retry policy:** If a step fails, run `git reset --hard HEAD` to discard its partial changes, then retry **once**. If the retry also fails, stop the pipeline and tell the user:
+- Which step failed and why
+- Recovery commands: `git reset --hard {{START_COMMIT_HASH}}` to roll back the entire pipeline, or `git reset --hard HEAD` to retry the failed step.
 
 # Pre-flight
 
@@ -51,16 +53,25 @@ Before running any steps, record:
 
 # Pipeline Steps
 
-After each step completes, print a 1-line progress update: `Step N/3: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip(epic-{{EPIC_ID}}-end): step N/4 <step-name> - done"` and prints a 1-line progress update: `Step N/4: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
 
-1. **Epic {{EPIC_ID}} Trace** *(always runs — never skip)*
+1. **Epic {{EPIC_ID}} Trace**
    - **Task prompt:** `/bmad-tea-testarch-trace yolo — run in epic-level mode for epic {{EPIC_ID}}.`
 
-2. **Epic {{EPIC_ID}} Retrospective** *(always runs — never skip)*
+2. **Epic {{EPIC_ID}} Retrospective**
    - **Task prompt:** `/bmad-bmm-retrospective epic {{EPIC_ID}} yolo`
 
-3. **Epic {{EPIC_ID}} Project Context Refresh** *(always runs — never skip)*
+3. **Epic {{EPIC_ID}} Resolve Retro Actions**
+   - **Task prompt:** `Find the retrospective file for epic {{EPIC_ID}} — search {{implementation_artifacts}}/ for files matching epic-{{EPIC_ID}}-retro-*.md or retrospective*epic*{{EPIC_ID}}*.md. Read it and extract all Action Items, Preparation Tasks, and Team Agreements. For each item, classify it as implementable (requires a code, config, or documentation change) or process-only (team practices, estimation, communication — cannot be auto-resolved). Implement all implementable items now. Read {{output_folder}}/project-context.md and CLAUDE.md for project conventions. After making changes, run linters and tests to verify nothing broke. Then update the retrospective file: mark each resolved item as done (mark checkboxes as done with [x], prefix with a [RESOLVED] tag — match whatever format the retro file uses, or default to adding "✅ RESOLVED — " prefix). Report back about non-implementable items and leave them unchanged. If no implementable items were found, report "No implementable action items" but still confirm the retro file was reviewed. yolo`
+
+4. **Epic {{EPIC_ID}} Project Context Refresh**
    - **Task prompt:** `/bmad-bmm-generate-project-context yolo`
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Commit with: `git add -A && git commit -m "chore(epic-{{EPIC_ID}}): epic end — retro done, actions resolved"`
+3. Record the final git commit hash and print it to the user.
 
 # Pipeline Report
 
@@ -94,7 +105,8 @@ Use this template for the report:
 |---|------|--------|----------|---------|
 | 1 | Trace | done/failed | Xm | <traceability coverage for the epic> |
 | 2 | Retrospective | done/failed | Xm | <top takeaway or improvement identified> |
-| 3 | Project Context | done/failed | Xm | <refreshed with epic outcomes> |
+| 3 | Resolve Retro Actions | done/skipped/failed | Xm | <items resolved vs deferred, or "no implementable items"> |
+| 4 | Project Context | done/failed | Xm | <refreshed with epic outcomes> |
 
 ## Key Decisions & Learnings
 
@@ -107,6 +119,6 @@ Use this template for the report:
 - [ ] Updated project context — verify accuracy of current state
 
 ### Attention
-- [ ] <retro action items to carry forward — e.g. "need to improve test coverage in next epic", "deployment process needs automation">
+- [ ] <deferred retro action items — process/team items that couldn't be auto-resolved, e.g. "improve estimation accuracy", "more pair programming">
 - [ ] <traceability gaps — e.g. "3 stories lack full requirement coverage", "acceptance criteria partially tested">
 ```
