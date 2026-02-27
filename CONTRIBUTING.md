@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing! This repository is a Claude Code plugin marketplace containing one plugin so far: **auto-bmad**.
+Thank you for your interest in contributing! This repository is a Claude Code plugin marketplace containing two plugins: **auto-bmad** and **code-guardian**.
 
 ## Prerequisites
 
@@ -11,45 +11,70 @@ Thank you for your interest in contributing! This repository is a Claude Code pl
 
 ## Development Setup
 
-Test the plugin locally without installing from the marketplace:
+After cloning, configure git to use the repo's hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This enables the pre-commit hook that auto-syncs `package.json` versions when `plugin.json` changes.
+
+Test a plugin locally without installing from the marketplace:
 
 ```bash
 claude --plugin-dir /path/to/plugins/auto-bmad
+claude --plugin-dir /path/to/plugins/code-guardian
 ```
 
-This loads auto-bmad as a plugin for that session. Add `--debug` to see hook execution and plugin loading details.
+This loads the plugin for that session. Add `--debug` to see hook execution and plugin loading details.
 
 ## Repository Structure
 
-This repo has two layers: a marketplace definition at the root and individual plugins under `plugins/`.
+This repo has four layers: a marketplace definition at the root, individual plugins under `plugins/`, npm companion packages under `packages/`, and build/CI scripts.
 
 ```
 .claude-plugin/
   marketplace.json            — Marketplace manifest (repo name, plugin registry)
 
 plugins/
-  auto-bmad/
-    .claude-plugin/
-      plugin.json             — Plugin manifest (name, version, description)
-    commands/
-      plan.md                 — /auto-bmad-plan (13 steps across 4 phases)
-      epic-start.md           — /auto-bmad-epic-start (up to 7 steps)
-      story.md                — /auto-bmad-story (18-20 steps)
-      epic-end.md             — /auto-bmad-epic-end (10 steps)
-    hooks/
-      hooks.json              — Hook definitions (PreToolUse, SessionStart)
-      scripts/
-        approve-safe-bash.sh  — Auto-approves known-safe bash commands
-        check-dependencies.sh — Lists required dependencies at session start
+  auto-bmad/                  — BMAD pipeline orchestration plugin
+    .claude-plugin/plugin.json
+    commands/                 — Slash commands (plan, epic-start, story, epic-end)
+    hooks/                    — Hook definitions and scripts
+  code-guardian/              — Security scanning plugin
+    .claude-plugin/plugin.json
+    commands/                 — Slash commands (setup, scan, ci)
+    hooks/                    — Hook definitions and scripts
+    scripts/                  — Scanner wrappers and orchestration
+
+packages/
+  auto-bmad/                  — npm companion package (@stefanoginella/auto-bmad)
+    package.json
+    cli.js                    — npx entry point (wraps claude plugin install)
+  code-guardian/              — npm companion package (@stefanoginella/code-guardian)
+    package.json
+    cli.js
+
+scripts/
+  prepublish.sh               — Syncs versions + copies README/LICENSE before npm publish
+  sync-versions.sh            — Syncs plugin.json version → package.json
+
+.githooks/
+  pre-commit                  — Auto-syncs package.json versions on commit
+
+.github/workflows/
+  publish.yml                 — CI: auto-publish to npm on plugin.json version bump
 ```
 
 ### Key Files
 
 - **`.claude-plugin/marketplace.json`** — Registers this repo as a marketplace and lists available plugins
-- **`plugins/auto-bmad/.claude-plugin/plugin.json`** — Plugin manifest; bump the version when making meaningful changes
-- **`plugins/auto-bmad/commands/*.md`** — Each file is a slash command with YAML frontmatter (`name`, `description`) and a markdown body that instructs Claude how to orchestrate a pipeline
-- **`plugins/auto-bmad/hooks/hooks.json`** — Hook definitions following the [Claude Code hooks schema](https://docs.anthropic.com/en/docs/claude-code/hooks)
-- **`plugins/auto-bmad/hooks/scripts/`** — Shell scripts invoked by hooks; use `${CLAUDE_PLUGIN_ROOT}` for path portability
+- **`plugins/<name>/.claude-plugin/plugin.json`** — Plugin manifest; bump the version when making meaningful changes (source of truth for npm package versions)
+- **`plugins/<name>/commands/*.md`** — Each file is a slash command with YAML frontmatter (`name`, `description`) and a markdown body that instructs Claude how to orchestrate a pipeline
+- **`plugins/<name>/hooks/hooks.json`** — Hook definitions following the [Claude Code hooks schema](https://docs.anthropic.com/en/docs/claude-code/hooks)
+- **`plugins/<name>/hooks/scripts/`** — Shell scripts invoked by hooks; use `${CLAUDE_PLUGIN_ROOT}` for path portability
+- **`packages/<name>/cli.js`** — npm bin entry point; adds marketplace and installs plugin via `claude` CLI
+- **`scripts/prepublish.sh`** — Run before `npm publish` to sync versions and copy README/LICENSE
 
 ## How to Contribute
 
@@ -75,11 +100,11 @@ plugins/
 
 ## What Can Be Contributed
 
-- **Command improvements** (`plugins/auto-bmad/commands/`) — Pipeline step changes, new skip conditions, better prompts
-- **Hook improvements** (`plugins/auto-bmad/hooks/`) — Safe-bash prefix list updates, new hook scripts, new hook types
-- **Manifest updates** (`plugins/auto-bmad/.claude-plugin/plugin.json`) — Version bumps, metadata
+- **Command improvements** (`plugins/<name>/commands/`) — Pipeline step changes, new skip conditions, better prompts
+- **Hook improvements** (`plugins/<name>/hooks/`) — Safe-bash prefix list updates, new hook scripts, new hook types
+- **Manifest updates** (`plugins/<name>/.claude-plugin/plugin.json`) — Version bumps, metadata
 - **Documentation** — README, CONTRIBUTING, examples
-- **New plugins** — Add a new plugin under `plugins/` and register it in `.claude-plugin/marketplace.json`
+- **New plugins** — Add a new plugin under `plugins/`, register it in `.claude-plugin/marketplace.json`, and optionally add an npm companion package under `packages/`
 
 ## Design Patterns
 

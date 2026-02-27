@@ -61,6 +61,18 @@ jobs:
       - name: Prepublish
         run: bash scripts/prepublish.sh ${{ matrix.plugin }}
 
+      - name: Determine npm tag
+        id: tag
+        working-directory: packages/${{ matrix.plugin }}
+        run: |
+          version=$(grep '"version"' package.json | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+          if echo "$version" | grep -q '-'; then
+            prerelease=$(echo "$version" | sed 's/.*-\([a-zA-Z]*\).*/\1/')
+            echo "tag=${prerelease}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish
         working-directory: packages/${{ matrix.plugin }}
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
