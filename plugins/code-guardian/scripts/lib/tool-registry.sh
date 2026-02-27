@@ -9,31 +9,31 @@ source "${SCRIPT_DIR}/common.sh"
 # Format: TOOL_<name>_DOCKER, TOOL_<name>_INSTALL_<os>, TOOL_<name>_CATEGORY
 
 # Semgrep — multi-language SAST
-TOOL_SEMGREP_DOCKER="semgrep/semgrep:1.113.0"
+TOOL_SEMGREP_DOCKER="semgrep/semgrep:1.153.0"
 TOOL_SEMGREP_INSTALL_MACOS="pip3 install semgrep"
 TOOL_SEMGREP_INSTALL_LINUX="pip3 install semgrep"
 TOOL_SEMGREP_CATEGORY="sast"
 
 # Trivy — vulnerability scanner (containers, fs, IaC)
-TOOL_TRIVY_DOCKER="aquasec/trivy:0.58.2"
+TOOL_TRIVY_DOCKER="aquasec/trivy:0.69.1"
 TOOL_TRIVY_INSTALL_MACOS="brew install trivy"
-TOOL_TRIVY_INSTALL_LINUX="curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.58.2/contrib/install.sh | sh -s -- -b /usr/local/bin v0.58.2"
+TOOL_TRIVY_INSTALL_LINUX="curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.69.1/contrib/install.sh | sh -s -- -b /usr/local/bin v0.69.1"
 TOOL_TRIVY_CATEGORY="vulnerability"
 
 # Gitleaks — secret detection
-TOOL_GITLEAKS_DOCKER="zricethezav/gitleaks:v8.24.0"
+TOOL_GITLEAKS_DOCKER="zricethezav/gitleaks:v8.30.0"
 TOOL_GITLEAKS_INSTALL_MACOS="brew install gitleaks"
-TOOL_GITLEAKS_INSTALL_LINUX="curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.0/gitleaks_8.24.0_linux_x64.tar.gz | tar xz -C /usr/local/bin gitleaks"
+TOOL_GITLEAKS_INSTALL_LINUX="curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz | tar xz -C /usr/local/bin gitleaks"
 TOOL_GITLEAKS_CATEGORY="secrets"
 
 # Hadolint — Dockerfile linter
-TOOL_HADOLINT_DOCKER="hadolint/hadolint:v2.12.0"
+TOOL_HADOLINT_DOCKER="hadolint/hadolint:v2.14.0"
 TOOL_HADOLINT_INSTALL_MACOS="brew install hadolint"
-TOOL_HADOLINT_INSTALL_LINUX="curl -sSfL https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint && chmod +x /usr/local/bin/hadolint"
+TOOL_HADOLINT_INSTALL_LINUX="curl -sSfL https://github.com/hadolint/hadolint/releases/download/v2.14.0/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint && chmod +x /usr/local/bin/hadolint"
 TOOL_HADOLINT_CATEGORY="container"
 
 # Checkov — IaC scanner
-TOOL_CHECKOV_DOCKER="bridgecrew/checkov:3.2.334"
+TOOL_CHECKOV_DOCKER="bridgecrew/checkov:3.2.506"
 TOOL_CHECKOV_INSTALL_MACOS="pip3 install checkov"
 TOOL_CHECKOV_INSTALL_LINUX="pip3 install checkov"
 TOOL_CHECKOV_CATEGORY="iac"
@@ -93,9 +93,9 @@ TOOL_ESLINT_SECURITY_INSTALL_LINUX="npm install -g eslint eslint-plugin-security
 TOOL_ESLINT_SECURITY_CATEGORY="sast"
 
 # Dockle — container image linter
-TOOL_DOCKLE_DOCKER="goodwithtech/dockle:v0.4.14"
+TOOL_DOCKLE_DOCKER="goodwithtech/dockle:v0.4.15"
 TOOL_DOCKLE_INSTALL_MACOS="brew install goodwithtech/r/dockle"
-TOOL_DOCKLE_INSTALL_LINUX="curl -sSfL https://github.com/goodwithtech/dockle/releases/download/v0.4.14/dockle_0.4.14_Linux-64bit.tar.gz | tar xz -C /usr/local/bin dockle"
+TOOL_DOCKLE_INSTALL_LINUX="curl -sSfL https://github.com/goodwithtech/dockle/releases/download/v0.4.15/dockle_0.4.15_Linux-64bit.tar.gz | tar xz -C /usr/local/bin dockle"
 TOOL_DOCKLE_CATEGORY="container"
 
 # TruffleHog — secret detection (OSS)
