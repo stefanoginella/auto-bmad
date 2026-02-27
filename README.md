@@ -31,6 +31,7 @@ Then install individual plugins from the **Discover** tab of `/plugin` or direct
 | Plugin | Description |
 |--------|-------------|
 | [auto-bmad](./plugins/auto-bmad/README.md) | Automated and opinionated BMAD pipeline orchestration |
+| [code-guardian](./plugins/code-guardian/README.md) | [EXPERIMENTAL] Deterministic security scanning layer. |
 
 ## 🤝 Contributing
 
