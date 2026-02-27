@@ -74,6 +74,29 @@ API_KEY = os.environ["API_KEY"]
 2. Or use a distroless/slim variant
 3. Rebuild the image after updating
 
+## PHP Static Analysis (PHPStan)
+
+### Type Safety
+- **Undefined variables**: Initialize variables before use, or add null checks
+- **Wrong parameter types**: Fix type signatures or add proper type casting
+- **Missing return types**: Add explicit return type declarations to methods
+
+### Security-Relevant Patterns
+- **Dynamic code execution**: Replace with specific, safe alternatives
+- **`unserialize()` on untrusted input**: Use `json_decode()` instead, or restrict allowed classes with `['allowed_classes' => false]`
+- **`extract()` on user input**: Avoid; use explicit variable assignment instead
+- **`file_get_contents()` with user input**: Validate URL/path against an allowlist
+- **`preg_replace` with `/e` modifier**: Use `preg_replace_callback()` instead
+- **Dynamic `include`/`require`**: Use a whitelist of allowed file paths
+
+### Dependency Fixes (OSV-Scanner)
+OSV-Scanner reports vulnerabilities from the OSV database across all ecosystems:
+- **npm**: Same as npm audit — update `package.json`, run `npm install`
+- **pip**: Update `requirements.txt` or `pyproject.toml`
+- **composer**: Update `composer.json`, run `composer update <package>`
+- **go**: `go get package@version && go mod tidy`
+- **cargo/bundler**: Same as existing cargo-audit/bundler-audit patterns
+
 ## IaC Security
 
 ### Terraform

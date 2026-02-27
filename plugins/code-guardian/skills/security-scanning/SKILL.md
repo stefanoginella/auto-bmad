@@ -34,6 +34,11 @@ code-guardian is a deterministic security scanning plugin for Claude Code. It de
 - Docker: `zricethezav/gitleaks:latest`
 - No autofix (secrets must be rotated manually)
 
+**TruffleHog** — Deep secret detection across filesystem and git history using detector-based verification.
+- Docker: `trufflesecurity/trufflehog:latest`
+- No autofix (secrets must be rotated manually)
+- Complements Gitleaks with different detection heuristics
+
 ### Dependency Vulnerability Scanning
 | Tool | Language | Autofix |
 |------|----------|---------|
@@ -42,6 +47,7 @@ code-guardian is a deterministic security scanning plugin for Claude Code. It de
 | `cargo-audit` | Rust | No |
 | `bundler-audit` | Ruby | No |
 | `govulncheck` | Go | No |
+| `osv-scanner` | All ecosystems | No |
 
 ### Container Security
 **Trivy** — Scans container images, filesystems, IaC for vulnerabilities.
@@ -61,6 +67,7 @@ code-guardian is a deterministic security scanning plugin for Claude Code. It de
 | gosec | Go | No |
 | Brakeman | Ruby/Rails | No |
 | ESLint (security) | JS/TS | Partial |
+| PHPStan | PHP | No |
 
 ### IaC Security
 **Checkov** — Scans Terraform, CloudFormation, Kubernetes, Helm for misconfigurations.
@@ -91,8 +98,5 @@ For detailed fix patterns, see `references/fix-patterns.md`.
 | Scope | What It Scans |
 |-------|---------------|
 | `codebase` | All tracked files |
-| `staged` | Files in git staging area |
-| `unstaged` | Modified but unstaged files |
-| `untracked` | New untracked files |
+| `uncommitted` | All local uncommitted work (staged + unstaged + untracked) |
 | `unpushed` | All changes since diverging from base |
-| `all-changes` | staged + unstaged + untracked |

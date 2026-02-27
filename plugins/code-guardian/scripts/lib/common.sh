@@ -161,7 +161,7 @@ emit_finding() {
 
 # Get files in the requested scope
 # Usage: get_scoped_files <scope> [base_ref]
-# Scope: codebase, staged, unstaged, untracked, unpushed, all-changes
+# Scope: codebase, uncommitted, unpushed
 get_scoped_files() {
   local scope="${1:-codebase}"
   local base_ref="${2:-}"
@@ -170,14 +170,13 @@ get_scoped_files() {
     codebase)
       git ls-files 2>/dev/null || find . -type f -not -path './.git/*'
       ;;
-    staged)
-      git diff --cached --name-only --diff-filter=ACMR 2>/dev/null
-      ;;
-    unstaged)
-      git diff --name-only --diff-filter=ACMR 2>/dev/null
-      ;;
-    untracked)
-      git ls-files --others --exclude-standard 2>/dev/null
+    uncommitted|changes|all-changes)
+      # All local uncommitted work: staged + unstaged + untracked
+      {
+        git diff --cached --name-only --diff-filter=ACMR 2>/dev/null
+        git diff --name-only --diff-filter=ACMR 2>/dev/null
+        git ls-files --others --exclude-standard 2>/dev/null
+      } | sort -u
       ;;
     unpushed)
       if [[ -n "$base_ref" ]]; then
@@ -188,13 +187,6 @@ get_scoped_files() {
         default_branch=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}' || echo "main")
         git diff "origin/${default_branch}...HEAD" --name-only --diff-filter=ACMR 2>/dev/null
       fi
-      ;;
-    all-changes)
-      {
-        git diff --cached --name-only --diff-filter=ACMR 2>/dev/null
-        git diff --name-only --diff-filter=ACMR 2>/dev/null
-        git ls-files --others --exclude-standard 2>/dev/null
-      } | sort -u
       ;;
     *)
       log_error "Unknown scope: $scope"

@@ -104,6 +104,18 @@ TOOL_TRUFFLEHOG_INSTALL_MACOS="brew install trufflehog"
 TOOL_TRUFFLEHOG_INSTALL_LINUX="curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin"
 TOOL_TRUFFLEHOG_CATEGORY="secrets"
 
+# OSV-Scanner — universal dependency vulnerability scanner
+TOOL_OSV_SCANNER_DOCKER="ghcr.io/google/osv-scanner:latest"
+TOOL_OSV_SCANNER_INSTALL_MACOS="brew install osv-scanner"
+TOOL_OSV_SCANNER_INSTALL_LINUX="curl -sSfL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 -o /usr/local/bin/osv-scanner && chmod +x /usr/local/bin/osv-scanner"
+TOOL_OSV_SCANNER_CATEGORY="dependency"
+
+# PHPStan — PHP static analysis
+TOOL_PHPSTAN_DOCKER="ghcr.io/phpstan/phpstan:latest"
+TOOL_PHPSTAN_INSTALL_MACOS="composer global require phpstan/phpstan"
+TOOL_PHPSTAN_INSTALL_LINUX="composer global require phpstan/phpstan"
+TOOL_PHPSTAN_CATEGORY="sast"
+
 # ── Stack to tool mapping ─────────────────────────────────────────────
 # Returns tool names relevant for a given stack component
 # Usage: get_tools_for_stack <stack_component>
@@ -111,28 +123,28 @@ get_tools_for_stack() {
   local component="$1"
   case "$component" in
     javascript|typescript|nodejs)
-      echo "semgrep gitleaks npm-audit eslint-security"
+      echo "semgrep gitleaks trufflehog npm-audit eslint-security osv-scanner"
       ;;
     python)
-      echo "semgrep gitleaks bandit pip-audit"
+      echo "semgrep gitleaks trufflehog bandit pip-audit osv-scanner"
       ;;
     go)
-      echo "semgrep gitleaks gosec govulncheck"
+      echo "semgrep gitleaks trufflehog gosec govulncheck osv-scanner"
       ;;
     rust)
-      echo "semgrep gitleaks cargo-audit"
+      echo "semgrep gitleaks trufflehog cargo-audit osv-scanner"
       ;;
     ruby)
-      echo "semgrep gitleaks bundler-audit brakeman"
+      echo "semgrep gitleaks trufflehog bundler-audit brakeman osv-scanner"
       ;;
     java|kotlin)
-      echo "semgrep gitleaks trivy"
+      echo "semgrep gitleaks trufflehog trivy osv-scanner"
       ;;
     php)
-      echo "semgrep gitleaks"
+      echo "semgrep gitleaks trufflehog phpstan osv-scanner"
       ;;
     csharp|dotnet)
-      echo "semgrep gitleaks"
+      echo "semgrep gitleaks trufflehog osv-scanner"
       ;;
     docker)
       echo "trivy hadolint dockle"
@@ -141,7 +153,7 @@ get_tools_for_stack() {
       echo "checkov trivy"
       ;;
     *)
-      echo "semgrep gitleaks"
+      echo "semgrep gitleaks trufflehog"
       ;;
   esac
 }
@@ -155,6 +167,8 @@ get_tool_binary() {
     cargo-audit) echo "cargo-audit" ;;
     bundler-audit) echo "bundler-audit" ;;
     eslint-security) echo "eslint" ;;
+    osv-scanner) echo "osv-scanner" ;;
+    phpstan) echo "phpstan" ;;
     *) echo "$tool" ;;
   esac
 }

@@ -200,6 +200,39 @@ BANDITEOF
 
 GOSECEOF
           ;;
+        osv-scanner)
+          cat <<'OSVEOF'
+      # Universal dependency audit
+      - name: OSV-Scanner (dependency vulnerabilities)
+        run: |
+          curl -sSfL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 -o /usr/local/bin/osv-scanner
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner -r .
+        continue-on-error: true
+
+OSVEOF
+          ;;
+        trufflehog)
+          cat <<'THEOF'
+      # Deep secret detection
+      - name: TruffleHog (secret detection)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+THEOF
+          ;;
+        phpstan)
+          cat <<'PHPSTANEOF'
+      # PHP static analysis
+      - name: PHPStan (PHP SAST)
+        run: |
+          composer global require phpstan/phpstan
+          phpstan analyse --error-format=json --no-progress --level=5 . || true
+        continue-on-error: true
+
+PHPSTANEOF
+          ;;
       esac
     done
     ;;
@@ -274,6 +307,51 @@ checkov:
 
 GLCHECKOVEOF
           ;;
+        osv-scanner)
+          cat <<'GLOSVEOF'
+osv-scanner:
+  stage: security
+  image: ghcr.io/google/osv-scanner:latest
+  script:
+    - osv-scanner --format json -r . > osv-results.json || true
+  artifacts:
+    paths:
+      - osv-results.json
+    when: always
+  allow_failure: true
+
+GLOSVEOF
+          ;;
+        trufflehog)
+          cat <<'GLTHEOF'
+trufflehog:
+  stage: security
+  image: trufflesecurity/trufflehog:latest
+  script:
+    - trufflehog filesystem --json --no-update . > trufflehog-results.json || true
+  artifacts:
+    paths:
+      - trufflehog-results.json
+    when: always
+  allow_failure: true
+
+GLTHEOF
+          ;;
+        phpstan)
+          cat <<'GLPHPSTANEOF'
+phpstan:
+  stage: security
+  image: ghcr.io/phpstan/phpstan:latest
+  script:
+    - phpstan analyse --error-format=json --no-progress --level=5 . > phpstan-results.json || true
+  artifacts:
+    paths:
+      - phpstan-results.json
+    when: always
+  allow_failure: true
+
+GLPHPSTANEOF
+          ;;
       esac
     done
     ;;
@@ -305,6 +383,9 @@ GENERICEOF
         pip-audit) echo "# Python dependency audit"; echo "pip-audit -r requirements.txt"; echo "" ;;
         bandit) echo "# Python SAST"; echo "bandit -r . -f json"; echo "" ;;
         gosec) echo "# Go SAST"; echo "gosec -fmt=json ./..."; echo "" ;;
+        osv-scanner) echo "# Universal dependency audit"; echo "osv-scanner --format json -r ."; echo "" ;;
+        trufflehog) echo "# Deep secret detection"; echo "trufflehog filesystem --json --no-update ."; echo "" ;;
+        phpstan) echo "# PHP static analysis"; echo "phpstan analyse --error-format=json --no-progress --level=5 ."; echo "" ;;
       esac
     done
     ;;
