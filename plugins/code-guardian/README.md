@@ -75,12 +75,20 @@ All tools are free, open-source, and work on private repositories with no limita
 
 ## 📦 Installation
 
-From the marketplace:
+One-command install via npx:
+
+```bash
+npx @stefanoginella/code-guardian
+```
+
+Or from the marketplace inside Claude Code:
 
 ```
 /plugin marketplace add stefanoginella/claude-code-plugins
-/plugin install code-guardian@stefanoginella-plugins
+/plugin install code-guardian@stefanoginella-plugins --scope <project|user|local>
 ```
+
+Scopes: `project` (shared with team), `user` (all your projects), `local` (personal, gitignored).
 
 Or as a local plugin for development:
 

@@ -45,12 +45,20 @@ This is what a complete workflow using the pipelines might look like. If you alr
 
 ## 📦 Installation
 
-From the marketplace:
+One-command install via npx:
+
+```bash
+npx @stefanoginella/auto-bmad
+```
+
+Or from the marketplace inside Claude Code:
 
 ```
 /plugin marketplace add stefanoginella/claude-code-plugins
-/plugin install auto-bmad@stefanoginella-plugins
+/plugin install auto-bmad@stefanoginella-plugins --scope <project|user|local>
 ```
+
+Scopes: `project` (shared with team), `user` (all your projects), `local` (personal, gitignored).
 
 Or as a local plugin for development:
 

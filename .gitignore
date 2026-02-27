@@ -5,5 +5,10 @@ _bmad-output/
 # AI
 .claude
 
+# NPM package build artifacts
+packages/*/README.md
+packages/*/LICENSE.md
+
 # TEMP
 tmp.md
+tmp/

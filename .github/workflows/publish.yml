@@ -1,0 +1,68 @@
+name: Publish npm packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/*/.claude-plugin/plugin.json'
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.diff.outputs.plugins }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - id: diff
+        name: Detect version changes
+        run: |
+          changed=()
+          for plugin_json in plugins/*/.claude-plugin/plugin.json; do
+            plugin_name=$(echo "$plugin_json" | cut -d'/' -f2)
+            pkg_dir="packages/${plugin_name}"
+
+            # Skip if no companion package exists
+            [ -f "${pkg_dir}/package.json" ] || continue
+
+            # Check if version actually changed
+            if git diff HEAD~1 -- "$plugin_json" | grep -q '"version"'; then
+              changed+=("${plugin_name}")
+            fi
+          done
+
+          if [ ${#changed[@]} -eq 0 ]; then
+            echo "plugins=[]" >> "$GITHUB_OUTPUT"
+          else
+            json=$(printf '%s\n' "${changed[@]}" | jq -R . | jq -sc .)
+            echo "plugins=${json}" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.plugins != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        plugin: ${{ fromJson(needs.detect-changes.outputs.plugins) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Prepublish
+        run: bash scripts/prepublish.sh ${{ matrix.plugin }}
+
+      - name: Publish
+        working-directory: packages/${{ matrix.plugin }}
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
