@@ -61,9 +61,15 @@ Report which artifacts already exist and which steps will be skipped.
 
 Set `{{USER_INPUT_INSTRUCTION}}` to: `The user provided the following vision for this product — treat it as the primary input and build the product brief around it:\n\n{{USER_INPUT}}`
 
+# Pre-flight
+
+Before running any steps, record:
+- `{{START_TIME}}` — current date+time in ISO 8601 format (e.g. `2026-02-26T14:30:00`)
+- `{{START_COMMIT_HASH}}` — run `git rev-parse --short HEAD` and store the result
+
 # Pipeline Steps
 
-After each step completes, print a 1-line progress update: `Step N/11: <step-name> — <status>`
+After each step completes, print a 1-line progress update: `Step N/11: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
 
 ## Phase 1: Analysis
 
@@ -115,6 +121,65 @@ After each step completes, print a 1-line progress update: `Step N/11: <step-nam
     - **Skip if:** sprint-status.yaml already exists. Log "Sprint plan already exists".
     - **Task prompt:** `/bmad-bmm-sprint-planning yolo`
 
-# Done
+# Pipeline Report
 
-Print: **Plan-lite pipeline complete.** Review generated artifacts in `{{planning_artifacts}}/` and `{{implementation_artifacts}}/`.
+1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
+2. Scan `{{output_folder}}/` recursively for files modified after `{{START_TIME}}` to build the artifact list.
+3. Create `{{auto_bmad_artifacts}}/` directory if it doesn't exist.
+4. Generate the report and save it to `{{auto_bmad_artifacts}}/pipeline-report-plan-lite-YYYY-MM-DD-HHMMSS.md` (using `{{END_TIME}}` for the timestamp).
+5. Print the full report to the user.
+
+Use this template for the report:
+
+```markdown
+# Pipeline Report: plan-lite
+
+| Field | Value |
+|-------|-------|
+| Pipeline | plan-lite |
+| Start | {{START_TIME}} |
+| End | {{END_TIME}} |
+| Duration | <minutes>m |
+| Initial Commit | {{START_COMMIT_HASH}} |
+
+## Artifacts
+
+- `<relative-path>` — new/updated
+
+## Pipeline Outcome
+
+| # | Step | Status | Duration | Summary |
+|---|------|--------|----------|---------|
+| 1 | Product Brief | done/skipped | Xm | <what product/vision was captured> |
+| 2 | PRD | done/skipped | Xm | <key features count, scope summary> |
+| 3 | Validate PRD | done/skipped | Xm | <issues found and fixed count> |
+| 4 | UX Design | done/skipped | Xm | <pages/flows designed, or why skipped (no frontend)> |
+| 5 | Architecture | done/skipped | Xm | <stack chosen, key patterns (e.g. "monolith, PostgreSQL, REST API")> |
+| 6 | Test Framework | done/skipped | Xm | <framework chosen (e.g. "Playwright + Vitest")> |
+| 7 | System Test Design | done/skipped | Xm | <test areas covered> |
+| 8 | Epics & Stories | done/skipped | Xm | <epic count, total story count> |
+| 9 | Impl Readiness | done/failed | Xm | <pass/fail, issues fixed count> |
+| 10 | Project Context | done | Xm | <refreshed or newly generated> |
+| 11 | Sprint Planning | done/skipped | Xm | <stories queued for first sprint> |
+
+## Key Decisions & Learnings
+
+- <short summary of important decisions made, issues encountered, or learnings from any step>
+- <e.g. "Skipped UX design — project has no frontend", "Architecture chose serverless over containers for cost reasons">
+
+## Action Items
+
+### Review
+- [ ] PRD completeness — verify scope and feature list match the product vision
+- [ ] Architecture tech stack — confirm alignment with team skills and infrastructure
+- [ ] UX flows — check edge cases and error states
+- [ ] Epic scoping/sizing — validate sprint capacity estimates
+
+### Test
+- N/A (no code produced)
+
+### Attention
+- [ ] <assumptions made in architecture — e.g. "assumes cloud deployment", "chose SQL over NoSQL based on data model">
+- [ ] <missing NFRs — e.g. "no performance targets defined", "security requirements TBD">
+- [ ] <scope risks in sprint plan — e.g. "first sprint is ambitious", "dependency on external API not yet available">
+```

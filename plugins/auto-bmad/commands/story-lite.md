@@ -49,7 +49,9 @@ Each step MUST run in its own **foreground Task tool call** (subagent_type: "gen
 
 ## Pre-flight
 
-Record the starting git commit hash as {{START_COMMIT_HASH}}.
+Record before running any steps:
+- `{{START_TIME}}` — current date+time in ISO 8601 format (e.g. `2026-02-26T14:30:00`)
+- `{{START_COMMIT_HASH}}` — run `git rev-parse --short HEAD` and store the result
 
 ## Story File Path Resolution
 
@@ -57,7 +59,7 @@ After step 1 (Create) succeeds, glob `{{implementation_artifacts}}/{{STORY_ID}}-
 
 # Pipeline Steps
 
-After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/12 <step-name> - done"` and prints a 1-line progress update: `Step N/12: <step-name> — <status>`
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/12 <step-name> - done"` and prints a 1-line progress update: `Step N/12: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
 
 ## Story Creation & Validation
 
@@ -138,6 +140,67 @@ Derive `<type>` from the story using this table (default to `feat` if ambiguous)
 
 The one-line summary should describe the user-facing outcome, not "story complete".
 
-# Done
+# Pipeline Report
 
-Print: **Story-lite pipeline complete for {{STORY_ID}}.** Review the story file at `{{STORY_FILE}}` and generated artifacts.
+1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
+2. Scan `{{output_folder}}/` recursively for files modified after `{{START_TIME}}` to build the artifact list.
+3. Create `{{auto_bmad_artifacts}}/` directory if it doesn't exist.
+4. Generate the report and save it to `{{auto_bmad_artifacts}}/pipeline-report-story-lite-{{STORY_ID}}-YYYY-MM-DD-HHMMSS.md` (using `{{END_TIME}}` for the timestamp).
+5. Print the full report to the user.
+
+Use this template for the report:
+
+```markdown
+# Pipeline Report: story-lite [{{STORY_ID}}]
+
+| Field | Value |
+|-------|-------|
+| Pipeline | story-lite |
+| Story | {{STORY_ID}} |
+| Start | {{START_TIME}} |
+| End | {{END_TIME}} |
+| Duration | <minutes>m |
+| Initial Commit | {{START_COMMIT_HASH}} |
+
+## Artifacts
+
+- `<relative-path>` — new/updated
+
+## Pipeline Outcome
+
+| # | Step | Status | Duration | Summary |
+|---|------|--------|----------|---------|
+| 1 | Story Create | done/skipped | Xm | <story title/scope> |
+| 2 | Story Validate | done | Xm | <issues found and fixed count> |
+| 3 | ATDD | done | Xm | <acceptance tests written count> |
+| 4 | Develop | done | Xm | <files created/modified, key implementation summary> |
+| 5 | Code Review #1 | done | Xm | <issues found/fixed count by severity> |
+| 6 | Code Review #2 | done | Xm | <issues found/fixed count by severity> |
+| 7 | Code Review #3 | done | Xm | <issues found/fixed count by severity> |
+| 8 | NFR | done | Xm | <NFR assessment result (pass/concerns)> |
+| 9 | E2E | done | Xm | <e2e tests generated count> |
+| 10 | Trace | done | Xm | <traceability coverage %> |
+| 11 | Test Automate | done | Xm | <tests automated count> |
+| 12 | Test Review | done | Xm | <test quality verdict> |
+
+## Key Decisions & Learnings
+
+- <short summary of important decisions made, issues encountered, or learnings from any step>
+- <e.g. "Code review #2 found SQL injection in auth module — fixed", "ATDD tests required mock service setup">
+
+## Action Items
+
+### Review
+- [ ] Story implementation matches acceptance criteria
+- [ ] Code review findings that were auto-fixed — verify fixes are correct
+
+### Test
+- [ ] Run the app and exercise the implemented feature
+- [ ] Run test suites locally (`npm test`, `npx playwright test`, etc.)
+- [ ] Verify edge cases from story spec
+
+### Attention
+- [ ] <NFR concerns flagged — e.g. "auth endpoint has no rate limiting", "no caching on frequently accessed data">
+- [ ] <traceability gaps — e.g. "2 acceptance criteria not covered by tests">
+- [ ] <test coverage gaps — e.g. "error handling paths not tested">
+```

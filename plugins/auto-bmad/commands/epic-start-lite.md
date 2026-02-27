@@ -42,11 +42,62 @@ The step MUST run in its own **foreground Task tool call** (subagent_type: "gene
 
 **Retry policy:** If the step fails, retry it **once**. If the retry also fails, stop and report to the user.
 
+# Pre-flight
+
+Before running any steps, record:
+- `{{START_TIME}}` — current date+time in ISO 8601 format (e.g. `2026-02-26T14:30:00`)
+- `{{START_COMMIT_HASH}}` — run `git rev-parse --short HEAD` and store the result
+
 # Pipeline Steps
+
+After the step completes, print a 1-line progress update: `Step 1/1: <step-name> — <status>`. The coordinator must also track `(step_name, status, start_time, end_time)` — note the wall-clock time before and after the Task call to use in the final report.
 
 1. **Epic {{EPIC_ID}} Test Design** *(always runs — never skip)*
    - **Task prompt:** `/bmad-tea-testarch-test-design yolo — run in epic-level mode for epic {{EPIC_ID}}.`
 
-# Done
+# Pipeline Report
 
-Print: **Epic-start-lite pipeline complete for epic {{EPIC_ID}}.** Review the test design in `{{planning_artifacts}}/`.
+1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
+2. Scan `{{output_folder}}/` recursively for files modified after `{{START_TIME}}` to build the artifact list.
+3. Create `{{auto_bmad_artifacts}}/` directory if it doesn't exist.
+4. Generate the report and save it to `{{auto_bmad_artifacts}}/pipeline-report-epic-start-lite-{{EPIC_ID}}-YYYY-MM-DD-HHMMSS.md` (using `{{END_TIME}}` for the timestamp).
+5. Print the full report to the user.
+
+Use this template for the report:
+
+```markdown
+# Pipeline Report: epic-start-lite [Epic {{EPIC_ID}}]
+
+| Field | Value |
+|-------|-------|
+| Pipeline | epic-start-lite |
+| Epic | {{EPIC_ID}} |
+| Start | {{START_TIME}} |
+| End | {{END_TIME}} |
+| Duration | <minutes>m |
+| Initial Commit | {{START_COMMIT_HASH}} |
+
+## Artifacts
+
+- `<relative-path>` — new/updated
+
+## Pipeline Outcome
+
+| # | Step | Status | Duration | Summary |
+|---|------|--------|----------|---------|
+| 1 | Epic Test Design | done/failed | Xm | <test areas planned, strategy summary> |
+
+## Key Decisions & Learnings
+
+- <short summary of important decisions made, issues encountered, or learnings from any step>
+
+## Action Items
+
+### Review
+- [ ] Epic-level test design coverage and strategy
+
+### Attention
+- [ ] <testing assumptions — e.g. "assumes test database is available", "mock services needed for integration tests">
+- [ ] <missing test scenarios — e.g. "no load testing planned", "error recovery paths not covered">
+- [ ] <environment dependencies — e.g. "requires Docker for containerized tests", "needs API keys for third-party services">
+```
