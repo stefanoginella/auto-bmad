@@ -2,8 +2,8 @@
 # Tool registry: maps stacks to tools, provides install commands and Docker images
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+_TOOL_REGISTRY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_TOOL_REGISTRY_DIR}/common.sh"
 
 # ── Tool definitions ──────────────────────────────────────────────────
 # Format: TOOL_<name>_DOCKER, TOOL_<name>_INSTALL_<os>, TOOL_<name>_CATEGORY
