@@ -59,10 +59,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-tea-testarch-trace yolo — run in epic-level mode for epic {{EPIC_ID}}.`
 
 2. **Epic {{EPIC_ID}} Retrospective**
-   - **Task prompt:** `/bmad-bmm-retrospective epic {{EPIC_ID}} yolo`
-
-3. **Epic {{EPIC_ID}} Resolve Retro Actions**
-   - **Task prompt:** `Find the retrospective file for epic {{EPIC_ID}} — search {{implementation_artifacts}}/ for files matching epic-{{EPIC_ID}}-retro-*.md or retrospective*epic*{{EPIC_ID}}*.md. Read it and extract all Action Items, Preparation Tasks, and Team Agreements. For each item, classify it as implementable (requires a code, config, or documentation change) or process-only (team practices, estimation, communication — cannot be auto-resolved). Implement all implementable items now. Read {{output_folder}}/project-context.md and CLAUDE.md for project conventions. After making changes, run linters and tests to verify nothing broke. Then update the retrospective file: mark each resolved item as done (mark checkboxes as done with [x], prefix with a [RESOLVED] tag — match whatever format the retro file uses, or default to adding "✅ RESOLVED — " prefix). Report back about non-implementable items and leave them unchanged. If no implementable items were found, report "No implementable action items" but still confirm the retro file was reviewed. yolo`
+   - **Task prompt:** `/bmad-bmm-retrospective epic {{EPIC_ID}} yolo - and fix all implementable action items required before the next epic, mark them as done/resolved, and defer any non-implementable items with a clear explanation.`
 
 4. **Epic {{EPIC_ID}} Project Context Refresh**
    - **Task prompt:** `/bmad-bmm-generate-project-context yolo`
@@ -105,7 +102,6 @@ Use this template for the report:
 |---|------|--------|----------|---------|
 | 1 | Trace | done/failed | Xm | <traceability coverage for the epic> |
 | 2 | Retrospective | done/failed | Xm | <top takeaway or improvement identified> |
-| 3 | Resolve Retro Actions | done/skipped/failed | Xm | <items resolved vs deferred, or "no implementable items"> |
 | 4 | Project Context | done/failed | Xm | <refreshed with epic outcomes> |
 
 ## Key Decisions & Learnings

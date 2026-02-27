@@ -15,7 +15,7 @@ Four sequential pipeline commands that drive the BMAD software development lifec
 | `/auto-bmad-plan` | 11 | Pre-implementation pipeline: product brief, PRD, validate, UX, architecture, test framework, test design, epics, readiness, project context, sprint planning |
 | `/auto-bmad-epic-start` | 1 | Start a new epic: epic-level test design |
 | `/auto-bmad-story` | 12 | Develop a story: create, validate, ATDD, develop, 3x code review, NFR, E2E, trace, automate, test review |
-| `/auto-bmad-epic-end` | 4 | Close an epic: trace, retrospective, resolve retro actions, project context refresh |
+| `/auto-bmad-epic-end` | 3 | Close an epic: trace, retrospective, project context refresh |
 
 ## 🗂 Artifacts
 
