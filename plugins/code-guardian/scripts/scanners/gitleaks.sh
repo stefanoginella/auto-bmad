@@ -24,7 +24,25 @@ log_step "Running Gitleaks (secret detection)..."
 RAW_OUTPUT=$(mktemp /tmp/cg-gitleaks-XXXXXX.json)
 EXIT_CODE=0
 
-GITLEAKS_ARGS=("detect" "--source" "." "--report-format" "json" "--report-path" "$RAW_OUTPUT" "--no-banner")
+# Build a gitleaks config extension with path exclusions
+GITLEAKS_CONFIG=$(mktemp /tmp/cg-gitleaks-config-XXXXXX.toml)
+{
+  echo '[extend]'
+  echo 'useDefault = true'
+  echo ''
+  echo '[allowlist]'
+  printf 'paths = [\n'
+  first=true
+  for dir in "${CG_EXCLUDE_DIRS[@]}"; do
+    $first || printf ',\n'
+    # TOML string: regex matching dir anywhere in path
+    printf "  \"(^|/)%s/\"" "$dir"
+    first=false
+  done
+  printf '\n]\n'
+} > "$GITLEAKS_CONFIG"
+
+GITLEAKS_ARGS=("detect" "--source" "." "--report-format" "json" "--report-path" "$RAW_OUTPUT" "--no-banner" "--config" "$GITLEAKS_CONFIG")
 
 DOCKER_IMAGE="${CG_DOCKER_IMAGE:-}"
 
@@ -34,10 +52,13 @@ elif docker_fallback_enabled && docker_available && [[ -n "$DOCKER_IMAGE" ]]; th
   log_info "Using Docker image: $DOCKER_IMAGE"
   REPORT_DIR=$(mktemp -d /tmp/cg-gitleaks-report-XXXXXX)
   docker run --rm --network none \
-    -v "$(pwd):/workspace:ro" -v "$REPORT_DIR:/report" -w /workspace \
+    -v "$(pwd):/workspace:ro" -v "$REPORT_DIR:/report" \
+    -v "$GITLEAKS_CONFIG:/tmp/gitleaks-config.toml:ro" \
+    -w /workspace \
     "$DOCKER_IMAGE" detect --source /workspace \
     --report-format json --report-path /report/gitleaks-report.json \
-    --no-banner 2>/dev/null || EXIT_CODE=$?
+    --no-banner --config /tmp/gitleaks-config.toml \
+    2>/dev/null || EXIT_CODE=$?
   [[ -f "$REPORT_DIR/gitleaks-report.json" ]] && mv "$REPORT_DIR/gitleaks-report.json" "$RAW_OUTPUT"
   rm -rf "$REPORT_DIR"
 else
@@ -81,7 +102,7 @@ except Exception as e:
   fi
 fi
 
-rm -f "$RAW_OUTPUT"
+rm -f "$RAW_OUTPUT" "$GITLEAKS_CONFIG"
 
 # Post-filter findings to scope if scope file provided
 if [[ -n "$SCOPE_FILE" ]] && [[ -f "$SCOPE_FILE" ]] && [[ -s "$FINDINGS_FILE" ]]; then

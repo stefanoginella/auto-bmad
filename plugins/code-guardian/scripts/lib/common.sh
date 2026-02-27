@@ -24,6 +24,54 @@ log_step()  { echo -e "${CYAN}[step]${RESET} ${BOLD}$*${RESET}" >&2; }
 # Check if a command exists
 cmd_exists() { command -v "$1" &>/dev/null; }
 
+# ── Standard exclusion paths ─────────────────────────────────────────
+# Directories that should never be scanned (venvs, caches, build artifacts).
+# Each scanner maps these to its own CLI flags.
+CG_EXCLUDE_DIRS=(
+  .git
+  .venv
+  venv
+  .env
+  env
+  node_modules
+  __pycache__
+  .mypy_cache
+  .pytest_cache
+  .ruff_cache
+  .tox
+  .nox
+  .eggs
+  .cache
+  .gradle
+  .maven
+  vendor
+  dist
+  build
+  target
+  coverage
+  .terraform
+  .next
+  .nuxt
+)
+
+# Return exclusion dirs as a comma-separated string
+get_exclude_dirs_csv() {
+  local IFS=','
+  echo "${CG_EXCLUDE_DIRS[*]}"
+}
+
+# Write exclusion patterns (one regex per line) to a temp file for tools
+# that accept an exclude-paths file (e.g., trufflehog)
+write_exclude_paths_file() {
+  local tmpfile
+  tmpfile=$(mktemp /tmp/cg-exclude-paths-XXXXXX)
+  for dir in "${CG_EXCLUDE_DIRS[@]}"; do
+    # Regex pattern matching the directory anywhere in the path
+    echo "(^|/)${dir}/"
+  done > "$tmpfile"
+  echo "$tmpfile"
+}
+
 # Check if Docker is available and running
 docker_available() {
   cmd_exists docker && docker info &>/dev/null

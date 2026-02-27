@@ -25,15 +25,22 @@ RAW_OUTPUT=$(mktemp /tmp/cg-trufflehog-XXXXXX.json)
 > "$RAW_OUTPUT"
 EXIT_CODE=0
 
+# Build exclude-paths file for trufflehog
+EXCLUDE_FILE=$(write_exclude_paths_file)
+
 DOCKER_IMAGE="${CG_DOCKER_IMAGE:-}"
 
 if cmd_exists trufflehog; then
-  trufflehog filesystem --json --no-update . \
+  trufflehog filesystem --json --no-update \
+    --exclude-paths "$EXCLUDE_FILE" . \
     > "$RAW_OUTPUT" 2>/dev/null || EXIT_CODE=$?
 elif docker_fallback_enabled && docker_available && [[ -n "$DOCKER_IMAGE" ]]; then
   log_info "Using Docker image: $DOCKER_IMAGE"
-  docker run --rm --network none -v "$(pwd):/workspace:ro" -w /workspace \
-    "$DOCKER_IMAGE" filesystem --json --no-update /workspace \
+  docker run --rm --network none \
+    -v "$(pwd):/workspace:ro" -v "$EXCLUDE_FILE:/tmp/exclude-paths:ro" \
+    -w /workspace \
+    "$DOCKER_IMAGE" filesystem --json --no-update \
+    --exclude-paths /tmp/exclude-paths /workspace \
     > "$RAW_OUTPUT" 2>/dev/null || EXIT_CODE=$?
 else
   log_skip_tool "TruffleHog"
@@ -96,7 +103,7 @@ with open('$RAW_OUTPUT') as f:
   fi
 fi
 
-rm -f "$RAW_OUTPUT"
+rm -f "$RAW_OUTPUT" "$EXCLUDE_FILE"
 
 # Post-filter findings to scope if scope file provided
 if [[ -n "$SCOPE_FILE" ]] && [[ -f "$SCOPE_FILE" ]] && [[ -s "$FINDINGS_FILE" ]]; then

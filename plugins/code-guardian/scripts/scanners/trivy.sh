@@ -30,6 +30,13 @@ EXIT_CODE=0
 
 TRIVY_ARGS=("$MODE" "--format" "json" "--quiet")
 
+# Add directory exclusions for filesystem and config scans
+if [[ "$MODE" == "fs" ]] || [[ "$MODE" == "config" ]]; then
+  for dir in "${CG_EXCLUDE_DIRS[@]}"; do
+    TRIVY_ARGS+=("--skip-dirs" "$dir")
+  done
+fi
+
 case "$MODE" in
   fs)
     TRIVY_ARGS+=("--scanners" "vuln,secret,misconfig")

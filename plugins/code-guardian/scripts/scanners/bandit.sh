@@ -37,7 +37,7 @@ log_step "Running Bandit (Python SAST)..."
 RAW_OUTPUT=$(mktemp /tmp/cg-bandit-XXXXXX.json)
 EXIT_CODE=0
 
-BANDIT_ARGS=("-r" "." "-f" "json" "-q")
+BANDIT_ARGS=("-r" "." "-f" "json" "-q" "--exclude" "$(get_exclude_dirs_csv)")
 
 # Scope filtering: build array of .py files from scope
 if [[ -n "$SCOPE_FILE" ]] && [[ -f "$SCOPE_FILE" ]] && [[ -s "$SCOPE_FILE" ]]; then
