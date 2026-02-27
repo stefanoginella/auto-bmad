@@ -88,6 +88,5 @@ jobs:
           else
             gh pr create \
               --title "chore: update pinned security tool versions" \
-              --body "$PR_BODY" \
-              --label "dependencies"
+              --body "$PR_BODY"
           fi
