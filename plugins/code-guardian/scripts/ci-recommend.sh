@@ -257,7 +257,7 @@ variables:
 
 gitleaks:
   stage: security
-  image: zricethezav/gitleaks:v8.24.0
+  image: zricethezav/gitleaks:v8.30.0
   script:
     - gitleaks detect --source . --report-format json --report-path gitleaks-report.json --no-banner
   artifacts:
@@ -268,7 +268,7 @@ gitleaks:
 
 semgrep:
   stage: security
-  image: semgrep/semgrep:1.113.0
+  image: semgrep/semgrep:1.153.0
   script:
     - semgrep --config auto --json --output semgrep-results.json .
   artifacts:
@@ -285,7 +285,7 @@ GLEOF
           cat <<'GLTRIVYEOF'
 trivy:
   stage: security
-  image: aquasec/trivy:0.58.2
+  image: aquasec/trivy:0.69.1
   script:
     - trivy fs --format json --output trivy-results.json --severity CRITICAL,HIGH .
   artifacts:
@@ -300,7 +300,7 @@ GLTRIVYEOF
           cat <<'GLCHECKOVEOF'
 checkov:
   stage: security
-  image: bridgecrew/checkov:3.2.334
+  image: bridgecrew/checkov:3.2.506
   script:
     - checkov -d . --output json --quiet > checkov-results.json || true
   artifacts:
