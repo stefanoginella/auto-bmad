@@ -314,13 +314,32 @@ fi
 # Clean up scope file
 [[ -n "$SCOPE_FILE" ]] && rm -f "$SCOPE_FILE"
 
-# Output scan results as JSON
+# Build summaries JSON (used by both report generator and final output)
 summaries_json="["
 for i in "${!ALL_SUMMARIES[@]}"; do
   [[ $i -gt 0 ]] && summaries_json+=","
   summaries_json+="${ALL_SUMMARIES[$i]}"
 done
 summaries_json+="]"
+
+# Generate persistent scan report
+REPORT_FILE=""
+REPORT_FILE=$(
+  bash "${SCRIPT_DIR}/generate-report.sh" \
+    --findings-file "$MERGED_FILE" \
+    --scope "$SCOPE" \
+    --base-ref "$BASE_REF" \
+    --scanners-run "$(IFS=','; echo "${scanners_to_run[*]}")" \
+    --skipped-scanners "$(IFS=','; echo "${SKIPPED_SCANNERS[*]+"${SKIPPED_SCANNERS[*]}"}")" \
+    --scope-skipped-scanners "$(IFS=','; echo "${SCOPE_SKIPPED_SCANNERS[*]+"${SCOPE_SKIPPED_SCANNERS[*]}"}")" \
+    --failed-scanners "$(IFS=','; echo "${FAILED_SCANNERS[*]+"${FAILED_SCANNERS[*]}"}")" \
+    --summaries-json "$summaries_json" \
+    --total "$total" --high "$high" --medium "$medium" --low "$low" \
+    --timestamp "$SCAN_TIMESTAMP"
+) || REPORT_FILE=""
+if [[ -n "$REPORT_FILE" ]]; then
+  log_info "Scan report saved: $REPORT_FILE"
+fi
 
 # Build skipped/failed scanners JSON arrays
 skipped_json="[]"
@@ -340,6 +359,7 @@ cat <<EOF
 {
   "scanDir": "$SCAN_OUTPUT_DIR",
   "findingsFile": "$MERGED_FILE",
+  "reportFile": "$REPORT_FILE",
   "scope": "$SCOPE",
   "baseRef": "$BASE_REF",
   "autofix": $AUTOFIX,

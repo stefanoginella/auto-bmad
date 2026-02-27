@@ -180,6 +180,7 @@ code-guardian/
 │   ├── detect-stack.sh    # Detects languages, frameworks, Docker, CI, IaC
 │   ├── check-tools.sh     # Checks tool availability (local + Docker)
 │   ├── scan.sh            # Main scan orchestrator
+│   ├── generate-report.sh # Persistent markdown report generator
 │   ├── ci-recommend.sh    # CI config generator
 │   ├── read-config.sh     # Reads project config (.claude/code-guardian.config.json)
 │   └── cache-state.sh     # Cache I/O for stack + tools detection results
@@ -218,6 +219,20 @@ The plugin caches stack detection and tool availability results in `.claude/code
 - **`scan`** and **`ci`** read from the cache if it's fresh (< 24 hours), skipping re-detection
 - Cache is invalidated automatically if it's older than 24 hours or the project path changes
 - Use `--refresh` on the scan command to bypass the cache and force re-detection
+
+## 📝 Scan Reports
+
+Each scan automatically saves a detailed markdown report to `.code-guardian/scan-reports/scan-report-YYYYMMDD-HHMMSS.md`. Reports are timestamped so multiple scans never overwrite each other.
+
+**Report contents:**
+- Header with date, scope, and scanners run
+- Summary table with finding counts by severity
+- Per-tool breakdown table
+- Every finding as a `- [ ]` checkbox item, grouped by severity (high first), with tool, rule ID, message, file location, and auto-fixable flag
+- Skipped tools (with install commands) and failed tools
+- Scope-skipped dependency scanners (when using `--scope uncommitted` or `--scope unpushed`)
+
+**Remediation tracking:** Open the report in any markdown editor and check off items (`- [x]`) as you fix them. The reports persist in your project directory — add `.code-guardian/` to `.gitignore` if you don't want them committed, or commit them to track remediation progress across the team.
 
 ## 🔐 Permissions
 

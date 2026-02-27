@@ -116,6 +116,7 @@ Always end with these sections:
    >
    > Run `/code-guardian:code-guardian-setup` to see all tool status.
 5. **CI recommendation** — if no CI security scanning detected, suggest `/code-guardian:code-guardian-ci`
+6. **Scan report** — tell the user a detailed report was saved to disk (the path is in the `reportFile` field of the scan output JSON). Findings are listed as `- [ ]` checkbox items they can mark `[x]` as they remediate each issue. Example: "A detailed report has been saved to `<reportFile>`. Each finding is a checkbox you can mark off as you fix it."
 
 ## Scope & Dependency Scanners
 
