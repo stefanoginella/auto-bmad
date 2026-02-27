@@ -81,7 +81,7 @@ TOOL_BUNDLER_AUDIT_INSTALL_LINUX="gem install bundler-audit"
 TOOL_BUNDLER_AUDIT_CATEGORY="dependency"
 
 # Brakeman — Ruby/Rails SAST
-TOOL_BRAKEMAN_DOCKER="presidentbeef/brakeman:v6.2.2"
+TOOL_BRAKEMAN_DOCKER="presidentbeef/brakeman:v8.0.3"
 TOOL_BRAKEMAN_INSTALL_MACOS="gem install brakeman"
 TOOL_BRAKEMAN_INSTALL_LINUX="gem install brakeman"
 TOOL_BRAKEMAN_CATEGORY="sast"
