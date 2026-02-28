@@ -129,6 +129,8 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 2. Commit with: `git add -A && git commit -m "chore: BMAD plan — pre-implementation pipeline complete"`
 3. Record the final git commit hash and print it to the user.
 
+**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
+
 # Pipeline Report
 
 1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.

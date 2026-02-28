@@ -142,6 +142,8 @@ Derive `<type>` from the story using this table (default to `feat` if ambiguous)
 
 The one-line summary should describe the user-facing outcome, not "story complete".
 
+**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
+
 # Pipeline Report
 
 1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
