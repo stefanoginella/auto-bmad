@@ -52,6 +52,8 @@ CG_EXCLUDE_DIRS=(
   .terraform
   .next
   .nuxt
+  _bmad
+  _bmad-output
 )
 
 # Return exclusion dirs as a comma-separated string
@@ -173,10 +175,10 @@ create_summary() {
   local high=0 medium=0 low=0 info=0
 
   if [[ -f "$findings_file" ]] && [[ -s "$findings_file" ]]; then
-    high=$(grep -c '"severity":"high"' "$findings_file" 2>/dev/null) || high=0
-    medium=$(grep -c '"severity":"medium"' "$findings_file" 2>/dev/null) || medium=0
-    low=$(grep -c '"severity":"low"' "$findings_file" 2>/dev/null) || low=0
-    info=$(grep -c '"severity":"info"' "$findings_file" 2>/dev/null) || info=0
+    high=$(grep -cE '"severity" *: *"high"' "$findings_file" 2>/dev/null) || high=0
+    medium=$(grep -cE '"severity" *: *"medium"' "$findings_file" 2>/dev/null) || medium=0
+    low=$(grep -cE '"severity" *: *"low"' "$findings_file" 2>/dev/null) || low=0
+    info=$(grep -cE '"severity" *: *"info"' "$findings_file" 2>/dev/null) || info=0
   fi
 
   printf '{"tool":"%s","summary":{"high":%d,"medium":%d,"low":%d,"info":%d}}\n' \

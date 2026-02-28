@@ -143,6 +143,11 @@ lines.append(f"**Scope**: {scope_display}  ")
 lines.append(f"**Scanners run**: {', '.join(scanners_list) if scanners_list else 'none'}")
 lines.append("")
 
+# Count auto-fixable findings
+fixable = [f for f in findings if f.get("autoFixable")]
+fixable_count = len(fixable)
+fixable_tools = sorted(set(f.get("tool", "?") for f in fixable))
+
 # Summary table
 lines.append("## Summary")
 lines.append("")
@@ -155,14 +160,22 @@ info_count = total - high - medium - low
 if info_count > 0:
     lines.append(f"| Info     | {info_count} |")
 lines.append(f"| **Total** | **{total}** |")
+if fixable_count > 0:
+    lines.append(f"| Auto-fixable | {fixable_count} ({', '.join(fixable_tools)}) |")
 lines.append("")
 
 # Per-tool breakdown
 if summaries:
+    # Build per-tool fixable counts from findings
+    tool_fixable = {}
+    for f in fixable:
+        t = f.get("tool", "unknown")
+        tool_fixable[t] = tool_fixable.get(t, 0) + 1
+
     lines.append("### Per-Tool Breakdown")
     lines.append("")
-    lines.append("| Tool | High | Medium | Low | Info | Total |")
-    lines.append("|------|------|--------|-----|------|-------|")
+    lines.append("| Tool | High | Medium | Low | Info | Total | Auto-fixable |")
+    lines.append("|------|------|--------|-----|------|-------|--------------|")
     for s in summaries:
         tool_name = s.get("tool", "unknown")
         sm = s.get("summary", {})
@@ -171,8 +184,62 @@ if summaries:
         lo = sm.get("low", 0)
         i = sm.get("info", 0)
         t = h + m + lo + i
-        lines.append(f"| {tool_name} | {h} | {m} | {lo} | {i} | {t} |")
+        tf = tool_fixable.get(tool_name, 0)
+        lines.append(f"| {tool_name} | {h} | {m} | {lo} | {i} | {t} | {tf} |")
     lines.append("")
+
+# Category breakdown
+if findings:
+    cat_counts = {}
+    for f in findings:
+        cat = f.get("category", "other")
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+    if cat_counts:
+        lines.append("### By Category")
+        lines.append("")
+        lines.append("| Category | Count |")
+        lines.append("|----------|-------|")
+        for cat in sorted(cat_counts, key=lambda c: cat_counts[c], reverse=True):
+            lines.append(f"| {cat} | {cat_counts[cat]} |")
+        lines.append("")
+
+# Hotspots — most affected files
+if findings:
+    file_counts = {}
+    for f in findings:
+        fp = f.get("file", "")
+        if fp:
+            file_counts[fp] = file_counts.get(fp, 0) + 1
+    if file_counts:
+        top_files = sorted(file_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        lines.append("### Hotspots")
+        lines.append("")
+        lines.append("Most affected files:")
+        lines.append("")
+        lines.append("| File | Findings |")
+        lines.append("|------|----------|")
+        for fp, count in top_files:
+            lines.append(f"| `{fp}` | {count} |")
+        lines.append("")
+
+# Noisiest rules
+if findings:
+    rule_counts = {}
+    for f in findings:
+        rule = f.get("rule", "")
+        tool = f.get("tool", "?")
+        if rule:
+            key = (tool, rule)
+            rule_counts[key] = rule_counts.get(key, 0) + 1
+    if rule_counts:
+        top_rules = sorted(rule_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+        lines.append("### Noisiest Rules")
+        lines.append("")
+        lines.append("| Tool | Rule | Count |")
+        lines.append("|------|------|-------|")
+        for (tool, rule), count in top_rules:
+            lines.append(f"| {tool} | `{rule}` | {count} |")
+        lines.append("")
 
 # Findings with checkboxes
 lines.append("## Findings")
