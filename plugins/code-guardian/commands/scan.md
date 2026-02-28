@@ -32,9 +32,7 @@ Parse from `$ARGUMENTS`:
 
 Config values (`tools`, `disabled`, `scope`, `autofix`) are loaded automatically by scan.sh. CLI args override them.
 
-If scope not provided (neither CLI nor config), ask with AskUserQuestion:
-- "What scope to scan?" — codebase (all tracked files), uncommitted (all local uncommitted work), unpushed (commits not yet pushed)
-- If "unpushed", also ask: "Compare against which base?" — default branch, remote tracking branch, or custom ref
+If scope is not provided via CLI, scan.sh uses the config `scope` value, falling back to `codebase`. Do NOT ask the user for scope — just proceed with the default. If the user passed `--scope unpushed` without a base ref, ask with AskUserQuestion: "Compare against which base?" — default branch, remote tracking branch, or custom ref.
 
 ### Step 2: Detect Stack & Tools
 

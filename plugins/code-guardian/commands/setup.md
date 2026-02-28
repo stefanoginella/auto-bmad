@@ -1,6 +1,7 @@
 ---
 name: code-guardian-setup
 description: Check security tool availability for the detected stack and show install instructions
+argument-hint: "[--configure]"
 allowed-tools:
   - Bash
   - Read
@@ -95,15 +96,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-config.sh --dump
 If a config file exists (`.claude/code-guardian.config.json`), display the current settings.
 
 If no config file exists, tell the user:
-> No configuration file found. Using defaults (all available tools, full codebase scope).
+> Configuration: No configuration file found. Using defaults (all available tools, full codebase scope).
 
-Then ask with AskUserQuestion: "Would you like to configure scan defaults?"
+Then tell the user they're all set and can run `/code-guardian:scan` anytime. Do NOT ask the user whether they want to configure — just end here. If they want to customize defaults later, they can re-run `/code-guardian:setup --configure`.
 
-Options:
-- **Yes, configure now** — proceed to Step 7
-- **No, use defaults** — done
-
-### Step 7: Configure Scan Defaults (if requested)
+### Step 7: Configure Scan Defaults (only if `--configure` was passed in `$ARGUMENTS`)
 
 Ask with AskUserQuestion (multi-select): "Which tools do you want to run by default?" — list all available tools as options.
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # govulncheck wrapper — Go vulnerability checking
+# Searches recursively for go.mod files (multi-module aware)
 # Usage: govulncheck.sh
 set -euo pipefail
 
@@ -11,36 +12,60 @@ OUTPUT_DIR="${SCAN_OUTPUT_DIR:-.}"
 FINDINGS_FILE="${OUTPUT_DIR}/govulncheck-findings.jsonl"
 > "$FINDINGS_FILE"
 
-if ! [[ -f go.mod ]]; then
+PROJECT_ROOT="$(pwd)"
+
+# ── Discover go.mod locations ────────────────────────────────────────
+AUDIT_DIRS=()
+while IFS= read -r gomod; do
+  [[ -z "$gomod" ]] && continue
+  AUDIT_DIRS+=("$(dirname "$gomod")")
+done < <(find . -name go.mod \
+  -not -path '*/vendor/*' \
+  -not -path '*/.git/*' \
+  2>/dev/null | sort)
+
+if [[ ${#AUDIT_DIRS[@]} -eq 0 ]]; then
   log_info "No go.mod found, skipping govulncheck"
   exit 0
 fi
 
-log_step "Running govulncheck (Go vulnerability check)..."
+log_step "Running govulncheck (Go vulnerability check) across ${#AUDIT_DIRS[@]} location(s)..."
 
-RAW_OUTPUT=$(mktemp /tmp/cg-govulncheck-XXXXXX.json)
-EXIT_CODE=0
+AUDITED=0
 
-if cmd_exists govulncheck; then
-  govulncheck -json ./... > "$RAW_OUTPUT" 2>/dev/null || EXIT_CODE=$?
-else
-  log_warn "govulncheck not available, skipping"
-  rm -f "$RAW_OUTPUT"
-  exit 0
-fi
+for audit_dir in "${AUDIT_DIRS[@]}"; do
+  cd "$PROJECT_ROOT/$audit_dir"
 
-# Detect tool failure: non-zero exit with no usable output
-if [[ $EXIT_CODE -ne 0 ]] && { [[ ! -f "$RAW_OUTPUT" ]] || [[ ! -s "$RAW_OUTPUT" ]]; }; then
-  log_error "govulncheck failed (exit code $EXIT_CODE)"
-  rm -f "$RAW_OUTPUT"
-  echo "$FINDINGS_FILE"
-  exit 2
-fi
+  REL_PREFIX="${audit_dir#./}"
+  [[ "$REL_PREFIX" == "." ]] && REL_PREFIX=""
 
-if [[ -f "$RAW_OUTPUT" ]] && [[ -s "$RAW_OUTPUT" ]]; then
-  if cmd_exists python3; then
-    python3 -c "
+  [[ -n "$REL_PREFIX" ]] && log_info "Checking $REL_PREFIX..." || log_info "Checking project root..."
+
+  RAW_OUTPUT=$(mktemp /tmp/cg-govulncheck-XXXXXX.json)
+  EXIT_CODE=0
+
+  if cmd_exists govulncheck; then
+    govulncheck -json ./... > "$RAW_OUTPUT" 2>/dev/null || EXIT_CODE=$?
+  else
+    log_warn "govulncheck not available, skipping"
+    rm -f "$RAW_OUTPUT"
+    exit 0
+  fi
+
+  # Detect tool failure: non-zero exit with no usable output
+  if [[ $EXIT_CODE -ne 0 ]] && { [[ ! -f "$RAW_OUTPUT" ]] || [[ ! -s "$RAW_OUTPUT" ]]; }; then
+    [[ -n "$REL_PREFIX" ]] && loc=" in $REL_PREFIX" || loc=""
+    log_error "govulncheck failed${loc} (exit code $EXIT_CODE)"
+    rm -f "$RAW_OUTPUT"
+    continue
+  fi
+
+  if [[ -f "$RAW_OUTPUT" ]] && [[ -s "$RAW_OUTPUT" ]]; then
+    if cmd_exists python3; then
+      GOMOD_PATH="${REL_PREFIX:+${REL_PREFIX}/}go.mod"
+      python3 -c "
 import json, sys
+gomod = '$GOMOD_PATH'
 try:
     osv_entries = {}  # vuln_id -> osv entry data
     finding_ids = set()  # vuln IDs confirmed as actually called
@@ -76,7 +101,7 @@ try:
             'severity': sev,
             'rule': vuln_id,
             'message': f'{pkg}: {summary}',
-            'file': 'go.mod',
+            'file': gomod,
             'line': 0,
             'autoFixable': False,
             'category': 'dependency'
@@ -84,11 +109,20 @@ try:
         print(json.dumps(finding))
 except Exception as e:
     print(json.dumps({'error': str(e)}), file=sys.stderr)
-" > "$FINDINGS_FILE"
+" >> "$FINDINGS_FILE"
+    fi
   fi
-fi
 
-rm -f "$RAW_OUTPUT"
+  rm -f "$RAW_OUTPUT"
+  AUDITED=$((AUDITED + 1))
+done
+
+cd "$PROJECT_ROOT"
+
+if [[ $AUDITED -eq 0 ]]; then
+  log_info "No auditable Go modules found, skipping"
+  exit 0
+fi
 
 count=$(wc -l < "$FINDINGS_FILE" | tr -d ' ')
 if [[ "$count" -gt 0 ]]; then
