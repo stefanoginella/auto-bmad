@@ -93,15 +93,19 @@ Read the findings file from the scan output (each line is a JSON finding with: t
 
 **Then, after the report**:
 
-- **If `--autofix` was passed**: Proceed to fix automatically — re-run scan.sh with `--autofix` for auto-fixable findings, use the **security-fixer** agent for the rest, then re-scan to verify. Report: auto-fixed, AI-fixed, remaining (with explanations). Update the report file (see below).
+- **If `--autofix` was passed**: Proceed to fix automatically — re-run scan.sh with `--autofix` for auto-fixable findings, use the **security-fixer** agent for the rest. Update the report file (see below).
 - **Otherwise (default)**: Ask the user what to do next:
    - "Fix all high severity"
    - "Fix all auto-fixable"
    - "Fix specific findings (by number)"
    - "Done — no fixes needed"
-  If the user chooses to fix: re-run scan.sh with `--autofix` for auto-fixable findings, use the **security-fixer** agent for the rest, then re-scan to verify. Update the report file (see below).
+  If the user chooses to fix: re-run scan.sh with `--autofix` for auto-fixable findings, use the **security-fixer** agent for the rest. Update the report file (see below).
 
-**After any fixes are applied**, update the saved report file: for each successfully fixed finding, change its checkbox from `- [ ]` to `- [x]` using the Edit tool. This keeps the report in sync as a living remediation tracker.
+**After any fixes are applied**, update the saved report file using the Edit tool:
+1. For each successfully fixed finding, change its checkbox from `- [ ]` to `- [x]`
+2. Append a `## Fix Summary` section at the end of the report listing what was fixed, how (tool autofix vs AI fix), and any remaining unfixed items with reasons
+
+**Never re-run the scan to regenerate the report.** The report is generated once from the initial scan. Fixes are tracked by updating checkboxes and appending the fix summary to the existing report.
 
 ### Step 5: Final Report
 
@@ -117,7 +121,7 @@ Always end with these sections:
    >
    > Run `/code-guardian:code-guardian-setup` to see all tool status.
 5. **CI recommendation** — if no CI security scanning detected, suggest `/code-guardian:code-guardian-ci`
-6. **Scan report** — tell the user a detailed report was saved to disk (the path is in the `reportFile` field of the scan output JSON). Findings are listed as `- [ ]` checkbox items they can mark `[x]` as they remediate each issue. Example: "A detailed report has been saved to `<reportFile>`. Each finding is a checkbox you can mark off as you fix it."
+6. **Scan report** — tell the user a detailed report was saved to disk (the path is in the `reportFile` field of the scan output JSON). All detected findings are always listed as `- [ ]` checkbox items regardless of mode. Example: "A detailed report has been saved to `<reportFile>`. Each finding is a checkbox you can mark off as you fix it."
 
 ## Scope & Dependency Scanners
 
