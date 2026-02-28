@@ -10,31 +10,31 @@ source "${_TOOL_REGISTRY_DIR}/common.sh"
 
 # Semgrep — multi-language SAST
 TOOL_SEMGREP_DOCKER="semgrep/semgrep:1.153.0"
-TOOL_SEMGREP_INSTALL_MACOS="pip3 install semgrep"
+TOOL_SEMGREP_INSTALL_MACOS="brew install semgrep"
 TOOL_SEMGREP_INSTALL_LINUX="pip3 install semgrep"
 TOOL_SEMGREP_CATEGORY="sast"
 
 # Trivy — vulnerability scanner (containers, fs, IaC)
 TOOL_TRIVY_DOCKER="aquasec/trivy:0.69.1"
 TOOL_TRIVY_INSTALL_MACOS="brew install trivy"
-TOOL_TRIVY_INSTALL_LINUX="curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.69.1/contrib/install.sh | sh -s -- -b /usr/local/bin v0.69.1"
+TOOL_TRIVY_INSTALL_LINUX="brew install trivy"
 TOOL_TRIVY_CATEGORY="vulnerability"
 
 # Gitleaks — secret detection
 TOOL_GITLEAKS_DOCKER="zricethezav/gitleaks:v8.30.0"
 TOOL_GITLEAKS_INSTALL_MACOS="brew install gitleaks"
-TOOL_GITLEAKS_INSTALL_LINUX="curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz | tar xz -C /usr/local/bin gitleaks"
+TOOL_GITLEAKS_INSTALL_LINUX="brew install gitleaks"
 TOOL_GITLEAKS_CATEGORY="secrets"
 
 # Hadolint — Dockerfile linter
 TOOL_HADOLINT_DOCKER="hadolint/hadolint:v2.14.0"
 TOOL_HADOLINT_INSTALL_MACOS="brew install hadolint"
-TOOL_HADOLINT_INSTALL_LINUX="curl -sSfL https://github.com/hadolint/hadolint/releases/download/v2.14.0/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint && chmod +x /usr/local/bin/hadolint"
+TOOL_HADOLINT_INSTALL_LINUX="brew install hadolint"
 TOOL_HADOLINT_CATEGORY="container"
 
 # Checkov — IaC scanner
 TOOL_CHECKOV_DOCKER="bridgecrew/checkov:3.2.506"
-TOOL_CHECKOV_INSTALL_MACOS="pip3 install checkov"
+TOOL_CHECKOV_INSTALL_MACOS="brew install checkov"
 TOOL_CHECKOV_INSTALL_LINUX="pip3 install checkov"
 TOOL_CHECKOV_CATEGORY="iac"
 
@@ -46,31 +46,31 @@ TOOL_NPM_AUDIT_CATEGORY="dependency"
 
 # pip-audit — Python dependency audit
 TOOL_PIP_AUDIT_DOCKER=""
-TOOL_PIP_AUDIT_INSTALL_MACOS="pip3 install pip-audit"
+TOOL_PIP_AUDIT_INSTALL_MACOS="brew install pip-audit"
 TOOL_PIP_AUDIT_INSTALL_LINUX="pip3 install pip-audit"
 TOOL_PIP_AUDIT_CATEGORY="dependency"
 
 # Bandit — Python SAST (uses python:3-slim with inline pip install as Docker fallback)
 TOOL_BANDIT_DOCKER="python:3-slim"
-TOOL_BANDIT_INSTALL_MACOS="pip3 install bandit"
+TOOL_BANDIT_INSTALL_MACOS="brew install bandit"
 TOOL_BANDIT_INSTALL_LINUX="pip3 install bandit"
 TOOL_BANDIT_CATEGORY="sast"
 
 # gosec — Go SAST
 TOOL_GOSEC_DOCKER="securego/gosec:v2.24.0"
 TOOL_GOSEC_INSTALL_MACOS="brew install gosec"
-TOOL_GOSEC_INSTALL_LINUX="curl -sfL https://raw.githubusercontent.com/securego/gosec/v2.24.0/install.sh | sh -s -- -b /usr/local/bin v2.24.0"
+TOOL_GOSEC_INSTALL_LINUX="go install github.com/securego/gosec/v2/cmd/gosec@latest"
 TOOL_GOSEC_CATEGORY="sast"
 
 # govulncheck — Go vulnerability checker
 TOOL_GOVULNCHECK_DOCKER=""
-TOOL_GOVULNCHECK_INSTALL_MACOS="go install golang.org/x/vuln/cmd/govulncheck@latest"
+TOOL_GOVULNCHECK_INSTALL_MACOS="brew install govulncheck"
 TOOL_GOVULNCHECK_INSTALL_LINUX="go install golang.org/x/vuln/cmd/govulncheck@latest"
 TOOL_GOVULNCHECK_CATEGORY="dependency"
 
 # cargo-audit — Rust dependency audit
 TOOL_CARGO_AUDIT_DOCKER=""
-TOOL_CARGO_AUDIT_INSTALL_MACOS="cargo install cargo-audit"
+TOOL_CARGO_AUDIT_INSTALL_MACOS="brew install cargo-audit"
 TOOL_CARGO_AUDIT_INSTALL_LINUX="cargo install cargo-audit"
 TOOL_CARGO_AUDIT_CATEGORY="dependency"
 
@@ -95,24 +95,24 @@ TOOL_ESLINT_SECURITY_CATEGORY="sast"
 # Dockle — container image linter
 TOOL_DOCKLE_DOCKER="goodwithtech/dockle:v0.4.15"
 TOOL_DOCKLE_INSTALL_MACOS="brew install goodwithtech/r/dockle"
-TOOL_DOCKLE_INSTALL_LINUX="curl -sSfL https://github.com/goodwithtech/dockle/releases/download/v0.4.15/dockle_0.4.15_Linux-64bit.tar.gz | tar xz -C /usr/local/bin dockle"
+TOOL_DOCKLE_INSTALL_LINUX="brew install goodwithtech/r/dockle"
 TOOL_DOCKLE_CATEGORY="container"
 
 # TruffleHog — secret detection (OSS)
 TOOL_TRUFFLEHOG_DOCKER="trufflesecurity/trufflehog:3.93.6"
 TOOL_TRUFFLEHOG_INSTALL_MACOS="brew install trufflehog"
-TOOL_TRUFFLEHOG_INSTALL_LINUX="curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/v3.93.6/scripts/install.sh | sh -s -- -b /usr/local/bin"
+TOOL_TRUFFLEHOG_INSTALL_LINUX="brew install trufflehog"
 TOOL_TRUFFLEHOG_CATEGORY="secrets"
 
 # OSV-Scanner — universal dependency vulnerability scanner
 TOOL_OSV_SCANNER_DOCKER="ghcr.io/google/osv-scanner:v2.3.3"
 TOOL_OSV_SCANNER_INSTALL_MACOS="brew install osv-scanner"
-TOOL_OSV_SCANNER_INSTALL_LINUX="curl -sSfL https://github.com/google/osv-scanner/releases/download/v2.3.3/osv-scanner_linux_amd64 -o /usr/local/bin/osv-scanner && chmod +x /usr/local/bin/osv-scanner"
+TOOL_OSV_SCANNER_INSTALL_LINUX="brew install osv-scanner"
 TOOL_OSV_SCANNER_CATEGORY="dependency"
 
 # PHPStan — PHP static analysis
 TOOL_PHPSTAN_DOCKER="ghcr.io/phpstan/phpstan:2.1"
-TOOL_PHPSTAN_INSTALL_MACOS="composer global require phpstan/phpstan"
+TOOL_PHPSTAN_INSTALL_MACOS="brew install phpstan"
 TOOL_PHPSTAN_INSTALL_LINUX="composer global require phpstan/phpstan"
 TOOL_PHPSTAN_CATEGORY="sast"
 
