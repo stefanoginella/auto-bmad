@@ -64,17 +64,17 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/cache-state.sh --write \
 
 ### Step 3: Run Security Scan
 
+**Always run the scan in report-only mode first** — never pass `--autofix` to the initial scan. This ensures the user sees the full picture before any files are modified.
+
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/scan.sh \
   --stack-json /tmp/cg-stack.json \
   --tools-json /tmp/cg-tools.json \
   --scope <scope> \
   [--base-ref <ref>] \
-  [--autofix] \
   [--tools tool1,tool2,...]
 ```
 
-Pass `--autofix` only if the user passed `--autofix`.
 Pass `--tools` if the user passed `--tools`.
 
 ### Step 4: Process Results
@@ -83,24 +83,25 @@ Read the findings file from the scan output (each line is a JSON finding with: t
 
 **If no findings**: Report success. Suggest CI scanning if none detected.
 
-**If `--autofix` was used**:
-1. Report what tools auto-fixed (semgrep --autofix, eslint --fix, npm audit fix, etc.)
-2. For remaining findings tools couldn't auto-fix, use the **security-fixer** agent to apply code-level remediation. The agent reads the findings JSONL, understands each vulnerability type, and applies minimal targeted fixes.
-3. Re-run scan to verify fixes
-4. Report: auto-fixed, AI-fixed, remaining (with explanations)
-
-**Otherwise (default)**:
+**If findings exist**:
 1. Present findings grouped by severity (high first), then by category
 2. Show a summary table:
    ```
    | # | Severity | Tool | Rule | File:Line | Auto-fixable |
    ```
-3. Ask what to do:
+3. Proceed to the Final Report (Step 5) — do NOT fix anything yet
+
+**Then, after the report**:
+
+- **If `--autofix` was passed**: Proceed to fix automatically — re-run scan.sh with `--autofix` for auto-fixable findings, use the **security-fixer** agent for the rest, then re-scan to verify. Report: auto-fixed, AI-fixed, remaining (with explanations). Update the report file (see below).
+- **Otherwise (default)**: Ask the user what to do next:
    - "Fix all high severity"
    - "Fix all auto-fixable"
    - "Fix specific findings (by number)"
-   - "Skip and just report"
-4. For selected findings: run scanner with --autofix if auto-fixable, otherwise use the **security-fixer** agent for code-level fixes
+   - "Done — no fixes needed"
+  If the user chooses to fix: re-run scan.sh with `--autofix` for auto-fixable findings, use the **security-fixer** agent for the rest, then re-scan to verify. Update the report file (see below).
+
+**After any fixes are applied**, update the saved report file: for each successfully fixed finding, change its checkbox from `- [ ]` to `- [x]` using the Edit tool. This keeps the report in sync as a living remediation tracker.
 
 ### Step 5: Final Report
 

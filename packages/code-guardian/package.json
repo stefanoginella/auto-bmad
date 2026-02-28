@@ -1,6 +1,6 @@
 {
   "name": "@stefanoginella/code-guardian",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "description": "Installs the code-guardian Claude Code plugin — deterministic security scanning layer",
   "bin": {
     "code-guardian": "cli.js"
