@@ -1,6 +1,6 @@
 {
   "name": "code-guardian",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "description": "[EXPERIMENTAL] Deterministic security scanning layer for Claude Code. Auto-detects stack, runs open-source security CLI tools (SAST, secrets, dependencies, containers, IaC), auto-fixes issues, and recommends CI additions. Supports interactive and yolo modes. Check https://github.com/stefanoginella/claude-code-plugins/blob/main/plugins/code-guardian/README.md for details.",
   "author": {
     "name": "Stefano Ginella"

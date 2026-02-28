@@ -103,7 +103,7 @@ Read the findings file from the scan output (each line is a JSON finding with: t
 
 **After any fixes are applied**, update the saved report file using the Edit tool:
 1. For each successfully fixed finding, change its checkbox from `- [ ]` to `- [x]`
-2. Append a `## Fix Summary` section at the end of the report listing what was fixed, how (tool autofix vs AI fix), and any remaining unfixed items with reasons
+2. Append a `## What Was Fixed` section at the end of the report listing what was fixed, how (tool autofix vs AI fix), and any remaining unfixed items with reasons
 
 **Do not re-run the scan after fixing.** The report file is generated once from the initial scan. After fixes, update it in-place — do not run a second scan to produce a new report. Checkboxes and the fix summary are the only changes made to the existing report file.
 
