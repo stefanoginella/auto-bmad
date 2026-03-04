@@ -85,15 +85,15 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 ## Code Reviews
 
 5. **Story {{STORY_ID}} Code Review #1**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
 
 6. **Story {{STORY_ID}} Code Review #2**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
 
 7. **Story {{STORY_ID}} Code Review #3**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
 
-After all reviews are complete, the coordinator should check if the `{{STORY_FILE}}` has been updated with the findings and fixes from each review, and if not, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes.
+After all 3 Code Reviews are complete, the coordinator should check if the `{{STORY_FILE}}` has been updated with the findings and fixes from each review, and if not, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes. Follow the same pattern as previous story files.
 
 ## NFR Gate
 
