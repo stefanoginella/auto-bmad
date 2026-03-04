@@ -111,35 +111,13 @@ After all reviews are complete, the coordinator should check if the {{STORY_FILE
 11. **Story {{STORY_ID}} Test Review**
     - **Task prompt:** `/bmad-tea-testarch-test-review {{STORY_FILE}} yolo — include test pyramid compliance in the review: flag any E2E tests that duplicate coverage from lower layers (unit/integration/API), flag excessive E2E test counts, and recommend pushing tests down the pyramid where possible.`
 
-# Final Commit
+# Status Update
 
-1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
-2. Read {{STORY_FILE}} to determine the story type and what was built, then commit:
+Before generating the report, the coordinator MUST check and update the story status:
 
-```
-git add -A && git commit -m "<type>({{STORY_ID}}): <one-line summary>
-
-<2-5 line summary or list of what was implemented>"
-```
-
-Derive `<type>` from the story using this table (default to `feat` if ambiguous):
-
-| Type | When to use |
-|------|------------|
-| `feat` | New user-facing feature or capability |
-| `fix` | Bug fix |
-| `refactor` | Code restructuring, no behavior change |
-| `perf` | Performance improvement |
-| `chore` | Dependencies, configs, tooling, maintenance |
-| `docs` | Documentation only |
-| `test` | Tests only, no production code |
-| `style` | Formatting, whitespace, no logic change |
-| `ci` | CI/CD pipeline changes |
-| `build` | Build system or external dependency changes |
-
-The one-line summary should describe the user-facing outcome, not "story complete".
-
-**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
+1. Read `{{STORY_FILE}}` — if the story status is not updated to reflect completion of all pipeline steps, update it accordingly.
+2. Read `{{implementation_artifacts}}/sprint-status.yaml` — if the story's status is not updated to reflect completion, update it accordingly.
+3. Run `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): update story and sprint status"` to checkpoint the status updates.
 
 # Pipeline Report
 
@@ -208,3 +186,33 @@ Use this template for the report:
 - Start a new session with fresh context, then run `/auto-bmad-story <next-story>` for the next story in the sprint
 - After all stories in the epic are done, start a new session and run `/auto-bmad-epic-end <epic-number>` to close the epic
 ```
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Read {{STORY_FILE}} to determine the story type and what was built, then commit:
+
+```
+git add -A && git commit -m "<type>({{STORY_ID}}): <one-line summary>
+
+<2-5 line summary or list of what was implemented>"
+```
+
+Derive `<type>` from the story using this table (default to `feat` if ambiguous):
+
+| Type | When to use |
+|------|------------|
+| `feat` | New user-facing feature or capability |
+| `fix` | Bug fix |
+| `refactor` | Code restructuring, no behavior change |
+| `perf` | Performance improvement |
+| `chore` | Dependencies, configs, tooling, maintenance |
+| `docs` | Documentation only |
+| `test` | Tests only, no production code |
+| `style` | Formatting, whitespace, no logic change |
+| `ci` | CI/CD pipeline changes |
+| `build` | Build system or external dependency changes |
+
+The one-line summary should describe the user-facing outcome, not "story complete".
+
+**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
