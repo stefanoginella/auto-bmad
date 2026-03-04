@@ -112,4 +112,4 @@ The pipelines run various bash commands (depending on the project), skills and M
 
 ## 📄 License
 
-MIT
+[MIT](LICENSE.md)
