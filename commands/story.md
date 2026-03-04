@@ -61,7 +61,7 @@ After step 1 (Create) succeeds, glob `{{implementation_artifacts}}/{{STORY_ID}}-
 
 # Pipeline Steps
 
-After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/11 <step-name> - done"` and prints a 1-line progress update: `Step N/11: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/13 <step-name> - done"` and prints a 1-line progress update: `Step N/13: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
 
 ## Story Creation & Validation
 
@@ -72,43 +72,49 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 2. **Story {{STORY_ID}} Validate**
    - **Task prompt:** `/bmad-bmm-create-story validate story {{STORY_ID}} yolo — fix all issues, recommendations and optimizations.`
 
+3. **Story {{STORY_ID}} Adversarial Review**
+   - **Task prompt:** `/bmad-review-adversarial-general {{STORY_FILE}} yolo — review the story specification. Fix all issues found.`
+
 ## Test-First
 
-3. **Story {{STORY_ID}} ATDD**
+4. **Story {{STORY_ID}} ATDD**
    - **Task prompt:** `/bmad-tea-testarch-atdd {{STORY_FILE}} yolo — follow the test pyramid: prefer API-level and integration-level acceptance tests over E2E. Only create E2E tests for acceptance criteria that genuinely require full browser interaction (UI-specific flows). Generate unit tests for business logic criteria. Target a single browser (Chromium) for any E2E tests. Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not create or modify any production code, API routes, UI components, database schemas, or application logic — implementation is the Dev step's job.`
 
 ## Development
 
-4. **Story {{STORY_ID}} Develop**
+5. **Story {{STORY_ID}} Develop**
    - **Task prompt:** `/bmad-bmm-dev-story {{STORY_FILE}} yolo`
 
-## Code Reviews
+## Reviews
 
-5. **Story {{STORY_ID}} Code Review #1**
+6. **Story {{STORY_ID}} Edge-Case Hunt**
+   - **Task prompt:** `/bmad-review-edge-case-hunter yolo — run git diff {{START_COMMIT_HASH}} to get the production code changes as content. Fix all relevant findings by adding the suggested guards.`
+
+7. **Story {{STORY_ID}} Code Review #1**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
 
-6. **Story {{STORY_ID}} Code Review #2**
+8. **Story {{STORY_ID}} Code Review #2**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
 
-7. **Story {{STORY_ID}} Code Review #3**
+9. **Story {{STORY_ID}} Code Review #3**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
 
 After all 3 Code Reviews are complete, the coordinator should check if the `{{STORY_FILE}}` has been updated with the findings and fixes from each review, and if not, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes. Follow the same pattern as previous story files.
 
 ## NFR Gate
 
-8. **Story {{STORY_ID}} NFR**
+10. **Story {{STORY_ID}} NFR**
    - **Task prompt:** `/bmad-tea-testarch-nfr {{STORY_FILE}} yolo`
 
 ## Traceability & Test Automation
 
-9. **Story {{STORY_ID}} Trace**
+11. **Story {{STORY_ID}} Trace**
    - **Task prompt:** `/bmad-tea-testarch-trace {{STORY_FILE}} yolo`
 
-10. **Story {{STORY_ID}} Test Automate**
+12. **Story {{STORY_ID}} Test Automate**
     - **Task prompt:** `/bmad-tea-testarch-automate {{STORY_FILE}} yolo — when expanding test coverage, push new tests to the lowest viable layer (unit > integration/API > E2E). Do not add E2E tests for scenarios already covered at lower layers. Only add E2E tests to fill gaps in critical happy-path coverage.`
 
-11. **Story {{STORY_ID}} Test Review**
+13. **Story {{STORY_ID}} Test Review**
     - **Task prompt:** `/bmad-tea-testarch-test-review {{STORY_FILE}} yolo — include test pyramid compliance in the review: flag any E2E tests that duplicate coverage from lower layers (unit/integration/API), flag excessive E2E test counts, and recommend pushing tests down the pyramid where possible.`
 
 # Status Update
@@ -151,15 +157,17 @@ Use this template for the report:
 |---|------|--------|----------|---------|
 | 1 | Story Create | done/skipped | Xm | <story title/scope> |
 | 2 | Story Validate | done | Xm | <issues found and fixed count> |
-| 3 | ATDD | done | Xm | <acceptance tests written count> |
-| 4 | Develop | done | Xm | <files created/modified, key implementation summary> |
-| 5 | Code Review #1 | done | Xm | <issues found/fixed count by severity> |
-| 6 | Code Review #2 | done | Xm | <issues found/fixed count by severity> |
-| 7 | Code Review #3 | done | Xm | <issues found/fixed count by severity> |
-| 8 | NFR | done | Xm | <NFR assessment result (pass/concerns)> |
-| 9 | Trace | done | Xm | <traceability coverage %> |
-| 10 | Test Automate | done | Xm | <tests automated count, pyramid compliance> |
-| 11 | Test Review | done | Xm | <test quality verdict, pyramid violations flagged> |
+| 3 | Adversarial Review | done | Xm | <issues found/fixed count by severity> |
+| 4 | ATDD | done | Xm | <acceptance tests written count> |
+| 5 | Develop | done | Xm | <files created/modified, key implementation summary> |
+| 6 | Edge-Case Hunt | done | Xm | <unhandled paths found/fixed count> |
+| 7 | Code Review #1 | done | Xm | <issues found/fixed count by severity> |
+| 8 | Code Review #2 | done | Xm | <issues found/fixed count by severity> |
+| 9 | Code Review #3 | done | Xm | <issues found/fixed count by severity> |
+| 10 | NFR | done | Xm | <NFR assessment result (pass/concerns)> |
+| 11 | Trace | done | Xm | <traceability coverage %> |
+| 12 | Test Automate | done | Xm | <tests automated count, pyramid compliance> |
+| 13 | Test Review | done | Xm | <test quality verdict, pyramid violations flagged> |
 
 ## Key Decisions & Learnings
 
