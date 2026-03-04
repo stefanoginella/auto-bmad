@@ -85,13 +85,15 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 ## Code Reviews
 
 5. **Story {{STORY_ID}} Code Review #1**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof. After fixing, ensure the story file's Dev Agent Record is updated with all findings and resolutions from this review pass.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof.`
 
 6. **Story {{STORY_ID}} Code Review #2**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof. After fixing, ensure the story file's Dev Agent Record is updated with all findings and resolutions from this review pass.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof.`
 
 7. **Story {{STORY_ID}} Code Review #3**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof. After fixing, ensure the story file's Dev Agent Record is updated with all findings and resolutions from this review pass.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof.`
+
+After all reviews are complete, the coordinator should check if the {{STORY_FILE}} has been updated with the findings and fixes from each review, and if not, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes.
 
 ## NFR Gate
 
