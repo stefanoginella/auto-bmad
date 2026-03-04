@@ -52,7 +52,7 @@ Each step MUST run in its own **foreground Task tool call** (subagent_type: "gen
 ## Pre-flight
 
 Record before running any steps:
-- `{{START_TIME}}` — current date+time in ISO 8601 format (e.g. `2026-02-26T14:30:00`)
+- `{{START_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output
 - `{{START_COMMIT_HASH}}` — run `git rev-parse --short HEAD` and store the result
 
 ## Story File Path Resolution
@@ -93,7 +93,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 7. **Story {{STORY_ID}} Code Review #3**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof.`
 
-After all reviews are complete, the coordinator should check if the {{STORY_FILE}} has been updated with the findings and fixes from each review, and if not, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes.
+After all reviews are complete, the coordinator should check if the `{{STORY_FILE}}` has been updated with the findings and fixes from each review, and if not, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes.
 
 ## NFR Gate
 
@@ -121,7 +121,7 @@ Before generating the report, the coordinator MUST check and update the story st
 
 # Pipeline Report
 
-1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
+1. Record `{{END_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output.
 2. Scan `{{output_folder}}/` recursively for files modified after `{{START_TIME}}` to build the artifact list.
 3. Create `{{auto_bmad_artifacts}}/` directory if it doesn't exist.
 4. Generate the report and save it to `{{auto_bmad_artifacts}}/epic-{{EPIC_ID}}-story-{{STORY_NUM}}-YYYY-MM-DD-HHMMSS.md` (using `{{END_TIME}}` for the timestamp).
@@ -169,13 +169,13 @@ Use this template for the report:
 ## Action Items
 
 ### Review
-- [ ] Story implementation matches acceptance criteria
-- [ ] Code review findings that were auto-fixed — verify fixes are correct
+- [ ] Verify story implementation matches acceptance criteria — spot-check key flows
+- [ ] Audit auto-fixed code review findings — confirm fixes are correct, not just silencing warnings
 
-### Test
-- [ ] Provide step-by-step manual testing instructions covering every implemented feature and acceptance criterion — include exact commands to run, URLs to visit, inputs to enter, and expected outcomes for each step
-- [ ] Run test suites locally (`npm test`, `npx playwright test`, etc.)
-- [ ] Verify edge cases from story spec
+### Verify
+- [ ] Run full test suite locally and confirm green (`npm test && npx playwright test`)
+- [ ] Smoke-test the feature from the UI — happy path only, focus on visual correctness and interaction feel
+- [ ] Check UI states that automated tests can't catch (animations, layout shifts, responsive behavior)
 
 ### Attention
 - [ ] <NFR concerns flagged — e.g. "auth endpoint has no rate limiting", "no caching on frequently accessed data">

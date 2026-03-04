@@ -48,7 +48,7 @@ Each step MUST run in its own **foreground Task tool call** (subagent_type: "gen
 # Pre-flight
 
 Before running any steps, record:
-- `{{START_TIME}}` — current date+time in ISO 8601 format (e.g. `2026-02-26T14:30:00`)
+- `{{START_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output
 - `{{START_COMMIT_HASH}}` — run `git rev-parse --short HEAD` and store the result
 
 # Pipeline Steps
@@ -74,7 +74,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 
 # Pipeline Report
 
-1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
+1. Record `{{END_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output.
 2. Scan `{{output_folder}}/` recursively for files modified after `{{START_TIME}}` to build the artifact list.
 3. Create `{{auto_bmad_artifacts}}/` directory if it doesn't exist.
 4. Generate the report and save it to `{{auto_bmad_artifacts}}/epic-{{EPIC_ID}}-end-YYYY-MM-DD-HHMMSS.md` (using `{{END_TIME}}` for the timestamp).
@@ -113,13 +113,9 @@ Use this template for the report:
 ## Action Items
 
 ### Review
-- [ ] Retrospective findings — validate insights and action items
-- [ ] Updated project context — verify accuracy of current state
-- [ ] Final squashed commit — review the diff (`git show HEAD`) to confirm all epic changes are correct and complete
-
-### Attention
-- [ ] <deferred retro action items — process/team items that couldn't be auto-resolved, e.g. "improve estimation accuracy", "more pair programming">
-- [ ] <traceability gaps — e.g. "3 stories lack full requirement coverage", "acceptance criteria partially tested">
+- [ ] Read retrospective output — decide which deferred items enter next epic backlog
+- [ ] Diff project-context.md against previous version — confirm it reflects actual state
+- [ ] Review squashed commit diff (`git show HEAD`) — no accidental inclusions
 
 ### Next
 - If more epics remain, start a new session with fresh context and run `/auto-bmad-epic-start <next-epic-number>` to prepare the next epic

@@ -47,7 +47,7 @@ The step MUST run in its own **foreground Task tool call** (subagent_type: "gene
 # Pre-flight
 
 Before running any steps, record:
-- `{{START_TIME}}` — current date+time in ISO 8601 format (e.g. `2026-02-26T14:30:00`)
+- `{{START_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output
 - `{{START_COMMIT_HASH}}` — run `git rev-parse --short HEAD` and store the result
 
 # Pipeline Steps
@@ -67,7 +67,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 
 # Pipeline Report
 
-1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
+1. Record `{{END_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output.
 2. Scan `{{output_folder}}/` recursively for files modified after `{{START_TIME}}` to build the artifact list.
 3. Create `{{auto_bmad_artifacts}}/` directory if it doesn't exist.
 4. Generate the report and save it to `{{auto_bmad_artifacts}}/epic-{{EPIC_ID}}-start-YYYY-MM-DD-HHMMSS.md` (using `{{END_TIME}}` for the timestamp).
