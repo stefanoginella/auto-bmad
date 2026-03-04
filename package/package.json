@@ -1,0 +1,18 @@
+{
+  "name": "@stefanoginella/auto-bmad",
+  "version": "0.1.20",
+  "description": "Installs the auto-bmad Claude Code plugin — automated BMAD pipeline orchestration",
+  "bin": {
+    "auto-bmad": "cli.js"
+  },
+  "files": ["cli.js"],
+  "keywords": ["claude-code", "plugin", "bmad", "pipeline", "automation", "orchestration", "sdlc"],
+  "author": "Stefano Ginella",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stefanoginella/auto-bmad.git",
+    "directory": "package"
+  },
+  "homepage": "https://github.com/stefanoginella/auto-bmad/blob/main/README.md"
+}

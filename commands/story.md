@@ -1,0 +1,208 @@
+---
+name: 'auto-bmad-story'
+description: 'Develop a full BMAD story from start to finish using sequential agents'
+---
+
+# Load Configuration
+
+Read `_bmad/bmm/config.yaml` and `_bmad/tea/config.yaml` and set the following variables (resolve `{project-root}` to the actual project root path):
+
+| Variable | Source | Example |
+|----------|--------|---------|
+| `{{output_folder}}` | bmm `output_folder` | `_bmad-output` |
+| `{{planning_artifacts}}` | bmm `planning_artifacts` | `_bmad-output/planning-artifacts` |
+| `{{implementation_artifacts}}` | bmm `implementation_artifacts` | `_bmad-output/implementation-artifacts` |
+| `{{test_artifacts}}` | tea `test_artifacts` | `_bmad-output/test-artifacts` |
+| `{{auto_bmad_artifacts}}` | derived: `{{output_folder}}/auto-bmad-artifacts` | `_bmad-output/auto-bmad-artifacts` |
+
+All paths in this command that reference BMAD output directories MUST use these variables — never hardcode `_bmad-output` paths.
+
+# Load Project Context
+
+Read `{{output_folder}}/project-context.md` if it exists. This gives you general context about the project — its purpose, stack, conventions, and current state. Use this context to make informed decisions throughout the pipeline.
+
+# Detect Story ID
+
+A story ID is composed by exactly 2 numbers: the epic number and the story number within that epic, separated by a dash, a dot, or a space. For example, "1-1" would be the first story in the first epic, "2-3" would be the third story in the second epic, and so on. A story ID can also be inferred from the path name if a path is provided when launching the workflow (e.g., `{{implementation_artifacts}}/1-2-authentication-system.yaml` would set the story ID to "1-2").
+
+**IMPORTANT**: The dash (or dot/space) in a story ID is a SEPARATOR, not a range. `1-7` (or `1.7` or `1 7`) means "epic 1, story 7" — it does NOT mean "stories 1 through 7". This pipeline processes exactly ONE story per run. Never interpret a story ID as a range of stories.
+
+IF user provides epic-story number (e.g. 1-1, 1-2, 2.1, 2.2, etc.) or a file path containing an epic-story pattern:
+THEN set {{STORY_ID}} to the provided epic-story number (always a single story).
+ELSE ask to provide a epic-story number to identify the story to work on and set {{STORY_ID}} to the provided value.
+
+Set {{EPIC_ID}} and {{STORY_NUM}} by splitting {{STORY_ID}} on the dash/dot/space separator.
+
+# Story Pipeline
+
+Run the BMAD story pipeline for story {{STORY_ID}} as a minimal sequence of BMAD slash commands — lightweight orchestration with git safety, no reports.
+
+Each step MUST run in its own **foreground Task tool call** (subagent_type: "general-purpose") so that each agent gets a fresh context window.
+
+**CRITICAL — Tool usage rules:**
+- **DO** use the Task tool (foreground, default mode) for each step. It blocks and returns the result.
+- **DO NOT** use TeamCreate, SendMessage, TaskOutput, TaskCreate, or TaskList. This is a sequential pipeline, not a team collaboration.
+- **DO NOT** launch multiple Task calls simultaneously. Wait for each to return before launching the next.
+- **DO NOT** execute any step, fix, or implement new code yourself — always delegate to a Task agent.
+
+**Retry policy:** If a step fails, run `git reset --hard HEAD` to discard its partial changes, then retry **once**. If the retry also fails, stop the pipeline and tell the user:
+- Which step failed and why
+- Recovery commands: `git reset --hard {{START_COMMIT_HASH}}` to roll back the entire pipeline, or `git reset --hard HEAD` to retry the failed step.
+
+## Pre-flight
+
+Record before running any steps:
+- `{{START_TIME}}` — current date+time in ISO 8601 format (e.g. `2026-02-26T14:30:00`)
+- `{{START_COMMIT_HASH}}` — run `git rev-parse --short HEAD` and store the result
+
+## Story File Path Resolution
+
+After step 1 (Create) succeeds, glob `{{implementation_artifacts}}/{{STORY_ID}}-*.md` to find the story file and set {{STORY_FILE}} to its path. If the story file already existed (step 1 was skipped), set {{STORY_FILE}} the same way. All subsequent steps use {{STORY_FILE}}.
+
+# Pipeline Steps
+
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/11 <step-name> - done"` and prints a 1-line progress update: `Step N/11: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
+
+## Story Creation & Validation
+
+1. **Story {{STORY_ID}} Create**
+   - **Skip if:** a story file for {{STORY_ID}} already exists in `{{implementation_artifacts}}/` (glob for `{{STORY_ID}}-*.md`). Log "Story file already exists" with the file path. Set `{{STORY_FILE}}` to the existing file path.
+   - **Task prompt:** `/bmad-bmm-create-story story {{STORY_ID}} yolo`
+
+2. **Story {{STORY_ID}} Validate**
+   - **Task prompt:** `/bmad-bmm-create-story validate story {{STORY_ID}} yolo — fix all issues, recommendations and optimizations.`
+
+## Test-First
+
+3. **Story {{STORY_ID}} ATDD**
+   - **Task prompt:** `/bmad-tea-testarch-atdd {{STORY_FILE}} yolo — follow the test pyramid: prefer API-level and integration-level acceptance tests over E2E. Only create E2E tests for acceptance criteria that genuinely require full browser interaction (UI-specific flows). Generate unit tests for business logic criteria. Target a single browser (Chromium) for any E2E tests. Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not create or modify any production code, API routes, UI components, database schemas, or application logic — implementation is the Dev step's job.`
+
+## Development
+
+4. **Story {{STORY_ID}} Develop**
+   - **Task prompt:** `/bmad-bmm-dev-story {{STORY_FILE}} yolo`
+
+## Code Reviews
+
+5. **Story {{STORY_ID}} Code Review #1**
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof. After fixing, ensure the story file's Dev Agent Record is updated with all findings and resolutions from this review pass.`
+
+6. **Story {{STORY_ID}} Code Review #2**
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof. After fixing, ensure the story file's Dev Agent Record is updated with all findings and resolutions from this review pass.`
+
+7. **Story {{STORY_ID}} Code Review #3**
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, medium and low issues. Before fixing any finding, verify it is a genuine defect with concrete evidence (file:line) — do not fix style preferences, hypothetical concerns, or findings that lack implementation proof. After fixing, ensure the story file's Dev Agent Record is updated with all findings and resolutions from this review pass.`
+
+## NFR Gate
+
+8. **Story {{STORY_ID}} NFR**
+   - **Task prompt:** `/bmad-tea-testarch-nfr {{STORY_FILE}} yolo`
+
+## Traceability & Test Automation
+
+9. **Story {{STORY_ID}} Trace**
+   - **Task prompt:** `/bmad-tea-testarch-trace {{STORY_FILE}} yolo`
+
+10. **Story {{STORY_ID}} Test Automate**
+    - **Task prompt:** `/bmad-tea-testarch-automate {{STORY_FILE}} yolo — when expanding test coverage, push new tests to the lowest viable layer (unit > integration/API > E2E). Do not add E2E tests for scenarios already covered at lower layers. Only add E2E tests to fill gaps in critical happy-path coverage.`
+
+11. **Story {{STORY_ID}} Test Review**
+    - **Task prompt:** `/bmad-tea-testarch-test-review {{STORY_FILE}} yolo — include test pyramid compliance in the review: flag any E2E tests that duplicate coverage from lower layers (unit/integration/API), flag excessive E2E test counts, and recommend pushing tests down the pyramid where possible.`
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Read {{STORY_FILE}} to determine the story type and what was built, then commit:
+
+```
+git add -A && git commit -m "<type>({{STORY_ID}}): <one-line summary>
+
+<2-5 line summary or list of what was implemented>"
+```
+
+Derive `<type>` from the story using this table (default to `feat` if ambiguous):
+
+| Type | When to use |
+|------|------------|
+| `feat` | New user-facing feature or capability |
+| `fix` | Bug fix |
+| `refactor` | Code restructuring, no behavior change |
+| `perf` | Performance improvement |
+| `chore` | Dependencies, configs, tooling, maintenance |
+| `docs` | Documentation only |
+| `test` | Tests only, no production code |
+| `style` | Formatting, whitespace, no logic change |
+| `ci` | CI/CD pipeline changes |
+| `build` | Build system or external dependency changes |
+
+The one-line summary should describe the user-facing outcome, not "story complete".
+
+**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
+
+# Pipeline Report
+
+1. Record `{{END_TIME}}` — current date+time in ISO 8601 format.
+2. Scan `{{output_folder}}/` recursively for files modified after `{{START_TIME}}` to build the artifact list.
+3. Create `{{auto_bmad_artifacts}}/` directory if it doesn't exist.
+4. Generate the report and save it to `{{auto_bmad_artifacts}}/epic-{{EPIC_ID}}-story-{{STORY_NUM}}-YYYY-MM-DD-HHMMSS.md` (using `{{END_TIME}}` for the timestamp).
+5. Print the full report to the user.
+
+Use this template for the report:
+
+```markdown
+# Pipeline Report: epic {{EPIC_ID}} story {{STORY_NUM}}
+
+| Field | Value |
+|-------|-------|
+| Pipeline | story |
+| Story | {{STORY_ID}} |
+| Start | {{START_TIME}} |
+| End | {{END_TIME}} |
+| Duration | <minutes>m |
+| Initial Commit | {{START_COMMIT_HASH}} |
+
+## Artifacts
+
+- `<relative-path>` — new/updated
+
+## Pipeline Outcome
+
+| # | Step | Status | Duration | Summary |
+|---|------|--------|----------|---------|
+| 1 | Story Create | done/skipped | Xm | <story title/scope> |
+| 2 | Story Validate | done | Xm | <issues found and fixed count> |
+| 3 | ATDD | done | Xm | <acceptance tests written count> |
+| 4 | Develop | done | Xm | <files created/modified, key implementation summary> |
+| 5 | Code Review #1 | done | Xm | <issues found/fixed count by severity> |
+| 6 | Code Review #2 | done | Xm | <issues found/fixed count by severity> |
+| 7 | Code Review #3 | done | Xm | <issues found/fixed count by severity> |
+| 8 | NFR | done | Xm | <NFR assessment result (pass/concerns)> |
+| 9 | Trace | done | Xm | <traceability coverage %> |
+| 10 | Test Automate | done | Xm | <tests automated count, pyramid compliance> |
+| 11 | Test Review | done | Xm | <test quality verdict, pyramid violations flagged> |
+
+## Key Decisions & Learnings
+
+- <short summary of important decisions made, issues encountered, or learnings from any step>
+- <e.g. "Code review #2 found SQL injection in auth module — fixed", "ATDD tests required mock service setup">
+
+## Action Items
+
+### Review
+- [ ] Story implementation matches acceptance criteria
+- [ ] Code review findings that were auto-fixed — verify fixes are correct
+
+### Test
+- [ ] Provide step-by-step manual testing instructions covering every implemented feature and acceptance criterion — include exact commands to run, URLs to visit, inputs to enter, and expected outcomes for each step
+- [ ] Run test suites locally (`npm test`, `npx playwright test`, etc.)
+- [ ] Verify edge cases from story spec
+
+### Attention
+- [ ] <NFR concerns flagged — e.g. "auth endpoint has no rate limiting", "no caching on frequently accessed data">
+- [ ] <traceability gaps — e.g. "2 acceptance criteria not covered by tests">
+- [ ] <test coverage gaps — e.g. "error handling paths not tested">
+
+### Next
+- Start a new session with fresh context, then run `/auto-bmad-story <next-story>` for the next story in the sprint
+- After all stories in the epic are done, start a new session and run `/auto-bmad-epic-end <epic-number>` to close the epic
+```
