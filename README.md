@@ -1,6 +1,6 @@
 # 🤖 Auto BMAD
 
-[![Plugin](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://docs.anthropic.com/en/docs/claude-code) [![BMAD Method](https://img.shields.io/badge/BMAD-Method-orange)](https://github.com/bmad-code-org/BMAD-METHOD)
+[![npm version](https://img.shields.io/npm/v/@stefanoginella/auto-bmad)](https://www.npmjs.com/package/@stefanoginella/auto-bmad) [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE.md) [![Plugin](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://docs.anthropic.com/en/docs/claude-code) [![BMAD v6+](https://img.shields.io/badge/BMAD-v6%2B-orange)](https://github.com/bmad-code-org/BMAD-METHOD)
 
 Automated (and very opinionated) BMAD pipeline orchestration for Claude Code.
 
