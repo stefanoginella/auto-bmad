@@ -73,25 +73,25 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-bmm-create-story validate story {{STORY_ID}} yolo — fix all issues, recommendations and optimizations.`
 
 3. **Story {{STORY_ID}} Adversarial Review**
-   - **Task prompt:** `/bmad-review-adversarial-general {{STORY_FILE}} yolo — review the story specification. Fix all issues found.`
+   - **Task prompt:** `/bmad-review-adversarial-general {{STORY_FILE}} ultrathink yolo — review the story specification. Fix all issues found.`
 
 ## Test-First
 
 4. **Story {{STORY_ID}} ATDD**
-   - **Task prompt:** `/bmad-tea-testarch-atdd {{STORY_FILE}} yolo — follow the test pyramid: prefer API-level and integration-level acceptance tests over E2E. Only create E2E tests for acceptance criteria that genuinely require full browser interaction (UI-specific flows). Generate unit tests for business logic criteria. Target a single browser (Chromium) for any E2E tests. Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not create or modify any production code, API routes, UI components, database schemas, or application logic — implementation is the Dev step's job.`
+   - **Task prompt:** `/bmad-tea-testarch-atdd {{STORY_FILE}} ultrathink yolo — follow the test pyramid: prefer API-level and integration-level acceptance tests over E2E. Only create E2E tests for acceptance criteria that genuinely require full browser interaction (UI-specific flows). Generate unit tests for business logic criteria. Target a single browser (Chromium) for any E2E tests. Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not create or modify any production code, API routes, UI components, database schemas, or application logic — implementation is the Dev step's job.`
 
 ## Development
 
 5. **Story {{STORY_ID}} Develop**
-   - **Task prompt:** `/bmad-bmm-dev-story {{STORY_FILE}} yolo`
+   - **Task prompt:** `/bmad-bmm-dev-story {{STORY_FILE}} ultrathink yolo`
 
 ## Reviews
 
 6. **Story {{STORY_ID}} Edge-Case Hunt**
-   - **Task prompt:** `/bmad-review-edge-case-hunter yolo — run git diff {{START_COMMIT_HASH}} to get the production code changes as content. Fix all relevant findings by adding the suggested guards.`
+   - **Task prompt:** `/bmad-review-edge-case-hunter ultrathink yolo — run git diff {{START_COMMIT_HASH}} to get the production code changes as content. Fix all relevant findings by adding the suggested guards.`
 
 7. **Story {{STORY_ID}} Code Review #1**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
 
 8. **Story {{STORY_ID}} Code Review #2**
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`

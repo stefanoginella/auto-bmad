@@ -83,7 +83,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 
 2. **Create PRD**
    - **Skip if:** PRD already exists. Log "PRD already exists".
-   - **Task prompt:** `/bmad-bmm-create-prd yolo — {{USER_INPUT_INSTRUCTION}}`
+   - **Task prompt:** `/bmad-bmm-create-prd ultrathink yolo — {{USER_INPUT_INSTRUCTION}}`
 
 3. **Validate PRD**
    - **Skip if:** PRD already existed (was not created in step 2) AND downstream artifacts exist (architecture OR UX design specs). Log "PRD validation skipped — PRD predates this run and downstream artifacts already exist".
@@ -91,13 +91,13 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 
 4. **Create UX Design**
    - **Skip if:** UX design specification already exists. Also skip if the project has no frontend or UI component. Log reason.
-   - **Task prompt:** `/bmad-bmm-create-ux-design yolo`
+   - **Task prompt:** `/bmad-bmm-create-ux-design ultrathink yolo`
 
 ## Phase 3: Solutioning
 
 5. **Create Architecture**
    - **Skip if:** architecture docs already exist. Log "Architecture already exists".
-   - **Task prompt:** `/bmad-bmm-create-architecture yolo`
+   - **Task prompt:** `/bmad-bmm-create-architecture ultrathink yolo`
 
 6. **Test Framework Setup**
    - **Skip if:** test framework already configured. Log "Test framework already configured".
@@ -105,7 +105,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 
 7. **System-Level Test Design**
    - **Skip if:** test-design-architecture.md and test-design-qa.md already exist. Log "System-level test design already exists".
-   - **Task prompt:** `/bmad-tea-testarch-test-design yolo — run in system-level mode using the PRD, architecture docs, and epics as input. IMPORTANT test strategy constraints: (1) follow a strict test pyramid — push testing effort to the lowest viable layer (unit > integration/API > E2E), (2) E2E tests must be limited to critical happy-path user journeys only — do not duplicate coverage that exists at lower layers, (3) for private/internal tools default to a single browser target (Chromium), for public-facing tools use at most 3 browsers (Chromium, Firefox, WebKit), (4) the test design must explicitly define which test types belong at each layer to prevent duplication in downstream workflows.`
+   - **Task prompt:** `/bmad-tea-testarch-test-design ultrathink yolo — run in system-level mode using the PRD, architecture docs, and epics as input. IMPORTANT test strategy constraints: (1) follow a strict test pyramid — push testing effort to the lowest viable layer (unit > integration/API > E2E), (2) E2E tests must be limited to critical happy-path user journeys only — do not duplicate coverage that exists at lower layers, (3) for private/internal tools default to a single browser target (Chromium), for public-facing tools use at most 3 browsers (Chromium, Firefox, WebKit), (4) the test design must explicitly define which test types belong at each layer to prevent duplication in downstream workflows.`
 
 8. **Create Epics & Stories**
    - **Skip if:** epics already exist. Log "Epics already exist".

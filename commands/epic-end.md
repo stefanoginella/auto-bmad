@@ -59,7 +59,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-tea-testarch-trace yolo — run in epic-level mode for epic {{EPIC_ID}}.`
 
 2. **Epic {{EPIC_ID}} Retrospective**
-   - **Task prompt:** `/bmad-bmm-retrospective epic {{EPIC_ID}} yolo - and fix all implementable action items required before the next epic, mark them as done/resolved, and defer any non-implementable items with a clear explanation.`
+   - **Task prompt:** `/bmad-bmm-retrospective epic {{EPIC_ID}} ultrathink yolo - and fix all implementable action items required before the next epic, mark them as done/resolved, and defer any non-implementable items with a clear explanation.`
 
 4. **Epic {{EPIC_ID}} Project Context Refresh**
    - **Task prompt:** `/bmad-bmm-generate-project-context yolo`
