@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This repository contains the **auto
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
 - The required BMAD modules and Claude Code plugins listed in the [README](./README.md#-prerequisites)
-- A BMAD-configured project to test pipelines against (with `_bmad/bmm/config.yaml` and `_bmad/tea/config.yaml`)
+- A BMAD-configured project to test pipelines against (with `_bmad/bmm/config.yaml` and `_bmad/tea/config.yaml` for BMM, or `_bmad/gds/config.yaml` for GDS)
 - `jq` installed (used by hook scripts)
 
 ## Development Setup
@@ -33,7 +33,7 @@ This loads the plugin for that session. Add `--debug` to see hook execution and 
 .claude-plugin/
   plugin.json               — Plugin manifest (source of truth for version)
 
-commands/                   — Slash commands (plan, epic-start, story, epic-end)
+commands/                   — Slash commands (BMM: plan, epic-start, story, epic-end; GDS: gds-plan, gds-epic-start, gds-story, gds-epic-end)
 hooks/                      — Hook definitions and scripts
 
 package/                    — npm companion package (@stefanoginella/auto-bmad)
@@ -54,7 +54,7 @@ scripts/
 ### Key Files
 
 - **`.claude-plugin/plugin.json`** — Plugin manifest; bump the version when making meaningful changes (source of truth for npm package version)
-- **`commands/*.md`** — Each file is a slash command with YAML frontmatter (`name`, `description`) and a markdown body that instructs Claude how to orchestrate a pipeline
+- **`commands/*.md`** — Each file is a slash command with YAML frontmatter (`name`, `description`) and a markdown body that instructs Claude how to orchestrate a pipeline. BMM commands (`plan.md`, `epic-start.md`, `story.md`, `epic-end.md`) and GDS commands (`gds-plan.md`, `gds-epic-start.md`, `gds-story.md`, `gds-epic-end.md`) follow the same patterns
 - **`hooks/hooks.json`** — Hook definitions following the [Claude Code hooks schema](https://docs.anthropic.com/en/docs/claude-code/hooks)
 - **`package/cli.js`** — npm bin entry point; adds marketplace and installs plugin via `claude` CLI
 - **`scripts/prepublish.sh`** — Run before `npm publish` to sync versions and copy README/LICENSE
@@ -98,7 +98,7 @@ If you're modifying or extending the pipelines, be aware of these conventions:
 - **Checkpoint and squash** — Intermediate `git add -A && git commit` checkpoints at phase boundaries, then `git reset --soft` and one clean commit at the end via `/commit-commands:commit`.
 - **Recovery tags** — `git tag -f pipeline-start-*` at the beginning of every pipeline for rollback.
 - **Filesystem boundary** — All temp files go to `{project_root}/.auto-bmad-tmp/`; never `/tmp` or `$TMPDIR`.
-- **Config-driven paths** — Output paths are read from `_bmad/bmm/config.yaml` and `_bmad/tea/config.yaml`; never hardcoded.
+- **Config-driven paths** — Output paths are read from `_bmad/bmm/config.yaml` and `_bmad/tea/config.yaml` (BMM) or `_bmad/gds/config.yaml` (GDS); never hardcoded.
 - **`yolo` suffix** — Every subagent prompt ends with `yolo` to suppress confirmation dialogs during autonomous execution.
 
 ## Guidelines
