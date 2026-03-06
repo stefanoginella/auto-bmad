@@ -64,14 +64,6 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 4. **Epic {{EPIC_ID}} Project Context Refresh**
    - **Task prompt:** `/bmad-bmm-generate-project-context yolo`
 
-# Final Commit
-
-1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
-2. Commit with: `git add -A && git commit -m "chore(epic-{{EPIC_ID}}): epic end — retro done, actions resolved"`
-3. Record the final git commit hash and print it to the user.
-
-**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
-
 # Pipeline Report
 
 1. Record `{{END_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output.
@@ -121,3 +113,11 @@ Use this template for the report:
 - If more epics remain, start a new session with fresh context and run `/auto-bmad-epic-start <next-epic-number>` to prepare the next epic
 - If all epics are done, the project is complete — consider a final end-to-end review
 ```
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Commit with: `git add -A && git commit -m "chore(epic-{{EPIC_ID}}): epic end — retro done, actions resolved"`
+3. Record the final git commit hash and print it to the user.
+
+**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.

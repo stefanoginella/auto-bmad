@@ -56,14 +56,6 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 1. **Epic {{EPIC_ID}} Test Design**
    - **Task prompt:** `/bmad-gds-gametest-test-design yolo — run in epic-level mode for epic {{EPIC_ID}}. Focus on game-specific test scenarios for this epic: core gameplay loops, game systems interactions, state management, and performance characteristics relevant to this epic's scope.`
 
-# Final Commit
-
-1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
-2. Commit with: `git add -A && git commit -m "chore(epic-{{EPIC_ID}}): epic start — game test design complete"`
-3. Record the final git commit hash and print it to the user.
-
-**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
-
 # Pipeline Report
 
 1. Record `{{END_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output.
@@ -115,3 +107,11 @@ Use this template for the report:
 - Start a new session with fresh context for each story, then run `/auto-bmad-gds-story <epic-story>` (e.g. `/auto-bmad-gds-story 1-1`, then `1-2`, etc.)
 - After all stories are done, start a new session and run `/auto-bmad-gds-epic-end <epic-number>` to close the epic
 ```
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Commit with: `git add -A && git commit -m "chore(epic-{{EPIC_ID}}): epic start — game test design complete"`
+3. Record the final git commit hash and print it to the user.
+
+**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.

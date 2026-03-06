@@ -110,14 +110,6 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Skip if:** sprint-status.yaml already exists. Log "Sprint plan already exists".
    - **Task prompt:** `/bmad-gds-sprint-planning yolo`
 
-# Final Commit
-
-1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
-2. Commit with: `git add -A && git commit -m "chore: GDS plan — pre-implementation pipeline complete"`
-3. Record the final git commit hash and print it to the user.
-
-**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
-
 # Pipeline Report
 
 1. Record `{{END_TIME}}` — run `date -u +"%Y-%m-%dT%H:%M:%S"` via Bash and store the output.
@@ -180,3 +172,11 @@ Use this template for the report:
 - Start a new session with fresh context, then run `/auto-bmad-gds-epic-start <epic-number>` to prepare the first epic (test design)
 - Then run `/auto-bmad-gds-story <epic-story>` for each story in the sprint (one story per session)
 ```
+
+# Final Commit
+
+1. `git reset --soft {{START_COMMIT_HASH}}` — squash all checkpoint commits, keep changes staged.
+2. Commit with: `git add -A && git commit -m "chore: GDS plan — pre-implementation pipeline complete"`
+3. Record the final git commit hash and print it to the user.
+
+**From this point on, do NOT auto-commit.** Only commit when the user explicitly asks you to.
