@@ -106,7 +106,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 
 # Story File Update
 
-After the pipeline steps 11 is complete, the coordinator should check if the `{{STORY_FILE}}` has been updated  or if it looks incomplete. Especially look if it contains the findings and fixes from each review, if anything after `## Dev Agent Record` looks empty or has a placehoder text and if all completed tasks have been marked as done.
+After the pipeline steps 11 is complete, the coordinator should check if the `{{STORY_FILE}}` has been updated  or if it looks incomplete. Especially look if it contains the findings and fixes from each review (split by review), if anything after `## Dev Agent Record` looks empty or has a placehoder text and if all completed tasks have been marked as done.
 
 If something is missing, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes. Follow the same pattern as previous story files.
 
