@@ -85,13 +85,13 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-review-edge-case-hunter ultrathink yolo — run git diff {{START_COMMIT_HASH}} to get the production code changes as content. Fix all relevant findings by adding the suggested guards.`
 
 6. **Story {{STORY_ID}} Code Review #1**
-   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 7. **Story {{STORY_ID}} Code Review #2**
-   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 8. **Story {{STORY_ID}} Code Review #3**
-   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, report them but only fix if they have concrete evidence (file:line) — do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 ## Performance & Test Automation
 
@@ -99,14 +99,14 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-gds-gametest-performance {{STORY_FILE}} yolo`
 
 10. **Story {{STORY_ID}} Test Automate**
-    - **Task prompt:** `/bmad-gds-gametest-automate {{STORY_FILE}} yolo — when expanding test coverage, focus on game-specific scenarios: gameplay loops, state transitions, system interactions, and edge cases in game logic.`
+    - **Task prompt:** `/bmad-gds-gametest-automate {{STORY_FILE}} yolo — when expanding test coverage, focus on game-specific scenarios: gameplay loops, state transitions, system interactions, and edge cases in game logic. Push new tests to the lowest viable layer (unit > integration/API > E2E). Do not add E2E tests for scenarios already covered at lower layers. Only add E2E tests to fill gaps in critical happy-path coverage.`
 
 11. **Story {{STORY_ID}} Test Review**
-    - **Task prompt:** `/bmad-gds-gametest-test-review {{STORY_FILE}} yolo — review game test quality, coverage of gameplay scenarios, and ensure test reliability across game states.`
+    - **Task prompt:** `/bmad-gds-gametest-test-review {{STORY_FILE}} yolo — review game test quality, coverage of gameplay scenarios, and ensure test reliability across game states. Include test pyramid compliance in the review: flag any E2E tests that duplicate coverage from lower layers (unit/integration/API), flag excessive E2E test counts, and recommend pushing tests down the pyramid where possible.`
 
 # Story File Update
 
-After the pipeline steps 11 is complete, the coordinator should check if the `{{STORY_FILE}}` has been updated  or if it looks incomplete. Especially look if it contains the findings and fixes from each review (split by review), if anything after `## Dev Agent Record` looks empty or has a placehoder text and if all completed tasks have been marked as done.
+After the pipeline steps 11 is complete, the coordinator should check if the `{{STORY_FILE}}` has been updated  or if it looks incomplete. Especially look if it contains the detailed list of findings and fixes from each review (split by review), if anything after `## Dev Agent Record` looks empty or has a placehoder text and if all completed tasks have been marked as done.
 
 If something is missing, it should update the story file with that information before proceeding to the next step. This ensures that the story file remains the single source of truth for the story's implementation and review history, and that all relevant information is captured in one place for traceability and reporting purposes. Follow the same pattern as previous story files.
 

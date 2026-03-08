@@ -99,7 +99,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 
 6. **Game Test Design**
    - **Skip if:** test-design-architecture.md and test-design-qa.md already exist. Log "System-level test design already exists".
-   - **Task prompt:** `/bmad-gds-gametest-test-design ultrathink yolo — run in system-level mode using the GDD, game architecture docs, and epics as input. Focus on game-specific test scenarios: core gameplay loops, game systems interactions, state management, performance under load, and platform-specific behaviors.`
+   - **Task prompt:** `/bmad-gds-gametest-test-design ultrathink yolo — run in system-level mode using the GDD, game architecture docs, and epics as input. Focus on game-specific test scenarios: core gameplay loops, game systems interactions, state management, performance under load, and platform-specific behaviors. IMPORTANT test strategy constraints: (1) follow a strict test pyramid — push testing effort to the lowest viable layer (unit > integration/API > E2E), (2) E2E tests must be limited to critical happy-path user journeys only — do not duplicate coverage that exists at lower layers, (3) the test design must explicitly define which test types belong at each layer to prevent duplication in downstream workflows.`
 
 ## Phase 4: Sprint Setup
 

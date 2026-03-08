@@ -54,7 +54,7 @@ Before running any steps, record:
 After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip(epic-{{EPIC_ID}}-start): step N/1 <step-name> - done"` and prints a 1-line progress update: `Step 1/1: <step-name> — <status>`. The coordinator must also track `(step_name, status, start_time, end_time)` — note the wall-clock time before and after the Task call to use in the final report.
 
 1. **Epic {{EPIC_ID}} Test Design**
-   - **Task prompt:** `/bmad-gds-gametest-test-design yolo — run in epic-level mode for epic {{EPIC_ID}}. Focus on game-specific test scenarios for this epic: core gameplay loops, game systems interactions, state management, and performance characteristics relevant to this epic's scope.`
+   - **Task prompt:** `/bmad-gds-gametest-test-design yolo — run in epic-level mode for epic {{EPIC_ID}}.`
 
 # Pipeline Report
 
