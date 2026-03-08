@@ -91,18 +91,18 @@ Use this template for the report:
 
 ## Key Decisions & Learnings
 
-- <short summary of important decisions made, issues encountered, or learnings from any step>
+Summarize notable decisions, issues, and learnings from the pipeline run. Include only items worth remembering — skip routine outcomes. If nothing notable, write "None."
 
 ## Action Items
 
-### Review
-- [ ] Epic-level test design coverage and strategy
-- [ ] Sprint backlog — confirm the stories queued for this epic are correctly scoped and prioritized before starting development
+Report only items that genuinely require human action based on what happened during this pipeline run. If the pipeline completed cleanly with no concerns, write "None — pipeline completed without issues requiring human attention."
 
-### Attention
-- [ ] <testing assumptions — e.g. "assumes test database is available", "mock services needed for integration tests">
-- [ ] <missing test scenarios — e.g. "no load testing planned", "error recovery paths not covered">
-- [ ] <environment dependencies — e.g. "requires Docker for containerized tests", "needs API keys for third-party services">
+For each item, prefix with one of:
+- **[Review]** — a test design decision that needs human judgement (e.g., coverage tradeoff, test strategy choice for a complex area)
+- **[Verify]** — something the pipeline couldn't validate (e.g., environment setup assumption, external service availability, test infrastructure readiness)
+- **[Attention]** — a risk or gap flagged during test design (e.g., untestable requirement, missing test data dependency, scope concern in sprint backlog)
+
+Do NOT include items the pipeline already handled successfully. Do NOT fabricate items to fill a quota.
 
 ### Next
 - Start a new session with fresh context for each story, then run `/auto-bmad-story <epic-story>` (e.g. `/auto-bmad-story 1-1`, then `1-2`, etc.)

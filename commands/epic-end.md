@@ -100,14 +100,18 @@ Use this template for the report:
 
 ## Key Decisions & Learnings
 
-- <short summary of important decisions made, issues encountered, or learnings from any step>
+Summarize notable decisions, issues, and learnings from the pipeline run. Include only items worth remembering — skip routine outcomes. If nothing notable, write "None."
 
 ## Action Items
 
-### Review
-- [ ] Read retrospective output — decide which deferred items enter next epic backlog
-- [ ] Diff project-context.md against previous version — confirm it reflects actual state
-- [ ] Review squashed commit diff (`git show HEAD`) — no accidental inclusions
+Report only items that genuinely require human action based on what happened during this pipeline run. If the pipeline completed cleanly with no concerns, write "None — pipeline completed without issues requiring human attention."
+
+For each item, prefix with one of:
+- **[Review]** — a retrospective finding or deferred item that needs human decision (e.g., backlog item to prioritize, process change to adopt)
+- **[Verify]** — something the pipeline couldn't validate (e.g., project-context.md accuracy, commit diff correctness)
+- **[Attention]** — a risk or concern surfaced during the retrospective (e.g., recurring issue pattern, technical debt accumulation, scope creep signal)
+
+Do NOT include items the pipeline already handled successfully. Do NOT fabricate items to fill a quota.
 
 ### Next
 - If more epics remain, start a new session with fresh context and run `/auto-bmad-epic-start <next-epic-number>` to prepare the next epic

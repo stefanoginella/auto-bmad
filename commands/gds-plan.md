@@ -150,23 +150,18 @@ Use this template for the report:
 
 ## Key Decisions & Learnings
 
-- <short summary of important decisions made, issues encountered, or learnings from any step>
-- <e.g. "Skipped narrative design — abstract puzzle game", "Architecture chose ECS over component hierarchy for scalability">
+Summarize notable decisions, issues, and learnings from the pipeline run. Include only items worth remembering — skip routine outcomes. If nothing notable, write "None."
 
 ## Action Items
 
-### Review
-- [ ] Read through every generated artifact — GDD, game architecture, narrative design — before starting implementation
-- [ ] GDD completeness — verify game mechanics, systems, and scope match the game vision
-- [ ] Game architecture tech stack — confirm alignment with team skills and target platforms
-- [ ] Narrative design — check consistency with gameplay and world-building goals
-- [ ] Epic scoping/sizing — validate sprint capacity estimates
-- [ ] Any skipped steps — if steps were skipped due to existing artifacts, verify those artifacts are still current and complete
+Report only items that genuinely require human action based on what happened during this pipeline run. If the pipeline completed cleanly with no concerns, write "None — pipeline completed without issues requiring human attention."
 
-### Attention
-- [ ] <assumptions made in architecture — e.g. "assumes 2D engine", "chose tile-based over free-form movement">
-- [ ] <missing game design elements — e.g. "no monetization model defined", "multiplayer sync TBD">
-- [ ] <scope risks in sprint plan — e.g. "first sprint is ambitious", "dependency on asset pipeline not yet available">
+For each item, prefix with one of:
+- **[Review]** — a design or architecture decision the pipeline made that needs human judgement (e.g., engine/framework choice, mechanic scoping, narrative direction, skipped step rationale)
+- **[Verify]** — something the pipeline couldn't fully validate (e.g., game feel alignment with vision, target platform feasibility, asset pipeline readiness)
+- **[Attention]** — a risk, gap, or assumption flagged during the run (e.g., undefined game systems, scope-heavy first sprint, missing monetization/multiplayer strategy)
+
+Do NOT include items the pipeline already handled successfully. Do NOT fabricate items to fill a quota.
 
 ### Next
 - Start a new session with fresh context, then run `/auto-bmad-gds-epic-start <epic-number>` to prepare the first epic (test design)

@@ -90,18 +90,18 @@ Use this template for the report:
 
 ## Key Decisions & Learnings
 
-- <short summary of important decisions made, issues encountered, or learnings from any step>
+Summarize notable decisions, issues, and learnings from the pipeline run. Include only items worth remembering — skip routine outcomes. If nothing notable, write "None."
 
 ## Action Items
 
-### Review
-- [ ] Epic-level game test design coverage and strategy
-- [ ] Sprint backlog — confirm the stories queued for this epic are correctly scoped and prioritized before starting development
+Report only items that genuinely require human action based on what happened during this pipeline run. If the pipeline completed cleanly with no concerns, write "None — pipeline completed without issues requiring human attention."
 
-### Attention
-- [ ] <testing assumptions — e.g. "assumes game engine test runner is configured", "mock game services needed">
-- [ ] <missing test scenarios — e.g. "no performance profiling planned", "multiplayer sync not covered">
-- [ ] <environment dependencies — e.g. "requires game engine installed", "needs asset pipeline for integration tests">
+For each item, prefix with one of:
+- **[Review]** — a test design decision that needs human judgement (e.g., coverage tradeoff for complex game systems, test strategy for gameplay mechanics)
+- **[Verify]** — something the pipeline couldn't validate (e.g., game engine test runner setup, asset pipeline availability, platform-specific test infrastructure)
+- **[Attention]** — a risk or gap flagged during test design (e.g., untestable gameplay scenario, missing performance profiling plan, multiplayer sync coverage gap)
+
+Do NOT include items the pipeline already handled successfully. Do NOT fabricate items to fill a quota.
 
 ### Next
 - Start a new session with fresh context for each story, then run `/auto-bmad-gds-story <epic-story>` (e.g. `/auto-bmad-gds-story 1-1`, then `1-2`, etc.)

@@ -94,10 +94,10 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 8. **Story {{STORY_ID}} Code Review #2**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 9. **Story {{STORY_ID}} Code Review #3**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 ## NFR Gate
 
@@ -175,24 +175,18 @@ Use this template for the report:
 
 ## Key Decisions & Learnings
 
-- <short summary of important decisions made, issues encountered, or learnings from any step>
-- <e.g. "Code review #2 found SQL injection in auth module — fixed", "ATDD tests required mock service setup">
+Summarize notable decisions, issues, and learnings from the pipeline run. Include only items worth remembering — skip routine outcomes. If nothing notable, write "None."
 
 ## Action Items
 
-### Review
-- [ ] Verify story implementation matches acceptance criteria — spot-check key flows
-- [ ] Audit auto-fixed code review findings — confirm fixes are correct, not just silencing warnings
+Report only items that genuinely require human action based on what happened during this pipeline run. If the pipeline completed cleanly with no concerns, write "None — pipeline completed without issues requiring human attention."
 
-### Verify
-- [ ] Run full test suite locally and confirm green (`npm test && npx playwright test`)
-- [ ] Smoke-test the feature from the UI — happy path only, focus on visual correctness and interaction feel
-- [ ] Check UI states that automated tests can't catch (animations, layout shifts, responsive behavior)
+For each item, prefix with one of:
+- **[Review]** — a code change or auto-fix that needs human judgement (e.g., complex refactor the pipeline chose, ambiguous acceptance criteria it interpreted)
+- **[Verify]** — something the pipeline couldn't validate that needs manual checking (e.g., visual/UX behavior, interaction feel, hardware-dependent functionality)
+- **[Attention]** — a risk, gap, or concern flagged during the run (e.g., NFR issue found but not fixed, traceability gap, test coverage hole the pipeline couldn't close)
 
-### Attention
-- [ ] <NFR concerns flagged — e.g. "auth endpoint has no rate limiting", "no caching on frequently accessed data">
-- [ ] <traceability gaps — e.g. "2 acceptance criteria not covered by tests">
-- [ ] <test coverage gaps — e.g. "error handling paths not tested">
+Do NOT include items the pipeline already verified (tests passed, acceptance criteria matched, code review clean). Do NOT fabricate items to fill a quota.
 
 ### Next
 - Start a new session with fresh context, then run `/auto-bmad-story <next-story>` for the next story in the sprint

@@ -88,10 +88,10 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 7. **Story {{STORY_ID}} Code Review #2**
-   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 8. **Story {{STORY_ID}} Code Review #3**
-   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-gds-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 ## Performance & Test Automation
 
@@ -162,24 +162,18 @@ Use this template for the report:
 
 ## Key Decisions & Learnings
 
-- <short summary of important decisions made, issues encountered, or learnings from any step>
-- <e.g. "Code review #2 found state desync in multiplayer — fixed", "Performance test revealed frame drops in particle system">
+Summarize notable decisions, issues, and learnings from the pipeline run. Include only items worth remembering — skip routine outcomes. If nothing notable, write "None."
 
 ## Action Items
 
-### Review
-- [ ] Verify story implementation matches acceptance criteria — spot-check key gameplay flows
-- [ ] Audit auto-fixed code review findings — confirm fixes are correct, not just silencing warnings
+Report only items that genuinely require human action based on what happened during this pipeline run. If the pipeline completed cleanly with no concerns, write "None — pipeline completed without issues requiring human attention."
 
-### Verify
-- [ ] Run full test suite locally and confirm green
-- [ ] Playtest the feature — happy path only, focus on game feel and interaction quality
-- [ ] Check game states that automated tests can't catch (animations, visual effects, audio sync, input responsiveness)
+For each item, prefix with one of:
+- **[Review]** — a code change or auto-fix that needs human judgement (e.g., complex gameplay logic refactor, ambiguous acceptance criteria interpretation)
+- **[Verify]** — something the pipeline couldn't validate that needs playtesting (e.g., game feel, animation quality, audio sync, input responsiveness, visual effects)
+- **[Attention]** — a risk or concern flagged during the run (e.g., performance issue found but not fixed, gameplay edge case that can't be automated, state desync risk)
 
-### Attention
-- [ ] <performance concerns flagged — e.g. "frame rate drops during particle effects", "memory leak in asset loading">
-- [ ] <gameplay edge cases — e.g. "untested state when player pauses during transition">
-- [ ] <test coverage gaps — e.g. "multiplayer sync scenarios not automated">
+Do NOT include items the pipeline already verified (tests passed, acceptance criteria matched, code review clean). Do NOT fabricate items to fill a quota.
 
 ### Next
 - Start a new session with fresh context, then run `/auto-bmad-gds-story <next-story>` for the next story in the sprint

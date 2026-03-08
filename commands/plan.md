@@ -166,23 +166,18 @@ Use this template for the report:
 
 ## Key Decisions & Learnings
 
-- <short summary of important decisions made, issues encountered, or learnings from any step>
-- <e.g. "Skipped UX design — project has no frontend", "Architecture chose serverless over containers for cost reasons">
+Summarize notable decisions, issues, and learnings from the pipeline run. Include only items worth remembering — skip routine outcomes. If nothing notable, write "None."
 
 ## Action Items
 
-### Review
-- [ ] Read through every generated artifact — PRD, architecture, UX design, epics — before starting implementation
-- [ ] PRD completeness — verify scope and feature list match the product vision
-- [ ] Architecture tech stack — confirm alignment with team skills and infrastructure
-- [ ] UX flows — check edge cases and error states
-- [ ] Epic scoping/sizing — validate sprint capacity estimates
-- [ ] Any skipped steps — if steps were skipped due to existing artifacts, verify those artifacts are still current and complete
+Report only items that genuinely require human action based on what happened during this pipeline run. If the pipeline completed cleanly with no concerns, write "None — pipeline completed without issues requiring human attention."
 
-### Attention
-- [ ] <assumptions made in architecture — e.g. "assumes cloud deployment", "chose SQL over NoSQL based on data model">
-- [ ] <missing NFRs — e.g. "no performance targets defined", "security requirements TBD">
-- [ ] <scope risks in sprint plan — e.g. "first sprint is ambitious", "dependency on external API not yet available">
+For each item, prefix with one of:
+- **[Review]** — a decision or tradeoff the pipeline made that needs human judgement (e.g., architectural choice, scope interpretation, skipped step rationale)
+- **[Verify]** — something the pipeline couldn't fully validate that needs manual confirmation (e.g., alignment with business goals, team skill fit, third-party dependency availability)
+- **[Attention]** — a risk, gap, or assumption flagged during the run that needs resolution before implementation begins
+
+Do NOT include items the pipeline already handled successfully. Do NOT fabricate items to fill a quota.
 
 ### Next
 - Start a new session with fresh context, then run `/auto-bmad-epic-start <epic-number>` to prepare the first epic (test design)
