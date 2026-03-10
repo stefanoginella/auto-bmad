@@ -58,10 +58,10 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 1. **Epic {{EPIC_ID}} Trace**
    - **Task prompt:** `/bmad-tea-testarch-trace yolo — run in epic-level mode for epic {{EPIC_ID}}`
 
-2. **Story {{EPIC_ID}} NFR**
+2. **Epic {{EPIC_ID}} NFR**
    - **Task prompt:** `/bmad-tea-testarch-nfr yolo - run in epic-level mode for epic {{EPIC_ID}}`
 
-3. **Story {{EPIC_ID}} Test Review**
+3. **Epic {{EPIC_ID}} Test Review**
     - **Task prompt:** `/bmad-tea-testarch-test-review yolo — run in epic-level mode for epic {{EPIC_ID}}. Include test pyramid compliance in the review: flag any E2E tests that duplicate coverage from lower layers (unit/integration/API), flag excessive E2E test counts, and recommend pushing tests down the pyramid where possible`
   
 4. **Epic {{EPIC_ID}} Retrospective**
