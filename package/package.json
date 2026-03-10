@@ -1,6 +1,6 @@
 {
   "name": "@stefanoginella/auto-bmad",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Installs the auto-bmad Claude Code plugin — automated BMAD pipeline orchestration",
   "bin": {
     "auto-bmad": "cli.js"
