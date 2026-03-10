@@ -61,7 +61,7 @@ After step 1 (Create) succeeds, glob `{{implementation_artifacts}}/{{STORY_ID}}-
 
 # Pipeline Steps
 
-After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/13 <step-name> - done"` and prints a 1-line progress update: `Step N/13: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
+After each successful step, the coordinator runs `git add -A && git commit --no-verify -m "wip({{STORY_ID}}): step N/11 <step-name> - done"` and prints a 1-line progress update: `Step N/11: <step-name> — <status>`. The coordinator must also track a running list of `(step_name, status, start_time, end_time)` — note the wall-clock time before and after each Task call to use in the final report.
 
 ## Story Creation & Validation
 
@@ -78,7 +78,7 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
 ## Test-First
 
 4. **Story {{STORY_ID}} ATDD**
-   - **Task prompt:** `/bmad-tea-testarch-atdd {{STORY_FILE}} ultrathink yolo — follow the test pyramid: prefer API-level and integration-level acceptance tests over E2E. Only create E2E tests for acceptance criteria that genuinely require full browser interaction (UI-specific flows). Generate unit tests for business logic criteria. Target a single browser (Chromium) for any E2E tests. Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not create or modify any production code, API routes, UI components, database schemas, or application logic — implementation is the Dev step's job.`
+   - **Task prompt:** `/bmad-tea-testarch-atdd {{STORY_FILE}} ultrathink yolo — follow the test pyramid: prefer API-level and integration-level acceptance tests over E2E. Only create E2E tests for acceptance criteria that genuinely require full browser interaction (UI-specific flows). Generate unit tests for business logic criteria. Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not create or modify any production code, API routes, UI components, database schemas, or application logic — implementation is the Dev step's job.`
 
 ## Development
 
@@ -97,23 +97,16 @@ After each successful step, the coordinator runs `git add -A && git commit --no-
    - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
 9. **Story {{STORY_ID}} Code Review #3**
-   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} ultrathink yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
+   - **Task prompt:** `/bmad-bmm-code-review {{STORY_FILE}} yolo — fix all critical, high, and medium issues. For low issues, fix if they have concrete evidence (file:line), do not fix style preferences or hypothetical concerns as low findings.`
 
-## NFR Gate
-
-10. **Story {{STORY_ID}} NFR**
-   - **Task prompt:** `/bmad-tea-testarch-nfr {{STORY_FILE}} yolo`
 
 ## Traceability & Test Automation
 
-11. **Story {{STORY_ID}} Trace**
+10. **Story {{STORY_ID}} Trace**
    - **Task prompt:** `/bmad-tea-testarch-trace {{STORY_FILE}} yolo`
 
-12. **Story {{STORY_ID}} Test Automate**
+11. **Story {{STORY_ID}} Test Automate**
     - **Task prompt:** `/bmad-tea-testarch-automate {{STORY_FILE}} yolo — when expanding test coverage, push new tests to the lowest viable layer (unit > integration/API > E2E). Do not add E2E tests for scenarios already covered at lower layers. Only add E2E tests to fill gaps in critical happy-path coverage.`
-
-13. **Story {{STORY_ID}} Test Review**
-    - **Task prompt:** `/bmad-tea-testarch-test-review {{STORY_FILE}} yolo — include test pyramid compliance in the review: flag any E2E tests that duplicate coverage from lower layers (unit/integration/API), flag excessive E2E test counts, and recommend pushing tests down the pyramid where possible.`
 
 # Story File Update
 
@@ -168,10 +161,8 @@ Use this template for the report:
 | 7 | Code Review #1 | done | Xm | <issues found/fixed count by severity> |
 | 8 | Code Review #2 | done | Xm | <issues found/fixed count by severity> |
 | 9 | Code Review #3 | done | Xm | <issues found/fixed count by severity> |
-| 10 | NFR | done | Xm | <NFR assessment result (pass/concerns)> |
-| 11 | Trace | done | Xm | <traceability coverage %> |
-| 12 | Test Automate | done | Xm | <tests automated count, pyramid compliance> |
-| 13 | Test Review | done | Xm | <test quality verdict, pyramid violations flagged> |
+| 10 | Trace | done | Xm | <traceability coverage %> |
+| 11 | Test Automate | done | Xm | <tests automated count, pyramid compliance> |
 
 ## Key Decisions & Learnings
 
