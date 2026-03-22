@@ -17,6 +17,19 @@ set -euo pipefail
 #   --help               Show usage
 # ============================================================
 
+# --- Abort Handling (CTRL+C kills the entire pipeline) ---
+_ABORT=false
+
+_handle_abort() {
+    _ABORT=true
+    stop_activity_monitor 2>/dev/null || true
+    echo ""
+    echo -e "\033[1;31m ✘ Pipeline aborted by user (CTRL+C)\033[0m" >&2
+    exit 130
+}
+
+trap '_handle_abort' INT
+
 # --- Project Paths ---
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
@@ -62,8 +75,10 @@ TOOL_NAMES=(claude codex gemini opencode)
 #                gemini:   no effort flag available
 
 AI_OPUS="claude|opus|max"                           # Claude Opus 4.6 — critical path, arbiters
+AI_OPUS_HIGH="claude|opus|high"                      # Claude Opus 4.6 / high — structured, non-critical
 AI_SONNET="claude|sonnet|high"                       # Claude Sonnet 4.6 — lightweight bookkeeping
-AI_GPT="codex|gpt-5.4|xhigh"                       # Codex GPT 5.4 — mechanical steps, reviews
+AI_GPT="codex|gpt-5.4|xhigh"                       # Codex GPT 5.4 — code reviews, edge cases
+AI_GPT_HIGH="codex|gpt-5.4|high"                    # Codex GPT 5.4 / high — spec-level reviews
 AI_GEMINI="gemini|gemini-3-pro-preview|"             # Gemini 3 Pro — parallel reviews
 AI_MINIMAX="opencode|opencode/minimax-m2.5-free|max" # MiniMax M2.5 via OpenCode — parallel reviews
 AI_MIMO="opencode|opencode/mimo-v2-pro-free|max"     # MiMo V2 Pro via OpenCode — parallel reviews
@@ -74,13 +89,17 @@ AI_MIMO="opencode|opencode/mimo-v2-pro-free|max"     # MiMo V2 Pro via OpenCode 
 
 step_config() {
     case "$1" in
-        # Parallel review AIs (a=GPT, b=Gemini, c=MiniMax, d=MiMo)
-        2a|3a|6a|7a)                 echo "$AI_GPT" ;;
+        # Parallel code reviews (a=GPT, b=Gemini, c=MiniMax, d=MiMo)
+        6a|7a)                       echo "$AI_GPT" ;;
+        # Parallel spec reviews — pre-implementation, 4-way redundancy
+        2a|3a)                       echo "$AI_GPT_HIGH" ;;
         2b|3b|6b|7b)                 echo "$AI_GEMINI" ;;
         2c|3c|6c|7c)                 echo "$AI_MINIMAX" ;;
         2d|3d|6d|7d)                 echo "$AI_MIMO" ;;
-        # Arbiters and critical path
-        2e|3e|6e|8)                  echo "$AI_OPUS" ;;
+        # Critical-path arbiters (code-touching)
+        6e|8)                        echo "$AI_OPUS" ;;
+        # Pre-implementation arbiters (spec-level, downstream gates catch misses)
+        2e|3e)                       echo "$AI_OPUS_HIGH" ;;
         # Epic end parallel
         11a)                         echo "$AI_GPT" ;;
         11c)                         echo "$AI_GEMINI" ;;
@@ -88,8 +107,10 @@ step_config() {
         14b)                         echo "$AI_SONNET" ;;
         # Traceability & automation — structured, mechanical
         9|10)                        echo "$AI_SONNET" ;;
-        # Everything else: Opus
-        0|1|4|5|11b|12|13|14a)      echo "$AI_OPUS" ;;
+        # Reflective / documentation — structured, non-critical
+        12|13|14a)                   echo "$AI_OPUS_HIGH" ;;
+        # Everything else: Opus max (critical path)
+        0|1|4|5|11b)                echo "$AI_OPUS" ;;
         *)                           echo "||" ;;
     esac
 }
@@ -853,6 +874,8 @@ should_run_step() {
 
 # run_step <step_id> <step_name> <command...>
 run_step() {
+    [[ "$_ABORT" == true ]] && exit 130
+
     local step_id="$1" step_name="$2"
     shift 2
 
@@ -912,6 +935,8 @@ run_step() {
 # Entry format: "step_id|name|file_prefix|ai_suffix" for review steps
 #            or "step_id|name|func_name" for arbitrary functions
 run_parallel_reviews() {
+    [[ "$_ABORT" == true ]] && exit 130
+
     local -a pids=() sids=() snames=()
     local count=0
 
@@ -1427,9 +1452,11 @@ Options:
   --help                 Show this help message
 
 AI Profiles (edit at top of script):
-  AI_OPUS    = Claude Opus 4.6 / max effort   — critical path + arbiters
-  AI_SONNET  = Claude Sonnet 4.6 / high       — lightweight bookkeeping
-  AI_GPT     = Codex GPT 5.4 / xhigh reason  — mechanical steps + reviews
+  AI_OPUS      = Claude Opus 4.6 / max effort   — critical path + code-touching arbiters
+  AI_OPUS_HIGH = Claude Opus 4.6 / high effort  — structured, non-critical (pre-impl arbiters, retro, docs)
+  AI_SONNET    = Claude Sonnet 4.6 / high        — lightweight bookkeeping
+  AI_GPT      = Codex GPT 5.4 / xhigh reason  — code reviews + edge cases
+  AI_GPT_HIGH  = Codex GPT 5.4 / high reason   — spec-level reviews (pre-implementation)
   AI_GEMINI  = Gemini 3 Pro Preview           — parallel reviews
   AI_MINIMAX = OpenCode MiniMax M2.5 / max    — parallel reviews
   AI_MIMO    = OpenCode MiMo V2 Pro / max     — parallel reviews
@@ -1469,7 +1496,7 @@ parse_args() {
 }
 
 main() {
-    trap 'stop_activity_monitor 2>/dev/null || true' EXIT
+    trap 'stop_activity_monitor 2>/dev/null || true; [[ "$_ABORT" == true ]] && exit 130' EXIT
     parse_args "$@"
 
     preflight_checks
