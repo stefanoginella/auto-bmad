@@ -12,6 +12,8 @@ set -euo pipefail
 #   --from-step ID       Resume pipeline from step ID (e.g., 2a1, 7c)
 #   --dry-run            Preview all steps without executing
 #   --skip-epic-phases   Skip phases 0 and 6 even at epic boundaries
+#   --json-log           Extract arbiter findings into review-log.json
+#   --no-traces          Remove all pipeline artifacts after finalization
 #   --help               Show usage
 # ============================================================
 
@@ -41,7 +43,7 @@ BMAD_MANIFEST="${PROJECT_ROOT}/_bmad/_config/manifest.yaml"
 
 # BMad versions this script was built/tested against
 BMAD_BUILD_VERSION="6.2.0"
-BMAD_BUILD_TEA_VERSION="1.7.0"
+BMAD_BUILD_TEA_VERSION="1.7.1"
 
 # ============================================================
 # CLI Tools
@@ -107,10 +109,15 @@ EPIC_ID=""
 STORY_FILE_PATH=""
 STORY_ARTIFACTS=""
 PIPELINE_LOG=""
+CURRENT_STEP_LOG=""
 METRICS_FILE=""
+COMMIT_BASELINE=""  # SHA before pipeline — used for final squash
 DRY_RUN=false
 FROM_STEP=""
 SKIP_EPIC_PHASES=false
+SKIP_TEA=false
+JSON_LOG=false
+NO_TRACES=false
 PIPELINE_START_TIME=""
 
 # Step ordering for --from-step comparison
@@ -181,6 +188,145 @@ format_duration() {
 }
 
 # ============================================================
+# Activity Monitor (spinner + stall detection)
+# ============================================================
+
+SPINNER_FRAMES='⣾⣽⣻⢿⡿⣟⣯⣷'
+_monitor_pid=""
+
+_cleanup_monitor() {
+    rm -f "/tmp/auto-bmad-monitor-$$"
+    if [[ -n "$_monitor_pid" ]]; then
+        kill "$_monitor_pid" 2>/dev/null || true
+        wait "$_monitor_pid" 2>/dev/null || true
+        _monitor_pid=""
+    fi
+}
+
+start_activity_monitor() {
+    local label="$1"
+    local start_time
+    start_time=$(date +%s)
+
+    # Stop any existing monitor first
+    _cleanup_monitor
+
+    touch "/tmp/auto-bmad-monitor-$$"
+
+    (
+        set +e  # Don't exit on errors in monitor
+        local i=0
+        local last_log_size=0
+        local last_change_time=$start_time
+        local spinner_active=false
+
+        [[ -f "$CURRENT_STEP_LOG" ]] && last_log_size=$(wc -c < "$CURRENT_STEP_LOG" 2>/dev/null | tr -d ' ')
+
+        while [[ -f "/tmp/auto-bmad-monitor-$$" ]]; do
+            local now
+            now=$(date +%s)
+            local elapsed=$((now - start_time))
+            local idx=$((i % ${#SPINNER_FRAMES}))
+            local frame="${SPINNER_FRAMES:idx:1}"
+
+            # Check log file for new output
+            local current_log_size=0
+            [[ -f "$CURRENT_STEP_LOG" ]] && current_log_size=$(wc -c < "$CURRENT_STEP_LOG" 2>/dev/null | tr -d ' ')
+
+            if [[ "$current_log_size" != "$last_log_size" ]]; then
+                # Output detected — clear spinner if visible
+                if [[ "$spinner_active" == true ]]; then
+                    printf '\r\033[K' >&2
+                    spinner_active=false
+                fi
+                last_log_size=$current_log_size
+                last_change_time=$now
+                warned_at=0
+            fi
+
+            local quiet_seconds=$((now - last_change_time))
+
+            if (( quiet_seconds >= 2 )); then
+                # No output for 2+ seconds — show spinner
+                printf '\r  %s %s [%s]' "$frame" "$label" "$(format_duration $elapsed)" >&2
+                spinner_active=true
+            fi
+
+            sleep 0.15
+            i=$((i + 1))
+        done
+
+        # Clear spinner on exit
+        if [[ "$spinner_active" == true ]]; then
+            printf '\r\033[K' >&2
+        fi
+    ) &
+    _monitor_pid=$!
+}
+
+stop_activity_monitor() {
+    _cleanup_monitor
+}
+
+# ============================================================
+# Git Checkpoints (per-phase commits + final squash)
+# ============================================================
+
+# Save a checkpoint commit after a phase completes.
+# Skipped if there are no changes to commit.
+git_checkpoint() {
+    local phase_label="$1"
+    [[ "$DRY_RUN" == "true" ]] && return 0
+
+    if git -C "$PROJECT_ROOT" diff --quiet && git -C "$PROJECT_ROOT" diff --cached --quiet && \
+       [[ -z "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard)" ]]; then
+        return 0  # nothing to commit
+    fi
+
+    git -C "$PROJECT_ROOT" add -A
+    git -C "$PROJECT_ROOT" commit -m "wip(${STORY_SHORT_ID}): ${phase_label}" --no-verify --quiet
+}
+
+# Squash all checkpoint commits made since COMMIT_BASELINE into a single commit.
+# The final commit message is extracted from the story file (Auto-bmad Completion section)
+# or falls back to a descriptive conventional-commit message.
+git_squash_pipeline() {
+    [[ "$DRY_RUN" == "true" ]] && return 0
+
+    local current_head
+    current_head="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null)"
+
+    # Nothing to squash if HEAD hasn't moved
+    if [[ "$current_head" == "$COMMIT_BASELINE" ]]; then
+        return 0
+    fi
+
+    # Try to extract the commit message from the story file.
+    # The tech-writer writes a conventional-commit message inside a ``` block
+    # in the "Auto-bmad Completion" section.
+    local commit_msg=""
+    if [[ -n "$STORY_FILE_PATH" && -f "$STORY_FILE_PATH" ]]; then
+        commit_msg="$(sed -n '/## Auto-bmad Completion/,/^## /{ /^```/,/^```/{ /^```/d; p; }; }' "$STORY_FILE_PATH" 2>/dev/null | head -5)"
+    fi
+
+    # Fallback: derive a readable description from the story slug
+    if [[ -z "$commit_msg" ]]; then
+        # "1-1-monorepo-devcontainer-setup" → "monorepo devcontainer setup"
+        local slug="${STORY_ID#*-*-}"          # strip "1-1-" prefix
+        local description="${slug//-/ }"       # hyphens → spaces
+        commit_msg="feat(${STORY_SHORT_ID}): ${description}"
+    fi
+
+    git -C "$PROJECT_ROOT" reset --soft "$COMMIT_BASELINE"
+    git -C "$PROJECT_ROOT" commit -m "$commit_msg" --no-verify --quiet
+    log_ok "Squashed pipeline commits into single commit"
+}
+
+# ============================================================
+# Output Rendering (markdown + rolling display)
+# ============================================================
+
+# ============================================================
 # CLI Abstraction Layer
 # ============================================================
 
@@ -197,6 +343,7 @@ run_ai() {
     local prompt="$2"
     parse_step_config "$step_id"
 
+    # Write step header and raw output to per-step log (not the summary)
     {
         echo ""
         echo "═══ Step ${step_id} ═══════════════════════════════════════════"
@@ -205,31 +352,31 @@ run_ai() {
         echo "Prompt:"
         echo "$prompt"
         echo "───────────────────────────────────────────────────────────────"
-    } >> "$PIPELINE_LOG"
+    } >> "$CURRENT_STEP_LOG"
 
     local exit_code=0
     case "$cfg_cli" in
         claude)
             local cmd=(claude -p "$prompt" --model "$cfg_model" --dangerously-skip-permissions)
             [[ -n "$cfg_effort" ]] && cmd+=(--effort "$cfg_effort")
-            "${cmd[@]}" 2>&1 | tee -a "$PIPELINE_LOG" || true
+            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         codex)
             local cprompt; cprompt="$(codex_prompt "$prompt")"
             local cmd=(codex exec "$cprompt" -m "$cfg_model" --full-auto)
             [[ -n "$cfg_effort" ]] && cmd+=(-c "model_reasoning_effort=${cfg_effort}")
-            "${cmd[@]}" 2>&1 | tee -a "$PIPELINE_LOG" || true
+            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         gemini)
-            gemini -p "$prompt" -m "$cfg_model" --yolo 2>&1 | tee -a "$PIPELINE_LOG" || true
+            gemini -p "$prompt" -m "$cfg_model" --yolo 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         opencode)
             local cmd=(opencode run "$prompt" -m "$cfg_model")
             [[ -n "$cfg_effort" ]] && cmd+=(--variant "$cfg_effort")
-            "${cmd[@]}" 2>&1 | tee -a "$PIPELINE_LOG" || true
+            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         *)
@@ -289,6 +436,8 @@ run_arbiter() {
     local prompt_prefix=""
     [[ -n "$agent_cmd" ]] && prompt_prefix="${agent_cmd} "
 
+    local arbiter_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${step_id}-arbiter-${file_prefix}.md"
+
     run_ai "$step_id" "${prompt_prefix}Read these review findings files (skip any that don't exist):
 - ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${review_base}a-${file_prefix}-gpt.md
 - ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${review_base}b-${file_prefix}-gemini.md
@@ -299,7 +448,77 @@ You are the arbiter. Cross-reference all findings using these rules:
 ${consensus_rules}
 
 ${fix_instruction}
-Report: for each finding, state which reviewers flagged it, your confidence level, and whether you fixed or skipped it."
+
+Save your arbiter decision report to ${arbiter_report} with this structure:
+
+1. **Header**: story ID, arbiter step, timestamp
+
+2. **Decision summary table** (markdown) — one row per finding for quick scanning:
+
+| # | Finding | Flagged By | Consensus | Action | Confidence |
+|---|---------|------------|-----------|--------|------------|
+| 1 | Brief description | GPT, Gemini, MiniMax | 3/4 | Fixed | High |
+| 2 | Brief description | MiMo | 1/4 | Skipped | Low |
+
+3. **Detailed rationale** — for each finding in the table, a short paragraph with:
+   - The reviewers' arguments (agreements and disagreements)
+   - Your reasoning for fixing or skipping
+   - What was changed (if fixed)
+
+4. **Summary**: total findings reviewed, fixes applied, items skipped, and any patterns or observations worth noting for future runs"
+
+    # Extract JSON log from arbiter report if --json-log is enabled
+    if [[ "$JSON_LOG" == "true" ]]; then
+        extract_arbiter_json "$arbiter_report" "$step_id" "$file_prefix"
+    fi
+}
+
+# extract_arbiter_json <report_file> <step_id> <review_type>
+# Parses the arbiter's markdown decision table into JSON and appends to review-log.json
+extract_arbiter_json() {
+    local report="$1" step_id="$2" review_type="$3"
+    local json_log="${STORY_ARTIFACTS}/review-log.json"
+
+    [[ -f "$report" ]] || return 0
+
+    # Parse markdown table rows: | # | Finding | Flagged By | Consensus | Action | Confidence |
+    local findings_json
+    findings_json=$(awk -F'|' '
+    /^\| *[0-9]/ {
+        for (i=2; i<=7; i++) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
+            gsub(/"/, "\\\"", $i)
+        }
+        printf "{\"n\":%s,\"finding\":\"%s\",\"flagged_by\":\"%s\",\"consensus\":\"%s\",\"action\":\"%s\",\"confidence\":\"%s\"}\n", $2, $3, $4, $5, $6, $7
+    }' "$report" 2>/dev/null)
+
+    # Skip if no findings rows parsed
+    [[ -z "$findings_json" ]] && return 0
+
+    # Build entry — use jq if available, else construct manually
+    local entry
+    if command -v jq &>/dev/null; then
+        entry=$(echo "$findings_json" | jq -s \
+            --arg story "$STORY_ID" \
+            --arg step "$step_id" \
+            --arg type "$review_type" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{story: $story, step: $step, review_type: $type, timestamp: $ts,
+              total: length,
+              fixed: [.[] | select(.action | test("fix";"i"))] | length,
+              skipped: [.[] | select(.action | test("skip";"i"))] | length,
+              verdict: (if ([.[] | select(.action | test("fix";"i"))] | length) > 0 then "changes_made" else "clean_pass" end),
+              findings: .}')
+    else
+        # Fallback: raw JSONL without aggregation
+        local count; count=$(echo "$findings_json" | wc -l | tr -d ' ')
+        entry=$(printf '{"story":"%s","step":"%s","review_type":"%s","timestamp":"%s","total":%s,"findings":[%s]}' \
+            "$STORY_ID" "$step_id" "$review_type" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "$count" "$(echo "$findings_json" | paste -sd, -)")
+    fi
+
+    # Append entry to the log (one JSON object per line — JSONL format)
+    echo "$entry" >> "$json_log"
 }
 
 # ============================================================
@@ -414,24 +633,31 @@ check_bmad_version() {
 
     # Parse installed BMad version (first version: field) and TEA module version
     local installed_version="" tea_version="" in_tea=false
-    while IFS=': ' read -r key value; do
-        key="${key#"${key%%[![:space:]]*}"}"
-        value="${value%$'\r'}"
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        # Strip leading whitespace for matching
+        local stripped="${line#"${line%%[![:space:]]*}"}"
+        # Handle YAML list items: "- name: value"
+        if [[ "$stripped" == "- name:"* ]]; then
+            local mod_name="${stripped#*- name:}"
+            mod_name="${mod_name#"${mod_name%%[![:space:]]*}"}"
+            if [[ "$mod_name" == "tea" ]]; then
+                in_tea=true
+            else
+                in_tea=false
+            fi
+            continue
+        fi
+        # Extract key: value pairs
+        local key="${stripped%%:*}"
+        local value="${stripped#*:}"
+        value="${value#"${value%%[![:space:]]*}"}"
         # Top-level version (first occurrence, before any module)
         if [[ "$key" == "version" && -z "$installed_version" ]]; then
             installed_version="$value"
         fi
-        # Track when we enter the tea module block
-        if [[ "$key" == "- name" && "$value" == "tea" ]]; then
-            in_tea=true
-            continue
-        fi
         if [[ "$in_tea" == true && "$key" == "version" ]]; then
             tea_version="$value"
-            in_tea=false
-        fi
-        # Reset on next module entry
-        if [[ "$in_tea" == true && "$key" == "- name" ]]; then
             in_tea=false
         fi
     done < "$BMAD_MANIFEST"
@@ -448,8 +674,16 @@ check_bmad_version() {
 
     # Check TEA module
     if [[ -z "$tea_version" ]]; then
-        log_error "TEA module not installed (required by this pipeline)"
-        mismatches+=("TEA module: not installed, expected ${BMAD_BUILD_TEA_VERSION}")
+        log_warn "TEA module not installed"
+        echo -en "    Continue without TEA steps (0, 4, 9, 10, 11a-c)? [y/N] "
+        read -r answer
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            SKIP_TEA=true
+            log_warn "TEA steps will be skipped"
+        else
+            log_error "Aborted. Install TEA module: npx bmad-method install bmad-method-test-architecture-enterprise"
+            exit 1
+        fi
     elif [[ "$tea_version" == "$BMAD_BUILD_TEA_VERSION" ]]; then
         log_ok "TEA module version ${tea_version}"
     else
@@ -509,9 +743,9 @@ check_git_branch() {
         fi
 
         echo ""
-        echo -e "  On ${BOLD}${current_branch}${NC} — creating branch ${BOLD}${expected_branch}${NC}"
+        echo -e "  ${BOLD}Creating branch:${NC} ${GREEN}${expected_branch}${NC} (from ${current_branch})"
         if git -C "$PROJECT_ROOT" checkout -b "$expected_branch"; then
-            log_ok "Switched to new branch ${expected_branch}"
+            log_ok "Created and switched to new branch ${expected_branch}"
         else
             log_error "Failed to create branch ${expected_branch}"
             exit 1
@@ -629,21 +863,32 @@ run_step() {
 
     log_step "$step_id" "$step_name"
 
+    # Per-step raw output log (deleted on success, kept on failure)
+    CURRENT_STEP_LOG="${STORY_ARTIFACTS}/step-${step_id}.log"
+    : > "$CURRENT_STEP_LOG"
+
     local start_time; start_time=$(date +%s)
 
+    start_activity_monitor "$step_name"
+
     if "$@"; then
+        stop_activity_monitor
         local end_time; end_time=$(date +%s)
         local duration=$((end_time - start_time))
         set_step_duration "$step_id" "$duration"
         set_step_status "$step_id" "ok"
+        printf "  %-6s  %-8s  %-10s  %s\n" "$step_id" "$(format_duration $duration)" "ok" "$step_name" >> "$PIPELINE_LOG"
+        rm -f "$CURRENT_STEP_LOG"
         log_ok "Completed in $(format_duration $duration)"
     else
+        stop_activity_monitor
         local end_time; end_time=$(date +%s)
         local duration=$((end_time - start_time))
         set_step_duration "$step_id" "$duration"
         set_step_status "$step_id" "FAILED"
+        printf "  %-6s  %-8s  %-10s  %s\n" "$step_id" "$(format_duration $duration)" "FAILED" "$step_name" >> "$PIPELINE_LOG"
         log_error "Step ${step_id} (${step_name}) FAILED after $(format_duration $duration)"
-        log_error "Log: ${PIPELINE_LOG}"
+        log_error "Step log: ${CURRENT_STEP_LOG}"
         log_error "Resume: ./auto-bmad.sh --from-step ${step_id} --story ${STORY_ID}"
         exit 1
     fi
@@ -673,16 +918,18 @@ run_parallel_reviews() {
             continue
         fi
 
-        log_step "$sid" "$sname"
-        echo -e "  ${DIM}(running in background)${NC}"
-
         # Record start time for duration tracking
         set_step_start "$sid" "$(date +%s)"
 
+        # Each parallel step gets its own raw output log
+        CURRENT_STEP_LOG="${STORY_ARTIFACTS}/step-${sid}.log"
+        : > "$CURRENT_STEP_LOG"
+
+        # Suppress terminal output — log file still gets full output via tee.
         if [[ -n "$field4" ]]; then
-            run_review_step "$sid" "$field3" "$field4" &
+            run_review_step "$sid" "$field3" "$field4" >/dev/null &
         else
-            "$field3" &
+            "$field3" >/dev/null &
         fi
         pids+=($!)
         sids+=("$sid")
@@ -694,25 +941,72 @@ run_parallel_reviews() {
         return 0
     fi
 
-    local i=0
-    for pid in "${pids[@]}"; do
-        local start_time; start_time=$(get_step_start "${sids[$i]}" "$(date +%s)")
-        if wait "$pid" 2>/dev/null; then
-            local end_time; end_time=$(date +%s)
-            local duration=$((end_time - start_time))
-            set_step_duration "${sids[$i]}" "$duration"
-            set_step_status "${sids[$i]}" "ok"
-            log_ok "Step ${sids[$i]} (${snames[$i]}) completed in $(format_duration $duration)"
-        else
-            local end_time; end_time=$(date +%s)
-            local duration=$((end_time - start_time))
-            set_step_duration "${sids[$i]}" "$duration"
-            set_step_status "${sids[$i]}" "FAILED"
-            log_warn "Step ${sids[$i]} (${snames[$i]}) failed after $(format_duration $duration) — arbiter will work with available reports"
-        fi
-        i=$((i + 1))
+    # --- Live status board: poll PIDs and redraw in-place ---
+
+    # Print placeholder lines for the board
+    printf '\033[?25l'  # hide cursor
+    for ((i=0; i<count; i++)); do echo ""; done
+
+    # Status tracking
+    local -a statuses=() durations=()
+    for ((i=0; i<count; i++)); do
+        statuses+=("running")
+        durations+=("0")
     done
 
+    local running=$count
+    local spinner_idx=0
+
+    while (( running > 0 )); do
+        # Poll each background process
+        for ((i=0; i<count; i++)); do
+            [[ "${statuses[$i]}" != "running" ]] && continue
+            if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+                local now; now=$(date +%s)
+                local t0; t0=$(get_step_start "${sids[$i]}" "$now")
+                local dur=$((now - t0))
+                durations[$i]="$dur"
+                set_step_duration "${sids[$i]}" "$dur"
+                local step_log="${STORY_ARTIFACTS}/step-${sids[$i]}.log"
+                if wait "${pids[$i]}" 2>/dev/null; then
+                    statuses[$i]="ok"
+                    set_step_status "${sids[$i]}" "ok"
+                    printf "  %-6s  %-8s  %-10s  %s\n" "${sids[$i]}" "$(format_duration $dur)" "ok" "${snames[$i]}" >> "$PIPELINE_LOG"
+                    rm -f "$step_log"
+                else
+                    statuses[$i]="FAILED"
+                    set_step_status "${sids[$i]}" "FAILED"
+                    printf "  %-6s  %-8s  %-10s  %s\n" "${sids[$i]}" "$(format_duration $dur)" "FAILED" "${snames[$i]}" >> "$PIPELINE_LOG"
+                fi
+                running=$((running - 1))
+            fi
+        done
+
+        # Redraw board in-place
+        echo -ne "\033[${count}A"
+        local frame="${SPINNER_FRAMES:spinner_idx%${#SPINNER_FRAMES}:1}"
+        for ((i=0; i<count; i++)); do
+            echo -ne "\033[2K"
+            case "${statuses[$i]}" in
+                running)
+                    local t0; t0=$(get_step_start "${sids[$i]}" "$(date +%s)")
+                    local elapsed=$(( $(date +%s) - t0 ))
+                    echo -e "  ${frame} ${snames[$i]}  ${DIM}$(format_duration $elapsed)${NC}"
+                    ;;
+                ok)
+                    echo -e "  ${GREEN}✓${NC} ${snames[$i]}  ${GREEN}$(format_duration "${durations[$i]}")${NC}"
+                    ;;
+                FAILED)
+                    echo -e "  ${YELLOW}!${NC} ${snames[$i]}  ${YELLOW}failed after $(format_duration "${durations[$i]}")${NC}"
+                    ;;
+            esac
+        done
+
+        (( running > 0 )) && sleep 0.5
+        spinner_idx=$((spinner_idx + 1))
+    done
+
+    printf '\033[?25h'  # restore cursor
     return 0
 }
 
@@ -834,7 +1128,11 @@ generate_pipeline_metrics() {
         echo "## Git Changes"
         echo ""
         echo '```'
-        git -C "$PROJECT_ROOT" diff --stat 2>/dev/null || echo "(no uncommitted changes)"
+        if [[ -n "$COMMIT_BASELINE" ]]; then
+            git -C "$PROJECT_ROOT" diff --stat "$COMMIT_BASELINE" HEAD 2>/dev/null || echo "(no changes)"
+        else
+            git -C "$PROJECT_ROOT" diff --stat 2>/dev/null || echo "(no uncommitted changes)"
+        fi
         echo '```'
 
     } > "$metrics_file"
@@ -864,10 +1162,14 @@ Perform ALL of the following:
    Fix anything that is missing or incomplete.
 
 2. Add an '## Auto-bmad Pipeline Artifacts' section after the Dev Agent Record. This is a reference index ONLY — do not duplicate content already in the Dev Agent Record, Change Log, or the artifacts themselves. List each artifact file with a one-line outcome (pass/fail/N findings). Skip any that don't exist:
+   - Validation reports: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--2{a,b,c,d}-validate-*.md
+   - Validation arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--2e-arbiter-validate.md
+   - Adversarial reports: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--3{a,b,c,d}-adversarial-*.md
+   - Adversarial arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--3e-arbiter-adversarial.md
    - Edge case reports: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--6{a,b,c,d}-edge-cases-*.md
-   - Edge case arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--6e-*.md
+   - Edge case arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--6e-arbiter-edge-cases.md
    - Code reviews: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--7{a,b,c,d}-review-*.md
-   - Code review arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--8-*.md
+   - Code review arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--8-arbiter-review.md
    - Traceability: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--9-*.md
    - Test automation: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--10-*.md
 
@@ -901,11 +1203,18 @@ step_14b_close() {
 run_pipeline() {
     local story_file_ref="${STORY_FILE_PATH:-the implementation-artifacts directory}"
 
+    # Record baseline commit for final squash
+    COMMIT_BASELINE="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null)"
+
     # --- Phase 0: Epic Start ---
     if is_epic_start && [[ "$SKIP_EPIC_PHASES" == "false" ]]; then
-        log_phase "0" "Epic Start: Pre-Implementation"
-
-        run_step "0" "TEA Test Design (epic-level)" step_0_test_design
+        if [[ "$SKIP_TEA" == "true" ]]; then
+            log_skip "Phase 0 — TEA not installed"
+        else
+            log_phase "0" "Epic Start: Pre-Implementation"
+            run_step "0" "TEA Test Design (epic-level)" step_0_test_design
+            git_checkpoint "phase 0 — epic start"
+        fi
     else
         if [[ "$SKIP_EPIC_PHASES" == "true" ]]; then
             log_skip "Phase 0 — --skip-epic-phases"
@@ -941,11 +1250,19 @@ run_pipeline() {
         "Fix all confirmed issues in the story file at ${story_file_ref}." \
         "" "/bmad-analyst yolo -"
 
+    git_checkpoint "phase 1 — story preparation"
+
     # --- Phase 2: TDD + Implementation ---
     log_phase "2" "TDD + Implementation"
 
-    run_step "4" "TDD Red Phase" step_4_tdd_red
+    if [[ "$SKIP_TEA" == "true" ]]; then
+        log_skip "Step 4 — TEA not installed"
+    else
+        run_step "4" "TDD Red Phase" step_4_tdd_red
+    fi
     run_step "5" "Implementation" step_5_implementation
+
+    git_checkpoint "phase 2 — implementation"
 
     # --- Phase 3: Edge Case Hunter (4 AIs in parallel) ---
     log_phase "3" "Edge Cases (4 Hunters)"
@@ -964,6 +1281,8 @@ run_pipeline() {
 - Single flag (1/4): only fix if it's a clearly unhandled case with concrete consequences, skip rare hypothetical scenarios" \
         "/bmad-dev yolo -"
 
+    git_checkpoint "phase 3 — edge case fixes"
+
     # --- Phase 4: Code Review (4 AIs in parallel) ---
     log_phase "4" "Quadruple Code Review"
 
@@ -981,23 +1300,35 @@ run_pipeline() {
 - Single flag (1/4): only fix if it's clearly a real issue with concrete impact (e.g., security vulnerability, data loss, crash), skip stylistic or speculative concerns" \
         "/bmad-dev yolo -"
 
-    # --- Phase 5: Traceability & Automation ---
-    log_phase "5" "Traceability & Automation"
+    git_checkpoint "phase 4 — code review fixes"
 
-    run_step "9" "Testarch Trace" step_9_trace
-    run_step "10" "Testarch Automate" step_10_automate
+    # --- Phase 5: Traceability & Automation ---
+    if [[ "$SKIP_TEA" == "true" ]]; then
+        log_skip "Phase 5 — TEA not installed"
+    else
+        log_phase "5" "Traceability & Automation"
+
+        run_step "9" "Testarch Trace" step_9_trace
+        run_step "10" "Testarch Automate" step_10_automate
+        git_checkpoint "phase 5 — traceability & automation"
+    fi
 
     # --- Phase 6: Epic End ---
     if is_epic_end && [[ "$SKIP_EPIC_PHASES" == "false" ]]; then
         log_phase "6" "Epic End"
 
-        run_parallel_reviews \
-            "11a|Epic Trace|step_11a_epic_trace" \
-            "11b|Epic NFR Assessment|step_11b_epic_nfr" \
-            "11c|Epic Test Review|step_11c_epic_test_review"
+        if [[ "$SKIP_TEA" == "true" ]]; then
+            log_skip "Steps 11a-c — TEA not installed"
+        else
+            run_parallel_reviews \
+                "11a|Epic Trace|step_11a_epic_trace" \
+                "11b|Epic NFR Assessment|step_11b_epic_nfr" \
+                "11c|Epic Test Review|step_11c_epic_test_review"
+        fi
 
         run_step "12" "Retrospective" step_12_retrospective
         run_step "13" "Generate Project Context" step_13_project_context
+        git_checkpoint "phase 6 — epic end"
     else
         if [[ "$SKIP_EPIC_PHASES" == "true" ]]; then
             log_skip "Phase 6 — --skip-epic-phases"
@@ -1017,6 +1348,11 @@ run_pipeline() {
 
     run_step "14a" "Document Story (tech-writer)" step_14a_document
     run_step "14b" "Close Story (SM)" step_14b_close
+
+    git_checkpoint "phase 7 — finalization"
+
+    # Squash all phase commits into a single commit
+    git_squash_pipeline
 }
 
 # ============================================================
@@ -1063,11 +1399,10 @@ print_summary() {
 
     if [[ "$DRY_RUN" != "true" ]]; then
         echo ""
-        echo -e "${BOLD}${MAGENTA}  Proposed commit message is in the story file.${NC}"
-        if [[ -n "$STORY_FILE_PATH" ]]; then
-            echo -e "  ${DIM}Look for the \"Auto-bmad Completed\" section in:${NC}"
-            echo -e "  ${DIM}${STORY_FILE_PATH}${NC}"
-        fi
+        local final_sha
+        final_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)"
+        echo -e "  ${GREEN}✓${NC} All changes committed: ${BOLD}${final_sha}${NC}"
+        echo -e "  ${DIM}Commit message sourced from the story file Auto-bmad Completion section.${NC}"
     fi
 
     echo ""
@@ -1092,6 +1427,9 @@ Options:
                          Valid IDs: ${STEP_ORDER}
   --dry-run              Preview all steps without executing
   --skip-epic-phases     Skip phases 0 (epic start) and 6 (epic end)
+  --json-log             Extract arbiter findings into review-log.json (JSONL)
+  --no-traces            Remove all pipeline artifacts after finalization
+                         (implies --json-log; JSON log is kept)
   --help                 Show this help message
 
 AI Profiles (edit at top of script):
@@ -1117,6 +1455,8 @@ parse_args() {
             --from-step)      FROM_STEP="$2"; shift 2 ;;
             --story)          STORY_ID="$2"; shift 2 ;;
             --skip-epic-phases) SKIP_EPIC_PHASES=true; shift ;;
+            --json-log)       JSON_LOG=true; shift ;;
+            --no-traces)      NO_TRACES=true; JSON_LOG=true; shift ;;
             --help|-h)        show_help; exit 0 ;;
             *)
                 log_error "Unknown argument: $1"
@@ -1129,6 +1469,7 @@ parse_args() {
 }
 
 main() {
+    trap 'stop_activity_monitor 2>/dev/null || true' EXIT
     parse_args "$@"
 
     preflight_checks
@@ -1141,16 +1482,22 @@ main() {
 
     check_git_branch
 
-    STORY_ARTIFACTS="${IMPL_ARTIFACTS}/auto-bmad/${STORY_SHORT_ID}-"
+    STORY_ARTIFACTS="${IMPL_ARTIFACTS}/auto-bmad/${STORY_SHORT_ID}"
     PIPELINE_LOG="${STORY_ARTIFACTS}/pipeline.log"
     mkdir -p "$STORY_ARTIFACTS"
+
+    # Initialize summary log (lightweight — full output goes to per-step logs)
+    printf "# Pipeline Summary — %s\n# Started: %s\n# %-6s  %-8s  %-10s  %s\n" \
+        "$STORY_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "Step" "Duration" "Status" "Detail" \
+        > "$PIPELINE_LOG"
 
     PIPELINE_START_TIME=$(date +%s)
 
     echo ""
-    echo -e "${BOLD}${MAGENTA}╔══════════════════════════════╗${NC}"
-    echo -e "${BOLD}${MAGENTA}║   Auto-BMAD Story Pipeline   ║${NC}"
-    echo -e "${BOLD}${MAGENTA}╚══════════════════════════════╝${NC}"
+    echo -e "${BOLD}${MAGENTA}╔═════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${MAGENTA}║                Auto-BMAD Story Pipeline                 ║${NC}"
+    echo -e "${BOLD}${MAGENTA}╚═════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  Story:      ${BOLD}${STORY_ID}${NC}"
     echo -e "  Branch:     ${BOLD}$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'n/a')${NC}"
@@ -1158,6 +1505,9 @@ main() {
     echo -e "  Epic start: $(is_epic_start && echo -e "${GREEN}Yes (first story)${NC}" || echo "No")"
     echo -e "  Epic end:   $(is_epic_end && echo -e "${GREEN}Yes (last story)${NC}" || echo "No")"
     [[ "$DRY_RUN" == "true" ]] && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
+    [[ "$JSON_LOG" == "true" ]] && echo -e "  JSON log:   ${GREEN}Enabled${NC}"
+    [[ "$NO_TRACES" == "true" ]] && echo -e "  No traces:  ${YELLOW}Pipeline artifacts will be removed${NC}"
+    [[ "$SKIP_TEA" == "true" ]] && echo -e "  TEA:        ${YELLOW}Skipped (not installed)${NC}"
     [[ -n "$FROM_STEP" ]] && echo -e "  Resume:     from step ${BOLD}${FROM_STEP}${NC}"
     echo -e "  Artifacts:  ${DIM}${STORY_ARTIFACTS}/${NC}"
 
@@ -1165,8 +1515,33 @@ main() {
 
     print_summary
 
-    # Pipeline log is only useful for debugging failures — clean up on success
-    rm -f "$PIPELINE_LOG"
+    # Step logs are kept only on failure — clean up any stragglers on success
+    rm -f "${STORY_ARTIFACTS}"/step-*.log 2>/dev/null || true
+
+    # --no-traces: remove all pipeline-generated artifacts, keep only the JSON log
+    if [[ "$NO_TRACES" == "true" ]]; then
+        local json_log="${STORY_ARTIFACTS}/review-log.json"
+        local json_backup=""
+
+        # Preserve the JSON log if it exists
+        if [[ -f "$json_log" ]]; then
+            json_backup="$(mktemp)"
+            cp "$json_log" "$json_backup"
+        fi
+
+        # Remove all pipeline artifacts
+        rm -rf "$STORY_ARTIFACTS"
+
+        # Restore JSON log to impl artifacts root (not nested in removed dir)
+        if [[ -n "$json_backup" ]]; then
+            local final_log="${IMPL_ARTIFACTS}/auto-bmad/review-log--${STORY_SHORT_ID}.json"
+            mkdir -p "$(dirname "$final_log")"
+            mv "$json_backup" "$final_log"
+            echo -e "  ${GREEN}✓${NC} Review log: ${final_log}"
+        fi
+
+        echo -e "  ${DIM}Pipeline artifacts removed (--no-traces)${NC}"
+    fi
 }
 
 main "$@"
