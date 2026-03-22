@@ -1,10 +1,55 @@
-# auto-bmad — Automated BMAD Pipeline
+# auto-bmad
 
-Fully automated story and epic pipeline orchestration using multiple AI CLIs. Designed for unattended execution in a sandboxed environment (VM, container, etc).
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
+[![Language: Bash](https://img.shields.io/badge/Language-Bash-green.svg)]()
+[![AI CLIs: 4](https://img.shields.io/badge/AI_CLIs-4-orange.svg)]()
+[![BMad: 6.2.0](https://img.shields.io/badge/BMad-6.2.0-purple.svg)]()
 
-> **Warning:** These scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments.
+Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with multi-AI consensus reviews — designed for unattended, sandboxed execution.
 
-## Overview
+- **4 AI providers** (Claude, GPT, Gemini, OpenCode) running review steps in parallel
+- **14+ pipeline steps** across 7 phases per story — from story creation to documentation
+- **Consensus-based multi-AI reviews** with configurable arbiter (4-way fan-out + merge)
+- **Full epic orchestration** with automatic PR, CI gating, and squash-merge between stories
+
+> **Warning:** These scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc).
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Story Pipeline](#story-pipeline-auto-bmad-storysh)
+- [Epic Pipeline](#epic-pipeline-auto-bmad-epicsh)
+- [Sprint Status Format](#sprint-status-format)
+- [Customization](#customization)
+- [Troubleshooting](#troubleshooting)
+- [Examples](#examples)
+- [Lineage](#lineage)
+- [License](#license)
+
+## Quick Start
+
+```bash
+# 1. Clone and copy (or symlink) scripts into your BMAD project root
+git clone https://github.com/user/auto-bmad.git
+cp -p auto-bmad/auto-bmad-story.sh auto-bmad/auto-bmad-epic.sh /path/to/your/project/
+
+# 2. Edit the AI profiles and step assignments at the top of auto-bmad-story.sh
+
+# 3. Run a single story
+./auto-bmad-story.sh
+
+# 4. Run an entire epic
+./auto-bmad-epic.sh
+```
+
+The story script auto-detects the next story from `sprint-status.yaml`. The epic script loops through all stories in an epic, handling PR + CI + merge between them. See [How It Works](#how-it-works) for the full picture.
+
+## How It Works
+
+This project is opinionated — it assumes a specific git workflow (branch-per-story, squash-merge PRs, CI gates) and uses multiple AI CLIs simultaneously. The entire pipeline is defined in two shell scripts with plain configuration at the top — edit the AI profiles, step assignments, or git workflow to fit your setup.
 
 Two scripts work together:
 
@@ -13,38 +58,88 @@ Two scripts work together:
 | `auto-bmad-story.sh` | One story | Runs a single story through the full BMAD pipeline (14+ steps, 7 phases) using multiple AI CLIs |
 | `auto-bmad-epic.sh` | One epic | Loops through all stories in an epic, delegating each to the story script, with PR + CI between stories |
 
-## Architecture
+### Architecture
 
 ```
 auto-bmad-epic.sh
   │
-  ├── Story 1 ──→ auto-bmad-story.sh --story 1-1-slug
-  │                 └── 14+ steps across 7 phases
-  │                 └── 4 AI CLIs in parallel for reviews
+  ├── Story 1 ──→ auto-bmad-story.sh
+  │     ├─ Phase 0: Epic start (TEA test design)
+  │     ├─ Phase 1: Story prep
+  │     │     ├── 4 AIs review in parallel ──→ Arbiter (Opus)
+  │     │     └── 4 AIs adversarial review ──→ Arbiter (Opus)
+  │     ├─ Phase 2: TDD + implementation
+  │     ├─ Phase 3: Edge cases (4 AIs ──→ Arbiter)
+  │     ├─ Phase 4: Code review (4 AIs ──→ Arbiter)
+  │     ├─ Phase 5: Traceability
+  │     ├─ Phase 6: Epic end (retro, NFR, context)
+  │     └─ Phase 7: Finalization (docs + close)
   │
-  ├── git: commit → push → PR → auto-merge (squash) → wait for CI
+  ├── git: commit → push → PR → squash-merge → CI ✓
   │
-  ├── Story 2 ──→ auto-bmad-story.sh --story 1-2-slug
-  │                 └── ...
+  ├── Story 2 ──→ auto-bmad-story.sh ...
   │
-  ├── git: commit → push → PR → auto-merge → wait for CI
-  │
-  └── Story N ──→ auto-bmad-story.sh --story 1-N-slug
-                    └── ...
-                    └── Phase 6: retrospective, NFR, project context
+  └── Story N ──→ ...
 ```
+
+### Multi-AI Review Pattern
+
+Reviews (validation, adversarial, edge cases, code review) use a **4-way parallel review + arbiter** pattern:
+
+1. Four AI CLIs review independently in parallel (GPT, Gemini, MiniMax, MiMo)
+2. Each produces a findings report saved to the story artifacts directory
+3. An arbiter (Claude Opus) cross-references all findings using consensus rules:
+
+| Agreement | Action |
+|-----------|--------|
+| **4/4 agree** | Fix immediately — high confidence |
+| **3/4 agree** | Fix — good confidence |
+| **2/4 agree** | Evaluate both sides, fix if substantive |
+| **1/4 flags** | Only fix if clearly a real issue with concrete impact |
 
 ## Prerequisites
 
-- **BMad framework** installed (`_bmad/` directory with matching version in manifest)
-- **Sprint status** generated (`_bmad-output/implementation-artifacts/sprint-status.yaml`)
-- **AI CLI tools** in PATH: `claude`, `codex`, `gemini`, `opencode`
-- **GitHub CLI** (`gh`) authenticated (for PR creation between stories)
-- **Git** repository with `main` branch
+### Required
 
----
+- **Bash** 3.2+
+- **Git** repository with a `main` branch
+- **BMad framework** installed (`_bmad/` directory) — tested against BMad 6.2.0 / TEA 1.7.0
+- **Sprint status** generated at `_bmad-output/implementation-artifacts/sprint-status.yaml`
 
-## auto-bmad-story.sh
+### AI CLIs (all four needed for full parallel reviews)
+
+- [`claude`](https://docs.anthropic.com/en/docs/claude-code) — Claude Code CLI
+- [`codex`](https://github.com/openai/codex) — OpenAI Codex CLI
+- [`gemini`](https://github.com/google-gemini/gemini-cli) — Google Gemini CLI
+- [`opencode`](https://github.com/opencode-ai/opencode) — OpenCode CLI (MiniMax, MiMo)
+
+### For auto-merge between stories
+
+- [`gh`](https://cli.github.com/) — GitHub CLI, authenticated
+
+> **Note:** Each story runs 14+ AI invocations across 4 providers. This is extremely token-hungry — budget accordingly.
+
+## Installation
+
+The scripts must live in the root of your BMAD project (they derive `PROJECT_ROOT` from their own location).
+
+```bash
+# Clone
+git clone https://github.com/user/auto-bmad.git
+
+# Copy scripts into your project root (preserves executable bit)
+cp -p auto-bmad/auto-bmad-story.sh auto-bmad/auto-bmad-epic.sh /path/to/your/project/
+
+# — or symlink to stay in sync with upstream —
+ln -s "$(pwd)/auto-bmad/auto-bmad-story.sh" /path/to/your/project/auto-bmad-story.sh
+ln -s "$(pwd)/auto-bmad/auto-bmad-epic.sh" /path/to/your/project/auto-bmad-epic.sh
+
+# Verify
+./auto-bmad-story.sh --help
+./auto-bmad-epic.sh --help
+```
+
+## Story Pipeline (`auto-bmad-story.sh`)
 
 Automates one story through the full BMAD implementation workflow.
 
@@ -87,28 +182,16 @@ Six AI profiles are assigned to different steps based on the task:
 | `AI_MINIMAX` | OpenCode MiniMax M2.5 | max | Parallel reviews |
 | `AI_MIMO` | OpenCode MiMo V2 Pro | max | Parallel reviews |
 
-### Multi-AI Review Pattern
-
-Reviews (validation, adversarial, edge cases, code review) use a **4-way parallel review + arbiter** pattern:
-
-1. Four AI CLIs review independently in parallel (GPT, Gemini, MiniMax, MiMo)
-2. Each produces a findings report saved to the story artifacts directory
-3. An arbiter (Claude Opus) cross-references all findings using consensus rules:
-   - **4/4 agree**: fix immediately
-   - **3/4 agree**: fix, good confidence
-   - **2/4 agree**: evaluate both sides, fix if substantive
-   - **1/4 flag**: only fix if clearly a real issue with concrete impact
-
-### Git Workflow
-
-The story script creates a `story/{STORY_ID}` branch from `main` at the start. After completion, the branch is left with all changes — merging is handled by the epic script or manually.
-
 ### Story Detection
 
 Auto-detects the next story from `sprint-status.yaml`:
 1. Prioritizes stories with status `in-progress` (resume interrupted work)
 2. Falls back to the first story with status `backlog`
 3. Epic boundary detection is automatic based on story position
+
+### Git Workflow
+
+The story script creates a `story/{STORY_ID}` branch from `main` at the start. After completion, the branch is left with all changes — merging is handled by the epic script or manually.
 
 ### Artifacts
 
@@ -125,9 +208,9 @@ If a step fails, the script exits with a resume command:
 Resume: ./auto-bmad-story.sh --from-step 6a --story 1-2-database-schemas
 ```
 
----
+See [Troubleshooting](#troubleshooting) for common failure scenarios.
 
-## auto-bmad-epic.sh
+## Epic Pipeline (`auto-bmad-epic.sh`)
 
 Thin orchestration wrapper that runs all stories in an epic sequentially.
 
@@ -182,7 +265,7 @@ Story completes on story/1-1-slug branch
 Next story starts from main
 ```
 
-With `--no-merge`: skips all git operations between stories. Use this for manual git control.
+With `--no-merge`: skips all git operations between stories. Use this for manual git control or non-GitHub workflows.
 
 ### Commit Messages
 
@@ -225,33 +308,6 @@ Epic-level artifacts go to `_bmad-output/implementation-artifacts/auto-bmad/epic
 - `epic-{N}-metrics.md` — per-story timing table and totals
 - `epic-pipeline.log` — full log (deleted on success)
 
----
-
-## Examples
-
-```bash
-# Preview what the next epic would do
-./auto-bmad-epic.sh --dry-run
-
-# Run epic 1 end-to-end
-./auto-bmad-epic.sh --epic 1
-
-# Resume epic after a story failure
-./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
-
-# Run without auto-PR (manual git between stories)
-./auto-bmad-epic.sh --epic 1 --no-merge
-
-# Run a single story manually
-./auto-bmad-story.sh --story 1-2-database-schemas
-
-# Resume a failed story from a specific step
-./auto-bmad-story.sh --story 1-2-database-schemas --from-step 6a
-
-# Preview a single story's pipeline
-./auto-bmad-story.sh --story 1-2-database-schemas --dry-run
-```
-
 ## Sprint Status Format
 
 Both scripts read from `sprint-status.yaml`:
@@ -279,18 +335,101 @@ epic-2-retrospective: optional
 
 ## Customization
 
+Both scripts keep all configuration in clearly marked blocks at the top — fork and edit to fit your setup.
+
 ### AI Profiles
 
-Edit the six `AI_*` variables at the top of `auto-bmad-story.sh` to change which models handle which tasks. Format: `"cli|model|effort"`.
+Edit the six `AI_*` variables at the top of `auto-bmad-story.sh`. Format: `"cli|model|effort"`.
+
+```bash
+# Example: swap Gemini for a different model
+AI_GEMINI="gemini|gemini-2.5-pro|"
+```
 
 ### Step Assignment
 
-Edit `step_config()` in `auto-bmad-story.sh` to reassign steps to different AI profiles.
+Edit `step_config()` in `auto-bmad-story.sh` to reassign steps to different AI profiles. Step IDs use a consistent scheme:
 
-### CI Timeout
+- **Numeric** (0, 1, 4, 5, ...) — sequential steps, run one at a time
+- **Letter suffix** (2a, 2b, 2c, 2d) — parallel slots within a phase (a=GPT, b=Gemini, c=MiniMax, d=MiMo)
+- **`e` suffix** (2e, 3e, 6e) or step 8 — arbiter that runs after parallel slots complete
 
-Edit `PR_MERGE_TIMEOUT` in `auto-bmad-epic.sh` (default: 900 seconds / 15 minutes).
+### Git / CI Configuration
 
-### Poll Interval
+Edit these variables at the top of `auto-bmad-epic.sh`:
 
-Edit `PR_POLL_INTERVAL` in `auto-bmad-epic.sh` (default: 30 seconds).
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PR_MERGE_TIMEOUT` | `900` (15 min) | Max seconds to wait for CI to pass on a PR |
+| `PR_POLL_INTERVAL` | `30` | Seconds between CI status checks |
+
+Use `--no-merge` to skip all git operations between stories for non-GitHub or manual workflows.
+
+## Troubleshooting
+
+### AI CLI not found
+
+The scripts check for `claude`, `codex`, `gemini`, and `opencode` in PATH at startup. Verify each is installed:
+
+```bash
+for cli in claude codex gemini opencode; do command -v "$cli" >/dev/null && echo "$cli ✓" || echo "$cli ✗"; done
+```
+
+### BMAD version mismatch
+
+The story script validates against BMad 6.2.0 / TEA 1.7.0. A mismatch produces a warning but does not block execution. Update the `BMAD_BUILD_VERSION` and `BMAD_BUILD_TEA_VERSION` variables if you are running a different BMad version.
+
+### Story pipeline fails mid-step
+
+Use `--from-step` to resume from the failed step:
+
+```bash
+./auto-bmad-story.sh --story 1-2-database-schemas --from-step 6a
+```
+
+### CI timeout on PR merge
+
+Increase `PR_MERGE_TIMEOUT` in `auto-bmad-epic.sh`, or fix CI manually, merge the PR, then resume the epic:
+
+```bash
+./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
+```
+
+### sprint-status.yaml not found
+
+Both scripts expect this file at `_bmad-output/implementation-artifacts/sprint-status.yaml`. Generate it through the BMad framework before running auto-bmad.
+
+## Examples
+
+```bash
+# Preview what the next epic would do
+./auto-bmad-epic.sh --dry-run
+
+# Run epic 1 end-to-end
+./auto-bmad-epic.sh --epic 1
+
+# Resume epic after a story failure
+./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
+
+# Run without auto-PR (manual git between stories)
+./auto-bmad-epic.sh --epic 1 --no-merge
+
+# Run a single story manually
+./auto-bmad-story.sh --story 1-2-database-schemas
+
+# Resume a failed story from a specific step
+./auto-bmad-story.sh --story 1-2-database-schemas --from-step 6a
+
+# Preview a single story's pipeline
+./auto-bmad-story.sh --story 1-2-database-schemas --dry-run
+```
+
+## Lineage
+
+This project evolved from the original **auto-bmad** Claude Code plugin that lived in this same repository. The plugin approach was replaced with the current standalone shell scripts to support multi-CLI orchestration and epic-level automation.
+
+An improved fork of the original plugin is maintained at [bramvera/auto-bmad](https://github.com/bramvera/auto-bmad).
+
+## License
+
+[MIT](LICENSE.md) — Copyright (c) 2026 Stefano Ginella
