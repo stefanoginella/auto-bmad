@@ -175,13 +175,15 @@ Options:
 
 ### AI Profiles
 
-Six AI profiles are assigned to different steps based on the task:
+Eight AI profiles are assigned to different steps based on the task:
 
 | Profile | CLI / Model | Effort | Used for |
 |---------|-------------|--------|----------|
-| `AI_OPUS` | Claude Opus 4.6 | max | Critical path, arbiters, implementation |
+| `AI_OPUS` | Claude Opus 4.6 | max | Critical path, code-touching arbiters, implementation |
+| `AI_OPUS_HIGH` | Claude Opus 4.6 | high | Structured, non-critical (pre-impl arbiters, retro, docs) |
 | `AI_SONNET` | Claude Sonnet 4.6 | high | Lightweight bookkeeping (traceability, closing) |
-| `AI_GPT` | Codex GPT 5.4 | xhigh | Mechanical steps, parallel reviews |
+| `AI_GPT` | Codex GPT 5.4 | xhigh | Code reviews, edge cases |
+| `AI_GPT_HIGH` | Codex GPT 5.4 | high | Spec-level reviews (pre-implementation) |
 | `AI_GEMINI` | Gemini 3 Pro | — | Parallel reviews |
 | `AI_MINIMAX` | OpenCode MiniMax M2.5 | max | Parallel reviews |
 | `AI_MIMO` | OpenCode MiMo V2 Pro | max | Parallel reviews |
@@ -361,7 +363,7 @@ Both scripts keep all configuration in clearly marked blocks at the top — fork
 
 ### AI Profiles
 
-Edit the six `AI_*` variables at the top of `auto-bmad-story.sh`. Format: `"cli|model|effort"`.
+Edit the eight `AI_*` variables at the top of `auto-bmad-story.sh`. Format: `"cli|model|effort"`.
 
 ```bash
 # Example: swap Gemini for a different model
