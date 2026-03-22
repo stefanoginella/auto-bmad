@@ -808,6 +808,139 @@ check_git_branch() {
     fi
 }
 
+# ============================================================
+# Model Availability Checks
+# ============================================================
+
+# Each _check_*_model function returns:
+#   0 = model available
+#   1 = model definitely not available
+#   2 = cannot determine (listing unavailable)
+
+_check_claude_model() {
+    local model="$1"
+    # claude validates model before API call; --max-budget-usd 0.001
+    # causes fast exit for valid models (budget exceeded) while invalid
+    # models fail immediately with a specific error message.
+    local output
+    output=$(echo "." | claude -p --model "$model" --max-budget-usd 0.001 2>&1)
+    if echo "$output" | grep -q "There's an issue with the selected model"; then
+        return 1
+    fi
+    return 0
+}
+
+_check_codex_model() {
+    local model="$1"
+    local cache="$HOME/.codex/models_cache.json"
+    if [[ -f "$cache" ]]; then
+        if grep -q "\"slug\": \"${model}\"" "$cache" 2>/dev/null; then
+            return 0
+        fi
+        return 1
+    fi
+    return 2
+}
+
+_check_gemini_model() {
+    local model="$1"
+    local tmpfile
+    tmpfile=$(mktemp)
+
+    # gemini exits quickly with 404 for invalid models but hangs for
+    # valid ones (processing the prompt). Use a background process with
+    # a timeout: still running after 8s ⇒ model is valid.
+    echo "." | gemini -p "." -m "$model" >"$tmpfile" 2>&1 &
+    local pid=$!
+
+    local i=0
+    while (( i < 80 )); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+        rm -f "$tmpfile"
+        return 0
+    fi
+
+    local result=0
+    if grep -q "code: 404\|is not found\|critical error" "$tmpfile" 2>/dev/null; then
+        result=1
+    fi
+    rm -f "$tmpfile"
+    return "$result"
+}
+
+_check_opencode_model() {
+    local model="$1"
+    if opencode models 2>/dev/null | grep -qF "$model"; then
+        return 0
+    fi
+    return 1
+}
+
+check_model_availability() {
+    echo -e "\n  ${BOLD}Model availability${NC}"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local checked=""
+    local pairs=()
+
+    # Collect unique cli:model pairs from all AI profiles
+    local profile cli model _effort
+    for profile in "$AI_OPUS" "$AI_OPUS_HIGH" "$AI_SONNET" "$AI_GPT" "$AI_GPT_HIGH" "$AI_GEMINI" "$AI_MINIMAX" "$AI_MIMO"; do
+        IFS='|' read -r cli model _effort <<< "$profile"
+        [[ -z "$cli" || -z "$model" ]] && continue
+        local pair="${cli}:${model}"
+        case " $checked " in *" ${pair} "*) continue ;; esac
+        checked="${checked} ${pair}"
+        command -v "$cli" &>/dev/null || continue
+        pairs+=("$pair")
+    done
+
+    # Launch all model checks in parallel
+    for pair in "${pairs[@]}"; do
+        local cli="${pair%%:*}" model="${pair#*:}"
+        local safe="${pair//:/_}"; safe="${safe//\//__}"
+        (
+            local rc=2
+            case "$cli" in
+                claude)   _check_claude_model "$model";   rc=$? ;;
+                codex)    _check_codex_model "$model";    rc=$? ;;
+                gemini)   _check_gemini_model "$model";   rc=$? ;;
+                opencode) _check_opencode_model "$model"; rc=$? ;;
+            esac
+            echo "$rc" > "${tmpdir}/${safe}"
+        ) &
+    done
+    wait
+
+    # Collect results
+    local errors=0 warnings=0
+    for pair in "${pairs[@]}"; do
+        local cli="${pair%%:*}" model="${pair#*:}"
+        local safe="${pair//:/_}"; safe="${safe//\//__}"
+        local r
+        r=$(cat "${tmpdir}/${safe}" 2>/dev/null) || r=2
+        case "$r" in
+            0) log_ok "${cli}/${model}" ;;
+            1) log_error "${cli}/${model} — not available"
+               errors=$((errors + 1)) ;;
+            *) log_warn "${cli}/${model} — could not verify"
+               warnings=$((warnings + 1)) ;;
+        esac
+    done
+
+    rm -rf "$tmpdir"
+    [[ $warnings -gt 0 ]] && log_warn "${warnings} model(s) could not be verified"
+    return "$errors"
+}
+
 preflight_checks() {
     local errors=0
 
@@ -838,6 +971,10 @@ preflight_checks() {
         log_error "Implementation artifacts directory missing: ${IMPL_ARTIFACTS}"
         errors=$((errors + 1))
     fi
+
+    # Check model availability for each CLI (runs in parallel)
+    check_model_availability
+    errors=$((errors + $?))
 
     if (( errors > 0 )); then
         echo ""
