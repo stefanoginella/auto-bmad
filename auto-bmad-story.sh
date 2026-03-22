@@ -17,7 +17,25 @@ set -euo pipefail
 
 # --- Project Paths ---
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
-IMPL_ARTIFACTS="${PROJECT_ROOT}/_bmad-output/implementation-artifacts"
+
+# Detect implementation_artifacts from BMAD config, with hardcoded fallback
+_detect_impl_artifacts() {
+    local val=""
+    local cfg
+    for cfg in "${PROJECT_ROOT}/_bmad/bmm/config.yaml" "${PROJECT_ROOT}/_bmad/core/config.yaml"; do
+        [[ -f "$cfg" ]] || continue
+        val=$(grep -m1 '^implementation_artifacts:' "$cfg" 2>/dev/null | sed 's/^implementation_artifacts:[[:space:]]*//' | sed 's/^["'\''"]//;s/["'\''"]$//') || true
+        [[ -n "$val" ]] && break
+    done
+    if [[ -n "$val" ]]; then
+        # Replace {project-root} placeholder with actual PROJECT_ROOT
+        echo "${val//\{project-root\}/$PROJECT_ROOT}"
+    else
+        echo "${PROJECT_ROOT}/_bmad-output/implementation-artifacts"
+    fi
+}
+
+IMPL_ARTIFACTS="$(_detect_impl_artifacts)"
 SPRINT_STATUS="${IMPL_ARTIFACTS}/sprint-status.yaml"
 BMAD_MANIFEST="${PROJECT_ROOT}/_bmad/_config/manifest.yaml"
 
