@@ -983,6 +983,13 @@ run_parallel_reviews() {
         return 0
     fi
 
+    # --- Print group header (e.g. ">>> Steps 2a–2d: Validate Story (parallel)") ---
+    local first_sid="${sids[0]}" last_sid="${sids[$((count-1))]}"
+    local group_name="${snames[0]}"
+    group_name="${group_name% (*}"          # strip trailing " (GPT)" etc.
+    echo ""
+    echo -e "${BOLD}${BLUE}>>> Steps ${first_sid}–${last_sid}: ${group_name} (parallel)${NC}"
+
     # --- Live status board: poll PIDs and redraw in-place ---
 
     # Print placeholder lines for the board
