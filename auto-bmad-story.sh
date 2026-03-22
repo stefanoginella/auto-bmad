@@ -110,7 +110,6 @@ STORY_FILE_PATH=""
 STORY_ARTIFACTS=""
 PIPELINE_LOG=""
 CURRENT_STEP_LOG=""
-METRICS_FILE=""
 COMMIT_BASELINE=""  # SHA before pipeline — used for final squash
 DRY_RUN=false
 FROM_STEP=""
@@ -152,6 +151,7 @@ log_phase() {
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
     echo -e "${BOLD}${CYAN}  Phase $1 — $2${NC}"
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    [[ -n "$PIPELINE_LOG" ]] && printf "# ═══ Phase %s — %s ═══\n" "$1" "$2" >> "$PIPELINE_LOG"
 }
 
 log_step() {
@@ -167,7 +167,10 @@ log_step() {
 log_ok()   { echo -e "${GREEN}  ✓ $1${NC}"; }
 log_warn() { echo -e "${YELLOW}  ! $1${NC}"; }
 log_error(){ echo -e "${RED}  ✗ $1${NC}"; }
-log_skip() { echo -e "${DIM}  — Skipped: $1${NC}"; }
+log_skip() {
+    echo -e "${DIM}  — Skipped: $1${NC}"
+    [[ -n "$PIPELINE_LOG" ]] && echo "# Skipped: $1" >> "$PIPELINE_LOG"
+}
 
 log_dry() {
     local step_id="$1" step_name="$2"
@@ -274,6 +277,9 @@ stop_activity_monitor() {
 
 # Save a checkpoint commit after a phase completes.
 # Skipped if there are no changes to commit.
+# Uses --no-verify because these are temporary WIP commits that get squashed
+# into a single final commit by git_squash_pipeline(). Running hooks on
+# intermediate checkpoints would waste time and fail on partial work.
 git_checkpoint() {
     local phase_label="$1"
     [[ "$DRY_RUN" == "true" ]] && return 0
@@ -317,6 +323,8 @@ git_squash_pipeline() {
         commit_msg="feat(${STORY_SHORT_ID}): ${description}"
     fi
 
+    # --no-verify: the squashed commit aggregates already-validated checkpoint
+    # commits. Pre-commit hooks will run when this branch is PR'd / merged.
     git -C "$PROJECT_ROOT" reset --soft "$COMMIT_BASELINE"
     git -C "$PROJECT_ROOT" commit -m "$commit_msg" --no-verify --quiet
     log_ok "Squashed pipeline commits into single commit"
@@ -867,6 +875,10 @@ run_step() {
     CURRENT_STEP_LOG="${STORY_ARTIFACTS}/step-${step_id}.log"
     : > "$CURRENT_STEP_LOG"
 
+    parse_step_config "$step_id"
+    local model_info="${cfg_cli}"
+    [[ -n "$cfg_model" ]] && model_info="${model_info}/${cfg_model}"
+
     local start_time; start_time=$(date +%s)
 
     start_activity_monitor "$step_name"
@@ -877,7 +889,7 @@ run_step() {
         local duration=$((end_time - start_time))
         set_step_duration "$step_id" "$duration"
         set_step_status "$step_id" "ok"
-        printf "  %-6s  %-8s  %-10s  %s\n" "$step_id" "$(format_duration $duration)" "ok" "$step_name" >> "$PIPELINE_LOG"
+        printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "$step_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$model_info" "$(format_duration $duration)" "ok" "$step_name" >> "$PIPELINE_LOG"
         rm -f "$CURRENT_STEP_LOG"
         log_ok "Completed in $(format_duration $duration)"
     else
@@ -886,7 +898,9 @@ run_step() {
         local duration=$((end_time - start_time))
         set_step_duration "$step_id" "$duration"
         set_step_status "$step_id" "FAILED"
-        printf "  %-6s  %-8s  %-10s  %s\n" "$step_id" "$(format_duration $duration)" "FAILED" "$step_name" >> "$PIPELINE_LOG"
+        printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "$step_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$model_info" "$(format_duration $duration)" "FAILED" "$step_name" >> "$PIPELINE_LOG"
+        echo "# FAILED at step ${step_id} after $(format_duration $((end_time - PIPELINE_START_TIME))) wall time" >> "$PIPELINE_LOG"
+        echo "# Resume: ./auto-bmad.sh --from-step ${step_id} --story ${STORY_ID}" >> "$PIPELINE_LOG"
         log_error "Step ${step_id} (${step_name}) FAILED after $(format_duration $duration)"
         log_error "Step log: ${CURRENT_STEP_LOG}"
         log_error "Resume: ./auto-bmad.sh --from-step ${step_id} --story ${STORY_ID}"
@@ -921,15 +935,18 @@ run_parallel_reviews() {
         # Record start time for duration tracking
         set_step_start "$sid" "$(date +%s)"
 
-        # Each parallel step gets its own raw output log
-        CURRENT_STEP_LOG="${STORY_ARTIFACTS}/step-${sid}.log"
-        : > "$CURRENT_STEP_LOG"
+        # Each parallel step gets its own raw output log.
+        # CURRENT_STEP_LOG is captured per-iteration before backgrounding so
+        # each subshell inherits the correct path (avoids race with the loop
+        # reassigning the variable for the next iteration).
+        local step_log="${STORY_ARTIFACTS}/step-${sid}.log"
+        : > "$step_log"
 
         # Suppress terminal output — log file still gets full output via tee.
         if [[ -n "$field4" ]]; then
-            run_review_step "$sid" "$field3" "$field4" >/dev/null &
+            CURRENT_STEP_LOG="$step_log" run_review_step "$sid" "$field3" "$field4" >/dev/null &
         else
-            "$field3" >/dev/null &
+            CURRENT_STEP_LOG="$step_log" "$field3" >/dev/null &
         fi
         pids+=($!)
         sids+=("$sid")
@@ -968,15 +985,18 @@ run_parallel_reviews() {
                 durations[$i]="$dur"
                 set_step_duration "${sids[$i]}" "$dur"
                 local step_log="${STORY_ARTIFACTS}/step-${sids[$i]}.log"
+                parse_step_config "${sids[$i]}"
+                local p_model="${cfg_cli}"
+                [[ -n "$cfg_model" ]] && p_model="${p_model}/${cfg_model}"
                 if wait "${pids[$i]}" 2>/dev/null; then
                     statuses[$i]="ok"
                     set_step_status "${sids[$i]}" "ok"
-                    printf "  %-6s  %-8s  %-10s  %s\n" "${sids[$i]}" "$(format_duration $dur)" "ok" "${snames[$i]}" >> "$PIPELINE_LOG"
+                    printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "${sids[$i]}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$p_model" "$(format_duration $dur)" "ok" "${snames[$i]}" >> "$PIPELINE_LOG"
                     rm -f "$step_log"
                 else
                     statuses[$i]="FAILED"
                     set_step_status "${sids[$i]}" "FAILED"
-                    printf "  %-6s  %-8s  %-10s  %s\n" "${sids[$i]}" "$(format_duration $dur)" "FAILED" "${snames[$i]}" >> "$PIPELINE_LOG"
+                    printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "${sids[$i]}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$p_model" "$(format_duration $dur)" "FAILED" "${snames[$i]}" >> "$PIPELINE_LOG"
                 fi
                 running=$((running - 1))
             fi
@@ -1074,70 +1094,45 @@ step_13_project_context() {
     run_ai "13" "/bmad-generate-project-context yolo - if a project context file already exists, update it"
 }
 
-# --- Pipeline Metrics ---
+# --- Pipeline Log Footer ---
 
-generate_pipeline_metrics() {
-    local metrics_file="${STORY_ARTIFACTS}/${STORY_SHORT_ID}--pipeline-metrics.md"
+finalize_pipeline_log() {
     local total_compute=0
     local steps_ok=0 steps_failed=0
 
-    {
-        echo "# Pipeline Metrics — ${STORY_ID}"
-        echo ""
-        echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        echo ""
-        echo "| Step | Name | CLI / Model | Duration | Status |"
-        echo "|------|------|-------------|----------|--------|"
+    for sid in $STEP_ORDER; do
+        local status; status="$(get_step_status "$sid")"
+        [[ "$status" == "skipped" || "$status" == "dry-run" ]] && continue
 
-        for sid in $STEP_ORDER; do
-            local status; status="$(get_step_status "$sid")"
-            [[ "$status" == "skipped" || "$status" == "dry-run" ]] && continue
-
-            local duration; duration="$(get_step_duration "$sid")"
-            local name; name="$(get_step_name "$sid")"
-            parse_step_config "$sid"
-            local model_info="${cfg_cli}"
-            [[ -n "$cfg_model" ]] && model_info="${model_info} / ${cfg_model}"
-
-            local dur_str="—"
-            if [[ "$duration" != "0" ]]; then
-                dur_str="$(format_duration "$duration")"
-                total_compute=$((total_compute + duration))
-            fi
-
-            [[ "$status" == "ok" ]] && steps_ok=$((steps_ok + 1))
-            [[ "$status" == "FAILED" ]] && steps_failed=$((steps_failed + 1))
-
-            echo "| ${sid} | ${name} | ${model_info} | ${dur_str} | ${status} |"
-        done
-
-        local wall_time=$(( $(date +%s) - PIPELINE_START_TIME ))
-        local savings=$((total_compute - wall_time))
-        (( savings < 0 )) && savings=0
-
-        echo ""
-        echo "## Timing"
-        echo ""
-        echo "- **Wall time:** $(format_duration $wall_time)"
-        echo "- **Compute time:** $(format_duration $total_compute) (sum of step durations)"
-        echo "- **Parallelism savings:** $(format_duration $savings)"
-        echo "- **Steps completed:** ${steps_ok}"
-        (( steps_failed > 0 )) && echo "- **Steps failed:** ${steps_failed}"
-
-        echo ""
-        echo "## Git Changes"
-        echo ""
-        echo '```'
-        if [[ -n "$COMMIT_BASELINE" ]]; then
-            git -C "$PROJECT_ROOT" diff --stat "$COMMIT_BASELINE" HEAD 2>/dev/null || echo "(no changes)"
-        else
-            git -C "$PROJECT_ROOT" diff --stat 2>/dev/null || echo "(no uncommitted changes)"
+        local duration; duration="$(get_step_duration "$sid")"
+        if [[ "$duration" != "0" ]]; then
+            total_compute=$((total_compute + duration))
         fi
-        echo '```'
 
-    } > "$metrics_file"
+        [[ "$status" == "ok" ]] && steps_ok=$((steps_ok + 1))
+        [[ "$status" == "FAILED" ]] && steps_failed=$((steps_failed + 1))
+    done
 
-    echo "$metrics_file"
+    local wall_time=$(( $(date +%s) - PIPELINE_START_TIME ))
+    local savings=$((total_compute - wall_time))
+    (( savings < 0 )) && savings=0
+
+    {
+        echo "#"
+        echo "# ═══ Complete ═══"
+        echo "# Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "# Wall time: $(format_duration $wall_time)"
+        echo "# Compute time: $(format_duration $total_compute) (parallelism savings: $(format_duration $savings))"
+        echo "# Steps: ${steps_ok} ok, ${steps_failed} failed"
+        if [[ -n "$COMMIT_BASELINE" ]]; then
+            local final_sha
+            final_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)"
+            echo "# Commit: ${final_sha}"
+            echo "#"
+            echo "# Git changes:"
+            git -C "$PROJECT_ROOT" diff --stat "$COMMIT_BASELINE" HEAD 2>/dev/null | sed 's/^/#   /' || echo "#   (no changes)"
+        fi
+    } >> "$PIPELINE_LOG"
 }
 
 # --- Phase 7: Finalization ---
@@ -1148,7 +1143,6 @@ step_14a_document() {
     fi
 
     local story_ref="${STORY_FILE_PATH:-the story file for ${STORY_ID}}"
-    local metrics_ref="${METRICS_FILE:-${STORY_ARTIFACTS}/${STORY_SHORT_ID}--pipeline-metrics.md}"
     run_ai "14a" "/bmad-tech-writer yolo - Finalize documentation for story ${STORY_ID}. The story file is at: ${story_ref}
 
 Perform ALL of the following:
@@ -1173,7 +1167,7 @@ Perform ALL of the following:
    - Traceability: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--9-*.md
    - Test automation: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--10-*.md
 
-3. Read the pipeline metrics file at ${metrics_ref} and embed its full contents (the step execution table AND the timing/git summary) into the story file as an '## Auto-bmad Pipeline Metrics' section. Copy the table and summary verbatim — do not summarize or reformat.
+3. Read the pipeline log at ${PIPELINE_LOG} and embed its full contents into the story file as an '## Auto-bmad Pipeline Log' section inside a code block. Copy verbatim — do not summarize or reformat.
 
 4. Add an '## Auto-bmad Completion' section with ONLY information not already captured in the Dev Agent Record or Change Log:
    - Open questions or concerns remaining after implementation
@@ -1340,10 +1334,10 @@ run_pipeline() {
     # --- Phase 7: Finalization ---
     log_phase "7" "Finalization"
 
-    # Generate metrics before the tech-writer runs so it can embed them
+    # Finalize pipeline log before the tech-writer runs so it can embed it
     if [[ "$DRY_RUN" != "true" ]]; then
-        METRICS_FILE="$(generate_pipeline_metrics)"
-        log_ok "Pipeline metrics: ${METRICS_FILE}"
+        finalize_pipeline_log
+        log_ok "Pipeline log finalized: ${PIPELINE_LOG}"
     fi
 
     run_step "14a" "Document Story (tech-writer)" step_14a_document
@@ -1429,7 +1423,7 @@ Options:
   --skip-epic-phases     Skip phases 0 (epic start) and 6 (epic end)
   --json-log             Extract arbiter findings into review-log.json (JSONL)
   --no-traces            Remove all pipeline artifacts after finalization
-                         (implies --json-log; JSON log is kept)
+                         (implies --json-log; JSON + pipeline logs are kept)
   --help                 Show this help message
 
 AI Profiles (edit at top of script):
@@ -1453,7 +1447,13 @@ parse_args() {
         case "$1" in
             --dry-run)        DRY_RUN=true; shift ;;
             --from-step)      FROM_STEP="$2"; shift 2 ;;
-            --story)          STORY_ID="$2"; shift 2 ;;
+            --story)
+                STORY_ID="$2"
+                if [[ ! "$STORY_ID" =~ ^[0-9]+-[0-9]+ ]]; then
+                    log_error "Invalid story ID format: ${STORY_ID} (expected: N-N or N-N-slug)"
+                    exit 1
+                fi
+                shift 2 ;;
             --skip-epic-phases) SKIP_EPIC_PHASES=true; shift ;;
             --json-log)       JSON_LOG=true; shift ;;
             --no-traces)      NO_TRACES=true; JSON_LOG=true; shift ;;
@@ -1486,11 +1486,18 @@ main() {
     PIPELINE_LOG="${STORY_ARTIFACTS}/pipeline.log"
     mkdir -p "$STORY_ARTIFACTS"
 
-    # Initialize summary log (lightweight — full output goes to per-step logs)
-    printf "# Pipeline Summary — %s\n# Started: %s\n# %-6s  %-8s  %-10s  %s\n" \
-        "$STORY_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "Step" "Duration" "Status" "Detail" \
-        > "$PIPELINE_LOG"
+    # Initialize pipeline log — single source of truth for the run
+    local branch_name
+    branch_name="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'n/a')"
+    {
+        printf "# Pipeline — %s\n" "$STORY_ID"
+        printf "# Started: %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf "# Branch: %s\n" "$branch_name"
+        [[ -n "$FROM_STEP" ]] && printf "# Resumed from: %s\n" "$FROM_STEP"
+        printf "#\n"
+        printf "# %-6s  %-20s  %-22s  %-10s  %-8s  %s\n" \
+            "Step" "Timestamp" "CLI/Model" "Duration" "Status" "Name"
+    } > "$PIPELINE_LOG"
 
     PIPELINE_START_TIME=$(date +%s)
 
@@ -1518,26 +1525,39 @@ main() {
     # Step logs are kept only on failure — clean up any stragglers on success
     rm -f "${STORY_ARTIFACTS}"/step-*.log 2>/dev/null || true
 
-    # --no-traces: remove all pipeline-generated artifacts, keep only the JSON log
+    # --no-traces: remove all pipeline-generated artifacts, keep JSON + pipeline logs
     if [[ "$NO_TRACES" == "true" ]]; then
         local json_log="${STORY_ARTIFACTS}/review-log.json"
-        local json_backup=""
+        local json_backup="" pipeline_backup=""
 
-        # Preserve the JSON log if it exists
+        # Preserve the JSON log and pipeline log if they exist
         if [[ -f "$json_log" ]]; then
             json_backup="$(mktemp)"
             cp "$json_log" "$json_backup"
         fi
+        if [[ -f "$PIPELINE_LOG" ]]; then
+            pipeline_backup="$(mktemp)"
+            cp "$PIPELINE_LOG" "$pipeline_backup"
+        fi
 
-        # Remove all pipeline artifacts
+        # Remove all pipeline artifacts (guard against empty/dangerous paths)
+        if [[ -z "$STORY_ARTIFACTS" || "$STORY_ARTIFACTS" != *"/auto-bmad/"* ]]; then
+            log_error "Refusing to rm -rf: STORY_ARTIFACTS path looks invalid: ${STORY_ARTIFACTS}"
+            return 1
+        fi
         rm -rf "$STORY_ARTIFACTS"
 
-        # Restore JSON log to impl artifacts root (not nested in removed dir)
+        # Restore preserved logs to impl artifacts root (not nested in removed dir)
+        mkdir -p "${IMPL_ARTIFACTS}/auto-bmad"
         if [[ -n "$json_backup" ]]; then
-            local final_log="${IMPL_ARTIFACTS}/auto-bmad/review-log--${STORY_SHORT_ID}.json"
-            mkdir -p "$(dirname "$final_log")"
-            mv "$json_backup" "$final_log"
-            echo -e "  ${GREEN}✓${NC} Review log: ${final_log}"
+            local final_json="${IMPL_ARTIFACTS}/auto-bmad/review-log--${STORY_SHORT_ID}.json"
+            mv "$json_backup" "$final_json"
+            echo -e "  ${GREEN}✓${NC} Review log: ${final_json}"
+        fi
+        if [[ -n "$pipeline_backup" ]]; then
+            local final_pipeline="${IMPL_ARTIFACTS}/auto-bmad/pipeline--${STORY_SHORT_ID}.log"
+            mv "$pipeline_backup" "$final_pipeline"
+            echo -e "  ${GREEN}✓${NC} Pipeline log: ${final_pipeline}"
         fi
 
         echo -e "  ${DIM}Pipeline artifacts removed (--no-traces)${NC}"
