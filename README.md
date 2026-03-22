@@ -156,7 +156,7 @@ Options:
   --skip-epic-phases     Skip phases 0 and 6 even at epic boundaries
   --json-log             Extract arbiter findings into review-log.json (JSONL)
   --no-traces            Remove all pipeline artifacts after finalization
-                         (implies --json-log; JSON log is kept)
+                         (implies --json-log; JSON + pipeline logs are kept)
   --help                 Show usage
 ```
 
@@ -202,8 +202,7 @@ The story script creates a `story/{STORY_ID}` branch from `main` at the start. D
 Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bmad/{SHORT_ID}/`:
 - Review findings from each AI (`*-validate-*.md`, `*-adversarial-*.md`, `*-edge-cases-*.md`, `*-review-*.md`)
 - Arbiter decision reports (`*-arbiter-*.md`)
-- Pipeline metrics (`*--pipeline-metrics.md`)
-- Pipeline log (deleted on success)
+- Pipeline log (`pipeline.log`) — append-only run record with timestamps, CLI/model per step, phase markers, and a completion summary with wall/compute time and git diff stats
 
 ### Review JSON Log (`--json-log`)
 
@@ -217,7 +216,9 @@ Use this to evaluate review effectiveness across stories — track catch rates, 
 
 ### No Traces Mode (`--no-traces`)
 
-Removes all pipeline-generated artifacts after finalization — review reports, arbiter reports, metrics, pipeline log, the entire `auto-bmad/{SHORT_ID}/` directory. The JSON review log is preserved at `auto-bmad/review-log--{SHORT_ID}.json` as the sole surviving artifact.
+Removes all pipeline-generated artifacts after finalization — review reports, arbiter reports, the entire `auto-bmad/{SHORT_ID}/` directory. Two files are preserved:
+- `auto-bmad/review-log--{SHORT_ID}.json` — structured arbiter findings
+- `auto-bmad/pipeline--{SHORT_ID}.log` — full pipeline run record
 
 This is useful when the review reports have already been indexed into the story file (step 14a) and you don't want leftover pipeline files in the repo. Implies `--json-log`.
 

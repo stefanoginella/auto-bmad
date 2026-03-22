@@ -277,6 +277,7 @@ extract_commit_message() {
         ! -name "*--*" -type f 2>/dev/null | head -1)
 
     if [[ -z "$story_file" ]]; then
+        log_warn "No story file found for ${story_id} — using fallback commit message" >&2
         echo "feat(epic-${EPIC_ID}): implement story ${story_id}"
         return
     fi
@@ -327,6 +328,7 @@ ${next_line}"
         # Trim trailing whitespace/blank lines
         echo "$msg" | sed -e :a -e '/^[[:space:]]*$/d;N;ba' -e 's/[[:space:]]*$//'
     else
+        log_warn "No conventional commit message found in story file — using fallback" >&2
         echo "feat(epic-${EPIC_ID}): implement story ${story_id}"
     fi
 }
@@ -429,10 +431,18 @@ wait_for_merge() {
                 log_warn "Could not check PR status (elapsed: $(format_duration $elapsed))"
                 ;;
             *)
-                # Still open — check if CI failed
-                local check_status
-                check_status=$(gh pr checks "$branch" --json state -q '.[].state' 2>/dev/null | sort -u || echo "")
-                if echo "$check_status" | grep -q "FAILURE"; then
+                # Still open — check if CI failed (only when all checks are terminal)
+                local check_states
+                check_states=$(gh pr checks "$branch" --json state -q '.[].state' 2>/dev/null | sort -u || echo "")
+                local has_pending=false has_failure=false
+                while IFS= read -r cs; do
+                    case "$cs" in
+                        PENDING|QUEUED|IN_PROGRESS|WAITING|"") has_pending=true ;;
+                        FAILURE|ERROR|ACTION_REQUIRED|TIMED_OUT) has_failure=true ;;
+                    esac
+                done <<< "$check_states"
+
+                if [[ "$has_failure" == "true" && "$has_pending" == "false" ]]; then
                     echo ""
                     log_error "CI failed on PR for story ${branch#story/}"
                     [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
@@ -767,8 +777,20 @@ HELPEOF
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --epic)        EPIC_ID="$2"; shift 2 ;;
-            --from-story)  FROM_STORY="$2"; shift 2 ;;
+            --epic)
+                EPIC_ID="$2"
+                if [[ ! "$EPIC_ID" =~ ^[0-9]+$ ]]; then
+                    log_error "Invalid epic ID: ${EPIC_ID} (expected a number)"
+                    exit 1
+                fi
+                shift 2 ;;
+            --from-story)
+                FROM_STORY="$2"
+                if [[ ! "$FROM_STORY" =~ ^[0-9]+-[0-9]+ ]]; then
+                    log_error "Invalid story ID format: ${FROM_STORY} (expected: N-N or N-N-slug)"
+                    exit 1
+                fi
+                shift 2 ;;
             --dry-run)     DRY_RUN=true; shift ;;
             --no-merge)    NO_MERGE=true; shift ;;
             --help|-h)     show_help; exit 0 ;;
