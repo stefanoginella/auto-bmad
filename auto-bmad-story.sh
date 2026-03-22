@@ -252,7 +252,7 @@ start_activity_monitor() {
                 spinner_active=true
             fi
 
-            sleep 0.15
+            sleep 0.1
             i=$((i + 1))
         done
 
@@ -1002,7 +1002,7 @@ run_parallel_reviews() {
             esac
         done
 
-        (( running > 0 )) && sleep 0.5
+        (( running > 0 )) && sleep 0.1
         spinner_idx=$((spinner_idx + 1))
     done
 
