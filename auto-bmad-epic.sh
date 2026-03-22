@@ -16,6 +16,18 @@ set -euo pipefail
 #   --help               Show usage
 # ============================================================
 
+# --- Abort Handling (CTRL+C kills the entire pipeline) ---
+_ABORT=false
+
+_handle_abort() {
+    _ABORT=true
+    echo ""
+    echo -e "\033[1;31m ✘ Epic pipeline aborted by user (CTRL+C)\033[0m" >&2
+    exit 130
+}
+
+trap '_handle_abort' INT
+
 # --- Project Paths ---
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
@@ -683,6 +695,12 @@ run_epic() {
         local story_end; story_end=$(date +%s)
         local story_duration=$((story_end - story_start))
         set_story_track_duration "$sid" "$story_duration"
+
+        if (( story_exit == 130 )) || [[ "$_ABORT" == true ]]; then
+            echo ""
+            log_error "Epic pipeline aborted by user (CTRL+C)"
+            exit 130
+        fi
 
         if (( story_exit != 0 )); then
             set_story_track_status "$sid" "FAILED"
