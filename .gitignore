@@ -1,0 +1,7 @@
+# Bmad
+_bmad/
+_bmad-output/
+design-artifacts/
+
+# AI
+.claude/
