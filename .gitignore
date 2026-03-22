@@ -5,3 +5,9 @@ design-artifacts/
 
 # AI
 .claude/
+
+# Temporary
+tmp.md
+
+# OS
+.DS_Store

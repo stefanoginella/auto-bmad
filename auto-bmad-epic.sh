@@ -818,9 +818,9 @@ main() {
     done
 
     echo ""
-    echo -e "${BOLD}${MAGENTA}╔═══════════════════════════════╗${NC}"
-    echo -e "${BOLD}${MAGENTA}║   Auto-BMAD Epic Pipeline     ║${NC}"
-    echo -e "${BOLD}${MAGENTA}╚═══════════════════════════════╝${NC}"
+    echo -e "${BOLD}${MAGENTA}╔═════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${MAGENTA}║                 Auto-BMAD Epic Pipeline                 ║${NC}"
+    echo -e "${BOLD}${MAGENTA}╚═════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  Epic:       ${BOLD}${EPIC_ID}${NC}"
     echo -e "  Stories:    ${BOLD}${STORY_COUNT} total, ${remaining} remaining${NC}"

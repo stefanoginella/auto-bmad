@@ -3,7 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 [![Language: Bash](https://img.shields.io/badge/Language-Bash-green.svg)]()
 [![AI CLIs: 4](https://img.shields.io/badge/AI_CLIs-4-orange.svg)]()
-[![BMad: 6.2.0](https://img.shields.io/badge/BMad-6.2.0-purple.svg)]()
+[![BMad: 6.2.0](https://img.shields.io/badge/BMad-6.2.0-purple.svg)](https://github.com/bmad-code-org/BMAD-METHOD)
+[![TEA: 1.7.1](https://img.shields.io/badge/TEA-1.7.1-red.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise)
 
 Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with multi-AI consensus reviews — designed for unattended, sandboxed execution.
 
@@ -153,6 +154,9 @@ Options:
   --from-step STEP_ID    Resume from a specific step (e.g., 6a, 8)
   --dry-run              Preview all steps without executing
   --skip-epic-phases     Skip phases 0 and 6 even at epic boundaries
+  --json-log             Extract arbiter findings into review-log.json (JSONL)
+  --no-traces            Remove all pipeline artifacts after finalization
+                         (implies --json-log; JSON log is kept)
   --help                 Show usage
 ```
 
@@ -191,18 +195,35 @@ Auto-detects the next story from `sprint-status.yaml`:
 
 ### Git Workflow
 
-The story script creates a `story/{STORY_ID}` branch from `main` at the start. After completion, the branch is left with all changes — merging is handled by the epic script or manually.
+The story script creates a `story/{STORY_ID}` branch from `main` at the start. During execution, each phase commits a checkpoint (`wip(1-1): phase N - name`) so work is recoverable if the pipeline fails mid-run. At the end, all checkpoint commits are squashed into a single commit using the conventional-commit message from the story file's Auto-bmad Completion section.
 
 ### Artifacts
 
-Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bmad/{SHORT_ID}-/`:
+Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bmad/{SHORT_ID}/`:
 - Review findings from each AI (`*-validate-*.md`, `*-adversarial-*.md`, `*-edge-cases-*.md`, `*-review-*.md`)
+- Arbiter decision reports (`*-arbiter-*.md`)
 - Pipeline metrics (`*--pipeline-metrics.md`)
 - Pipeline log (deleted on success)
 
+### Review JSON Log (`--json-log`)
+
+Extracts structured data from arbiter decision tables into a JSONL file (`review-log.json`). Each line is a JSON object for one arbiter step:
+
+```json
+{"story":"1-1-auth","step":"2e","review_type":"validate","timestamp":"...","total":5,"fixed":3,"skipped":2,"verdict":"changes_made","findings":[...]}
+```
+
+Use this to evaluate review effectiveness across stories — track catch rates, fix/skip ratios, and consensus patterns. Requires `jq` for full output; falls back to raw JSONL without aggregation if `jq` is not installed.
+
+### No Traces Mode (`--no-traces`)
+
+Removes all pipeline-generated artifacts after finalization — review reports, arbiter reports, metrics, pipeline log, the entire `auto-bmad/{SHORT_ID}/` directory. The JSON review log is preserved at `auto-bmad/review-log--{SHORT_ID}.json` as the sole surviving artifact.
+
+This is useful when the review reports have already been indexed into the story file (step 14a) and you don't want leftover pipeline files in the repo. Implies `--json-log`.
+
 ### Resume on Failure
 
-If a step fails, the script exits with a resume command:
+Each phase is checkpointed as a git commit, so if the pipeline fails you won't lose prior phases. The script exits with a resume command:
 
 ```
 Resume: ./auto-bmad-story.sh --from-step 6a --story 1-2-database-schemas
@@ -255,7 +276,7 @@ When `--epic` is omitted:
 
 ```
 Story completes on story/1-1-slug branch
-  → git add -A && git commit (extracts commit message from story file)
+  (phase checkpoints already squashed into single commit by story script)
   → git push -u origin story/1-1-slug
   → gh pr create --title "feat(epic-1): 1-1-slug"
   → gh pr merge --auto --squash
@@ -269,7 +290,7 @@ With `--no-merge`: skips all git operations between stories. Use this for manual
 
 ### Commit Messages
 
-The script attempts to extract the conventional commit message that the tech writer (step 14a) places in the story file's `## Auto-bmad Completion` section. Falls back to `feat(epic-N): implement story STORY_ID`.
+Both scripts extract the conventional commit message that the tech writer (step 14a) places in the story file's `## Auto-bmad Completion` section. The story script squashes all phase checkpoints into this single commit. Falls back to `feat(SHORT_ID): <description from slug>`.
 
 ### Failure Handling
 
@@ -422,6 +443,12 @@ Both scripts expect this file at `_bmad-output/implementation-artifacts/sprint-s
 
 # Preview a single story's pipeline
 ./auto-bmad-story.sh --story 1-2-database-schemas --dry-run
+
+# Run with JSON review logging for effectiveness analysis
+./auto-bmad-story.sh --json-log
+
+# Run clean — no pipeline artifacts left behind
+./auto-bmad-story.sh --no-traces
 ```
 
 ## Lineage
