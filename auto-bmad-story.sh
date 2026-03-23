@@ -13,15 +13,35 @@ set -euo pipefail
 #   --from-step ID       Resume pipeline from step ID (e.g., 2a1, 7c)
 #   --dry-run            Preview all steps without executing
 #   --skip-cache         Bypass pre-flight cache and force full checks
-#   --skip-epic-phases   Skip phases 0 and 6 even at epic boundaries
+#   --skip-epic-phases   Skip phases 0 and 5 even at epic boundaries
 #   --skip-tea           Skip TEA phases even if TEA is installed
-#   --skip-reviews       Skip all parallel review and arbiter phases
-#   --fast-reviews       Run only 1 reviewer (GPT) per review phase, skip arbiter
+#   --skip-reviews       Skip all review phases (1.2-1.4, 3.x)
+#   --fast-reviews       Run only 1 GPT reviewer per phase, skip triage+fix
 #   --skip-git           Skip git write operations (branch, checkpoint, squash)
 #   --no-traces          Remove pipeline artifacts after finalization
 #   --safe-mode          Disable permission-bypass flags (AI tools prompt for approval)
 #   --help               Show usage
 # ============================================================
+
+# --- Interactive Detection ---
+# When stdin is not a terminal (piped, CI, etc.), interactive prompts
+# default to "no" and abort rather than silently continuing.
+INTERACTIVE=false
+[[ -t 0 ]] && INTERACTIVE=true
+
+# Prompt the user with a y/N question. Returns 0 if "yes", 1 if "no".
+# In non-interactive mode, always returns 1 (safe default: abort).
+_confirm() {
+    local prompt="$1"
+    if [[ "$INTERACTIVE" == "true" ]]; then
+        echo -en "$prompt"
+        read -r answer
+        [[ "$answer" =~ ^[Yy]$ ]]
+    else
+        echo -e "${prompt}N (non-interactive)"
+        return 1
+    fi
+}
 
 # --- Abort Handling (CTRL+C kills the entire pipeline) ---
 _ABORT=false
@@ -84,13 +104,13 @@ TOOL_NAMES=(claude codex opencode)
 #                opencode: --variant (low|medium|high|max)
 #                copilot:  no effort flag available
 
-AI_OPUS="claude|opus|max"                           # Claude Opus 4.6 — critical path, arbiters
+AI_OPUS="claude|opus|max"                           # Claude Opus 4.6 — critical path, triage, acceptance audit
 AI_OPUS_HIGH="claude|opus|high"                      # Claude Opus 4.6 / high — structured, non-critical
 AI_SONNET="claude|sonnet|high"                       # Claude Sonnet 4.6 — lightweight bookkeeping
 AI_GPT="codex|gpt-5.4|xhigh"                       # Codex GPT 5.4 — code reviews, edge cases
 AI_GPT_HIGH="codex|gpt-5.4|high"                    # Codex GPT 5.4 / high — spec-level reviews
 # AI_COPILOT="copilot|gemini-3-pro-preview|"           # Copilot Gemini 3 Pro — removed: low quality reviews
-AI_MINIMAX="opencode|opencode/minimax-m2.5-free|max" # MiniMax M2.5 via OpenCode — parallel reviews
+# AI_MINIMAX="opencode|opencode/minimax-m2.5-free|max" # MiniMax M2.5 via OpenCode — removed: low signal-to-noise ratio (26% accept rate in pipeline runs)
 AI_MIMO="opencode|opencode/mimo-v2-pro-free|max"     # MiMo V2 Pro via OpenCode — parallel reviews
 
 # ============================================================
@@ -102,35 +122,55 @@ step_config() {
     local suffix="${step: -1}"    # last char: a, b, c, d, or digit
     local phase="${step%%.*}"     # phase number
 
-    # Parallel sub-steps: suffix is a letter
+    # Phase 1 override: 6 review sessions (3 AIs × 2 types), no MiniMax
+    # a,b → GPT (spec-level) | c,d → MiMo | e,f → Claude/Opus
+    if [[ "$phase" == "1" ]]; then
+        case "$suffix" in
+            a|b) echo "$AI_GPT_HIGH"; return ;;
+            c|d) echo "$AI_MIMO"; return ;;
+            e|f) echo "$AI_OPUS_HIGH"; return ;;
+        esac
+    fi
+
+    # Phase 3 override: 6 review sessions (3 AIs × 2 types), no MiniMax
+    # a,b → GPT | c,d → MiMo | e,f → Claude/Opus
+    if [[ "$phase" == "3" ]]; then
+        case "$suffix" in
+            a|b) echo "$AI_GPT"; return ;;
+            c|d) echo "$AI_MIMO"; return ;;
+            e|f) echo "$AI_OPUS_HIGH"; return ;;
+        esac
+    fi
+
+    # Parallel sub-steps: suffix is a letter (other phases)
     case "$suffix" in
         a) # GPT — effort depends on phase (spec vs code)
             if [[ "$phase" == "1" ]]; then echo "$AI_GPT_HIGH"
             else echo "$AI_GPT"; fi; return ;;
         # b) copilot — removed: low quality reviews
-        c) echo "$AI_MINIMAX"; return ;;
+        c) echo "$AI_MIMO"; return ;;
         d) echo "$AI_MIMO"; return ;;
         e) echo "$AI_OPUS_HIGH"; return ;;
     esac
 
     # Non-parallel steps
     case "$step" in
-        # Pre-implementation arbiters (spec-level, downstream gates catch misses)
-        1.3|1.5)                     echo "$AI_OPUS_HIGH" ;;
-        # Critical-path arbiters (code-touching)
-        3.2|4.2)                     echo "$AI_OPUS" ;;
+        # Phase 1: spec triage + fix (critical path)
+        1.3|1.4)                     echo "$AI_OPUS" ;;
+        # Phase 3: acceptance auditor, triage, dev fix (critical path)
+        3.2|3.3|3.4)                 echo "$AI_OPUS" ;;
         # Critical path: epic start, story creation, TDD, implementation
         0.1|1.1|2.1|2.2)            echo "$AI_OPUS" ;;
         # Traceability & automation — structured, mechanical
-        5.1|5.2)                     echo "$AI_SONNET" ;;
+        4.1|4.2)                     echo "$AI_SONNET" ;;
         # Epic end parallel (individual assignments, not review sub-steps)
-        6.1)                         echo "$AI_GPT" ;;
-        6.2)                         echo "$AI_OPUS" ;;
-        6.3)                         echo "$AI_MINIMAX" ;;
+        5.1)                         echo "$AI_GPT" ;;
+        5.2)                         echo "$AI_OPUS" ;;
+        5.3)                         echo "$AI_MIMO" ;;
         # Reflective / documentation — structured, non-critical
-        6.4|6.5|7.1)                 echo "$AI_OPUS_HIGH" ;;
+        5.4|5.5|6.1)                 echo "$AI_OPUS_HIGH" ;;
         # Finalization — bookkeeping
-        7.2)                         echo "$AI_SONNET" ;;
+        6.2)                         echo "$AI_SONNET" ;;
         *)                           echo "||" ;;
     esac
 }
@@ -148,7 +188,7 @@ STORY_ID=""
 STORY_SHORT_ID=""   # numeric-only prefix (e.g. "1-1") — used for artifacts
 EPIC_ID=""
 STORY_FILE_PATH=""
-STORY_ARTIFACTS=""   # permanent artifacts (arbiter reports, pipeline report)
+STORY_ARTIFACTS=""   # permanent artifacts (triage reports, pipeline report)
 TMP_DIR=""           # temp files (individual reviews, step logs) — cleaned on success
 PIPELINE_LOG=""      # raw step log in TMP_DIR (temporary)
 PIPELINE_REPORT=""   # structured markdown in STORY_ARTIFACTS (permanent)
@@ -167,7 +207,7 @@ SAFE_MODE=false
 PIPELINE_START_TIME=""
 
 # Step ordering for --from-step comparison (parallel sub-steps map to parent)
-STEP_ORDER="0.1 1.1 1.2 1.3 1.4 1.5 2.1 2.2 3.1 3.2 4.1 4.2 5.1 5.2 6.1 6.2 6.3 6.4 6.5 7.1 7.2"
+STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 4.1 4.2 5.1 5.2 5.3 5.4 5.5 6.1 6.2"
 
 # Sanitize step IDs for use as bash variable names (replace . and - with _)
 _sanitize_step_id() { local s="${1//./_}"; echo "${s//-/_}"; }
@@ -201,7 +241,7 @@ log_phase() {
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
     echo -e "${BOLD}${CYAN}  Phase $1 — $2${NC}"
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
-    [[ -n "$PIPELINE_LOG" ]] && printf "# ═══ Phase %s — %s ═══\n" "$1" "$2" >> "$PIPELINE_LOG"
+    [[ -n "$PIPELINE_LOG" ]] && printf "# ═══ Phase %s — %s ═══\n" "$1" "$2" >> "$PIPELINE_LOG" || true
 }
 
 log_step() {
@@ -219,7 +259,7 @@ log_warn() { echo -e "${YELLOW}  ! $1${NC}"; }
 log_error(){ echo -e "${RED}  ✗ $1${NC}"; }
 log_skip() {
     echo -e "${DIM}  — Skipped: $1${NC}"
-    [[ -n "$PIPELINE_LOG" ]] && echo "# Skipped: $1" >> "$PIPELINE_LOG"
+    [[ -n "$PIPELINE_LOG" ]] && echo "# Skipped: $1" >> "$PIPELINE_LOG" || true
 }
 
 log_dry() {
@@ -232,9 +272,9 @@ log_dry() {
 format_duration() {
     local s="$1"
     if (( s >= 3600 )); then
-        printf '%dh %dm %ds' $((s/3600)) $((s%3600/60)) $((s%60))
+        printf '%dh%dm%ds' $((s/3600)) $((s%3600/60)) $((s%60))
     elif (( s >= 60 )); then
-        printf '%dm %ds' $((s/60)) $((s%60))
+        printf '%dm%ds' $((s/60)) $((s%60))
     else
         printf '%ds' "$s"
     fi
@@ -449,12 +489,12 @@ run_ai() {
 }
 
 # ============================================================
-# Generic Review & Arbiter Functions
+# Generic Review Functions
 # ============================================================
 
 # run_review_step <step_id> <file_prefix> <ai_suffix>
 # Dispatches the appropriate slash command based on file_prefix.
-# Individual review files go to TMP_DIR (discarded after arbiter synthesizes).
+# Individual review files go to TMP_DIR (discarded after triage synthesizes).
 run_review_step() {
     local step_id="$1" file_prefix="$2" ai_suffix="$3"
     local f="${TMP_DIR}/${step_id}-${file_prefix}-${ai_suffix}.md"
@@ -465,81 +505,11 @@ run_review_step() {
         adversarial)
             prompt="/bmad-review-adversarial-general yolo - review the story ${STORY_ID} specification. Do not fix anything or edit any source files. Just report all findings and save them to ${f}" ;;
         edge-cases)
-            prompt="/bmad-review-edge-case-hunter yolo - files changed in story ${STORY_ID}. Do not fix anything or edit any source files. Just report all edge case findings and save them to ${f}" ;;
-        review)
-            prompt="/bmad-code-review yolo - story ${STORY_ID} - do not fix anything or edit any files. Just report back all critical, high, medium, and low issues and save them to ${f}" ;;
+            prompt="/bmad-review-edge-case-hunter yolo - review all code changes for story ${STORY_ID} (commits ${COMMIT_BASELINE}..HEAD). Do not fix anything or edit any source files. Just report all edge case findings and save them to ${f}" ;;
+        code-adversarial)
+            prompt="/bmad-review-adversarial-general yolo - review all code changes for story ${STORY_ID} (commits ${COMMIT_BASELINE}..HEAD). Focus on the implementation code, not the specification. Do not fix anything or edit any source files. Just report all findings and save them to ${f}" ;;
     esac
     run_ai "$step_id" "$prompt"
-}
-
-# run_arbiter <step_id> <file_prefix> <fix_instruction> [consensus_rules] [agent_cmd]
-# agent_cmd: optional slash command prefix (e.g., "/bmad-dev yolo -")
-# Reads individual reviews from TMP_DIR, writes arbiter report to STORY_ARTIFACTS.
-run_arbiter() {
-    local step_id="$1" file_prefix="$2" fix_instruction="$3"
-    local consensus_rules="${4:-}"
-    local agent_cmd="${5:-}"
-
-    if [[ -z "$consensus_rules" ]]; then
-        consensus_rules="- Clear bug (concrete failure path demonstrated): fix immediately
-- Substantive issue (real impact on correctness, security, or performance): fix if the argument is sound
-- Speculative/stylistic (hypothetical scenario, preference-based): skip
-- Out of scope: skip"
-    fi
-
-    # Derive reviewer parallel step from arbiter step: P.S → P.(S-1)
-    local phase="${step_id%%.*}"
-    local sub="${step_id##*.}"
-    local prev_sub=$((sub - 1))
-    local review_base="${phase}.${prev_sub}"
-
-    local prompt_prefix=""
-    [[ -n "$agent_cmd" ]] && prompt_prefix="${agent_cmd} "
-
-    # Permanent arbiter report: {story-short-id}-{step}-{type}.md
-    local arbiter_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-${step_id}-${file_prefix}.md"
-
-    run_ai "$step_id" "${prompt_prefix}Read these review findings files (skip any that don't exist):
-- ${TMP_DIR}/${review_base}a-${file_prefix}-gpt.md
-- ${TMP_DIR}/${review_base}c-${file_prefix}-minimax.md
-- ${TMP_DIR}/${review_base}d-${file_prefix}-mimo.md
-- ${TMP_DIR}/${review_base}e-${file_prefix}-claude.md
-
-You are the arbiter. Cross-reference all findings across reviews. Group overlapping findings
-(same issue flagged by multiple reviewers) into single entries.
-
-For each unique finding, evaluate on argument quality:
-${consensus_rules}
-
-Record how many reviewers flagged each finding — this is useful context,
-not the decision criteria. A single reviewer demonstrating a concrete
-bug outweighs four reviewers raising vague concerns.
-
-${fix_instruction}
-
-Save your arbiter decision report to ${arbiter_report} with this structure:
-
-1. **Header**: story ID, arbiter step, timestamp
-
-2. **Decision summary table** (markdown) — one row per finding for quick scanning:
-
-| # | Finding | Flagged By | Consensus | Action | Confidence |
-|---|---------|------------|-----------|--------|------------|
-| 1 | Brief description | GPT, MiniMax, Claude | 3/4 | Fixed | High |
-| 2 | Brief description | MiMo | 1/4 | Skipped | Low |
-
-3. **Detailed rationale** — for each finding in the table, a short paragraph with:
-   - The reviewers' arguments (agreements and disagreements)
-   - Your reasoning for fixing or skipping
-   - What was changed (if fixed)
-
-4. **Reviewer signal assessment** — for each reviewer that participated, note:
-   - Total findings submitted
-   - How many were accepted vs skipped
-   - Signal quality rating (high/medium/low)
-   - Any notable patterns (e.g., empty response, scope creep, high precision)
-
-5. **Summary**: total findings reviewed, fixes applied, items skipped, and any patterns or observations worth noting for future runs"
 }
 
 # ============================================================
@@ -718,9 +688,7 @@ check_bmad_version() {
     # Check TEA module
     if [[ -z "$tea_version" ]]; then
         log_warn "TEA module not installed"
-        echo -en "    Continue without TEA steps (0, 4, 9, 10, 11a-c)? [y/N] "
-        read -r answer
-        if [[ "$answer" =~ ^[Yy]$ ]]; then
+        if _confirm "    Continue without TEA steps (0, 2.1, 4.x, 5.1-5.3)? [y/N] "; then
             SKIP_TEA=true
             log_warn "TEA steps will be skipped"
         else
@@ -743,9 +711,7 @@ check_bmad_version() {
         echo -e "    ${YELLOW}→${NC} ${m}"
     done
     echo ""
-    echo -en "    Continue anyway? [y/N] "
-    read -r answer
-    if [[ "$answer" =~ ^[Yy]$ ]]; then
+    if _confirm "    Continue anyway? [y/N] "; then
         log_warn "Proceeding with mismatched versions"
     else
         log_error "Aborted. Update BMad/modules or rebuild this script for the installed versions."
@@ -757,6 +723,7 @@ check_bmad_version() {
 # Called after STORY_ID is known.
 check_git_branch() {
     [[ "$SKIP_GIT" == "true" ]] && { log_skip "Git branch check — --skip-git"; return 0; }
+    [[ "$DRY_RUN" == "true" ]] && { log_skip "Git branch check — --dry-run"; return 0; }
 
     local current_branch expected_branch="story/${STORY_ID}"
     current_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" || {
@@ -778,9 +745,7 @@ check_git_branch() {
             log_warn "Resuming from step ${FROM_STEP} but on ${current_branch} instead of ${expected_branch}"
             echo -e "    Expected branch ${BOLD}${expected_branch}${NC} for an in-progress story."
             echo ""
-            echo -en "    Continue on ${current_branch} anyway? [y/N] "
-            read -r answer
-            if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+            if ! _confirm "    Continue on ${current_branch} anyway? [y/N] "; then
                 echo -e "    ${DIM}To switch: git checkout ${expected_branch}${NC}"
                 exit 1
             fi
@@ -817,9 +782,7 @@ check_git_branch() {
     log_warn "Unexpected branch: ${current_branch}"
     echo -e "    Expected to be on ${BOLD}main${NC} or ${BOLD}${expected_branch}${NC}"
     echo ""
-    echo -en "    Continue on ${current_branch} anyway? [y/N] "
-    read -r answer
-    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+    if ! _confirm "    Continue on ${current_branch} anyway? [y/N] "; then
         exit 1
     fi
 }
@@ -891,7 +854,7 @@ check_model_availability() {
 
     # Collect unique cli:model pairs from all AI profiles
     local profile cli model _effort
-    for profile in "$AI_OPUS" "$AI_OPUS_HIGH" "$AI_SONNET" "$AI_GPT" "$AI_GPT_HIGH" "$AI_MINIMAX" "$AI_MIMO"; do
+    for profile in "$AI_OPUS" "$AI_OPUS_HIGH" "$AI_SONNET" "$AI_GPT" "$AI_GPT_HIGH" "$AI_MIMO"; do
         IFS='|' read -r cli model _effort <<< "$profile"
         [[ -z "$cli" || -z "$model" ]] && continue
         local pair="${cli}:${model}"
@@ -1027,8 +990,8 @@ should_run_step() {
 
     # Map parallel sub-steps (e.g. 1.2a) to parent step (1.2) for ordering
     local effective_id="$step_id"
-    if [[ "$step_id" =~ ^[0-9]+\.[0-9]+[a-e]$ ]]; then
-        effective_id="${step_id%[a-e]}"
+    if [[ "$step_id" =~ ^[0-9]+\.[0-9]+[a-f]$ ]]; then
+        effective_id="${step_id%[a-f]}"
     fi
 
     local from_pos=-1 step_pos=-1 pos=0
@@ -1286,6 +1249,80 @@ step_1_1_create_story() {
     fi
 }
 
+step_1_3_spec_triage() {
+    local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
+
+    # Build dynamic list of review files from Phase 1.2
+    local review_files=""
+    local f
+    for f in "${TMP_DIR}"/1.2*-*.md; do
+        [[ -f "$f" ]] && review_files="${review_files}
+- ${f}"
+    done
+
+    run_ai "1.3" "You are the Spec Triage Analyst. Read ALL of the following spec review findings files (skip any that don't exist):
+${review_files}
+
+Cross-reference all findings across all reviews. Your job:
+
+1. **Normalize**: convert each finding into a consistent format (id, source, title, detail, location)
+2. **Deduplicate**: group overlapping findings (same underlying issue flagged by different reviewers or review types) into single entries. Use the most specific finding as the base. Track all original sources.
+3. **Classify** each unique finding into exactly one category:
+   - **intent_gap** — spec/intent is incomplete; cannot resolve from existing information
+   - **bad_spec** — upstream spec (epic, architecture, PRD) is wrong or ambiguous; should be amended upstream
+   - **patch** — story issue fixable without human input (contradictions, wrong values, missing details inferable from architecture/epic)
+   - **defer** — pre-existing issue not caused by this story
+   - **reject** — noise, false positive, stylistic preference, or scope expansion disguised as quality improvement
+
+Evaluate on argument quality — not reviewer count. A single reviewer demonstrating a concrete problem outweighs four reviewers raising vague concerns. Record how many reviewers flagged each finding as useful context, not decision criteria.
+
+IMPORTANT: Be conservative with 'patch'. If a finding adds NEW requirements, tasks, or acceptance criteria not present in the epic or architecture, classify it as 'intent_gap' or 'reject' — not 'patch'. Only classify as 'patch' when the fix corrects something that is clearly wrong or inconsistent within the existing scope.
+
+Drop all reject findings but record the count.
+
+Save your triage report to ${triage_report} with this structure:
+
+1. **Header**: story ID, step 1.3, timestamp
+
+2. **Decision summary table** (markdown) — one row per finding:
+
+| # | Finding | Category | Flagged By | Confidence | Rationale |
+|---|---------|----------|------------|------------|-----------|
+
+3. **Detailed rationale** — for each finding in the table, a short paragraph with:
+   - The reviewers' arguments (agreements and disagreements)
+   - Your reasoning for the classification
+   - For 'patch' items: what specifically needs to be fixed in the story
+
+4. **Reviewer signal assessment** — for each review session that produced a file:
+
+| Reviewer | Type | Findings | Survived | Unique | Dupes | Signal | Notes |
+|----------|------|----------|----------|--------|-------|--------|-------|
+
+Where: Survived = not rejected, Unique = only this reviewer caught it, Dupes = also flagged by others, Signal = high/medium/low
+
+5. **Overlap matrix** — which reviewers agreed on which findings:
+
+| Finding | GPT-Val | GPT-Adv | MiMo-Val | MiMo-Adv | Claude-Val | Claude-Adv |
+|---------|---------|---------|----------|----------|------------|------------|
+
+6. **Classification counts**: total findings, per-category counts, reject count"
+}
+
+step_1_4_fix_patch() {
+    local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
+    run_ai "1.4" "/bmad-analyst yolo - Read the spec triage report at ${triage_report}.
+
+Fix ALL items classified as 'patch' in the decision summary table. For each patch item:
+1. Read the detailed rationale to understand what needs to change in the story
+2. Fix the issue in the story file
+3. Verify the fix is consistent with the rest of the story
+
+Skip items classified as 'intent_gap', 'bad_spec', 'defer', or 'reject' — those are intentionally deferred or dismissed.
+
+After all fixes, briefly note what you changed for each patch item."
+}
+
 # --- Phase 2: TDD + Implementation ---
 
 step_2_1_tdd_red() {
@@ -1296,36 +1333,142 @@ step_2_2_implementation() {
     run_ai "2.2" "/bmad-dev-story yolo - ${STORY_ID}"
 }
 
-# --- Phase 5: Traceability & Automation ---
+# --- Phase 3: Code Review ---
 
-step_5_1_trace() {
-    run_ai "5.1" "/bmad-testarch-trace yolo - story ${STORY_ID}"
+step_3_2_acceptance_auditor() {
+    local audit_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md"
+    run_ai "3.2" "Read the story file for ${STORY_ID} at ${STORY_FILE_PATH} and all code changes (commits ${COMMIT_BASELINE}..HEAD).
+
+You are the Acceptance Auditor. Verify that the implementation satisfies every acceptance criterion in the story.
+
+For each acceptance criterion:
+1. Identify the specific code/test that satisfies it
+2. Grade: PASS (clearly satisfied), PARTIAL (partially satisfied), FAIL (not satisfied), UNTESTABLE (cannot verify from code alone)
+3. Note any gaps or concerns
+
+Save your acceptance audit report to ${audit_report} with this structure:
+
+1. **Header**: story ID, step 3.2, timestamp
+
+2. **Acceptance criteria matrix** (markdown table):
+
+| # | Criterion | Status | Evidence | Notes |
+|---|-----------|--------|----------|-------|
+
+3. **Coverage gaps**: any criteria not fully covered by tests or implementation
+
+4. **Summary**: total criteria, pass/partial/fail/untestable counts, overall assessment"
 }
 
-step_5_2_automate() {
-    run_ai "5.2" "/bmad-testarch-automate yolo - story ${STORY_ID}"
+step_3_3_triage() {
+    local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
+
+    # Build dynamic list of review files from Phase 3.1
+    local review_files=""
+    local f
+    for f in "${TMP_DIR}"/3.1*-*.md; do
+        [[ -f "$f" ]] && review_files="${review_files}
+- ${f}"
+    done
+
+    local acceptance_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md"
+
+    run_ai "3.3" "You are the Triage Analyst. Read ALL of the following review findings files (skip any that don't exist):
+${review_files}
+
+Also read the acceptance audit report (if it exists):
+- ${acceptance_report}
+
+Cross-reference all findings across all reviews. Your job:
+
+1. **Normalize**: convert each finding into a consistent format (id, source, title, detail, location)
+2. **Deduplicate**: group overlapping findings (same underlying issue flagged by different reviewers or review types) into single entries. Use the most specific finding as the base. Track all original sources.
+3. **Classify** each unique finding into exactly one category:
+   - **intent_gap** — spec/intent is incomplete; cannot resolve from existing information
+   - **bad_spec** — spec is wrong or ambiguous; should be amended
+   - **patch** — code issue fixable without human input
+   - **defer** — pre-existing issue not caused by current change
+   - **reject** — noise, false positive, or handled elsewhere
+
+Evaluate on argument quality — not reviewer count. A single reviewer demonstrating a concrete bug outweighs four reviewers raising vague concerns. Record how many reviewers flagged each finding as useful context, not decision criteria.
+
+Drop all reject findings but record the count.
+
+Save your triage report to ${triage_report} with this structure:
+
+1. **Header**: story ID, step 3.3, timestamp
+
+2. **Decision summary table** (markdown) — one row per finding:
+
+| # | Finding | Category | Flagged By | Confidence | Rationale |
+|---|---------|----------|------------|------------|-----------|
+
+3. **Detailed rationale** — for each finding in the table, a short paragraph with:
+   - The reviewers' arguments (agreements and disagreements)
+   - Your reasoning for the classification
+   - For 'patch' items: what specifically needs to be fixed
+
+4. **Reviewer signal assessment** — for each review session that produced a file:
+
+| Reviewer | Type | Findings | Survived | Unique | Dupes | Signal | Notes |
+|----------|------|----------|----------|--------|-------|--------|-------|
+
+Where: Survived = not rejected, Unique = only this reviewer caught it, Dupes = also flagged by others, Signal = high/medium/low
+
+5. **Overlap matrix** — which reviewers agreed on which findings:
+
+| Finding | GPT-EC | GPT-Adv | MiMo-EC | MiMo-Adv | Claude-EC | Claude-Adv | Auditor |
+|---------|--------|---------|---------|----------|-----------|------------|---------|
+
+6. **Classification counts**: total findings, per-category counts, reject count
+
+7. **Acceptance audit integration**: any acceptance criteria gaps that align with review findings"
 }
 
-# --- Phase 6: Epic End ---
+step_3_4_dev_fix() {
+    local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
+    run_ai "3.4" "/bmad-dev yolo - Read the triage report at ${triage_report}.
 
-step_6_1_epic_trace() {
-    run_ai "6.1" "/bmad-testarch-trace yolo - run in epic-level mode for epic ${EPIC_ID}"
+Fix ALL items classified as 'patch' in the decision summary table. For each patch item:
+1. Read the detailed rationale to understand what needs to change
+2. Implement the fix
+3. Verify the fix doesn't break existing tests
+
+Skip items classified as 'intent_gap', 'bad_spec', 'defer', or 'reject' — those are intentionally deferred or dismissed.
+
+After all fixes, briefly note what you changed for each patch item."
 }
 
-step_6_2_epic_nfr() {
-    run_ai "6.2" "/bmad-testarch-nfr yolo - run in epic-level mode for epic ${EPIC_ID}"
+# --- Phase 4: Traceability & Automation ---
+
+step_4_1_trace() {
+    run_ai "4.1" "/bmad-testarch-trace yolo - story ${STORY_ID}"
 }
 
-step_6_3_epic_test_review() {
-    run_ai "6.3" "/bmad-testarch-test-review yolo - run in epic-level mode for epic ${EPIC_ID}"
+step_4_2_automate() {
+    run_ai "4.2" "/bmad-testarch-automate yolo - story ${STORY_ID}"
 }
 
-step_6_4_retrospective() {
-    run_ai "6.4" "/bmad-retrospective yolo - epic ${EPIC_ID}"
+# --- Phase 5: Epic End ---
+
+step_5_1_epic_trace() {
+    run_ai "5.1" "/bmad-testarch-trace yolo - run in epic-level mode for epic ${EPIC_ID}"
 }
 
-step_6_5_project_context() {
-    run_ai "6.5" "/bmad-generate-project-context yolo - if a project context file already exists, update it"
+step_5_2_epic_nfr() {
+    run_ai "5.2" "/bmad-testarch-nfr yolo - run in epic-level mode for epic ${EPIC_ID}"
+}
+
+step_5_3_epic_test_review() {
+    run_ai "5.3" "/bmad-testarch-test-review yolo - run in epic-level mode for epic ${EPIC_ID}"
+}
+
+step_5_4_retrospective() {
+    run_ai "5.4" "/bmad-retrospective yolo - epic ${EPIC_ID}"
+}
+
+step_5_5_project_context() {
+    run_ai "5.5" "/bmad-generate-project-context yolo - if a project context file already exists, update it"
 }
 
 # --- Generate Pipeline Report (structured markdown) ---
@@ -1412,10 +1555,10 @@ generate_pipeline_report() {
             echo ""
         fi
 
-        # Placeholder for reviewer assessment (populated by tech-writer step 7.1)
+        # Placeholder for reviewer assessment (populated by tech-writer step 6.1)
         echo "## Reviewer Assessment"
         echo ""
-        echo "<!-- Populated by the tech-writer step. Read each arbiter report and fill in: -->"
+        echo "<!-- Populated by the tech-writer step. Read both triage reports and the acceptance audit to fill in: -->"
         echo ""
         echo "| Model | Phase | Findings | Accepted | Signal | Notes |"
         echo "|-------|-------|----------|----------|--------|-------|"
@@ -1429,15 +1572,15 @@ generate_pipeline_report() {
     } > "$PIPELINE_REPORT"
 }
 
-# --- Phase 7: Finalization ---
+# --- Phase 6: Finalization ---
 
-step_7_1_document() {
+step_6_1_document() {
     if [[ -z "$STORY_FILE_PATH" ]]; then
         detect_story_file_path
     fi
 
     local story_ref="${STORY_FILE_PATH:-the story file for ${STORY_ID}}"
-    run_ai "7.1" "/bmad-tech-writer yolo - Finalize documentation for story ${STORY_ID}. The story file is at: ${story_ref}
+    run_ai "6.1" "/bmad-tech-writer yolo - Finalize documentation for story ${STORY_ID}. The story file is at: ${story_ref}
 
 Perform ALL of the following:
 
@@ -1445,19 +1588,18 @@ Perform ALL of the following:
    - Status should be 'review' or later (not 'in-progress' or 'ready-for-dev')
    - All Tasks/Subtasks should be checked [x] (flag any that are unchecked)
    - Dev Agent Record: Agent Model Used, Completion Notes List, and Debug Log References should all be populated
-   - File List must reflect ALL files created, modified, or deleted across the entire pipeline (not just implementation — check git status for any files the arbiters touched that are not listed)
-   - Change Log must include entries for arbiter fixes from edge case and code review steps (if those steps ran)
+   - File List must reflect ALL files created, modified, or deleted across the entire pipeline (not just implementation — check git status for any files the triage fixes touched that are not listed)
+   - Change Log must include entries for spec triage patch fixes (Phase 1, if those steps ran) and code triage patch fixes (Phase 3, if those steps ran)
    Fix anything that is missing or incomplete.
 
 2. Add an '## Auto-bmad Pipeline Artifacts' section after the Dev Agent Record. This is a reference index ONLY — do not duplicate content already in the Dev Agent Record, Change Log, or the artifacts themselves. List each artifact with a one-line outcome (pass/fail/N findings). Skip any that don't exist:
    - Pipeline report: ${STORY_ARTIFACTS}/pipeline-report.md
-   - Validation arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-validate.md
-   - Adversarial arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.5-adversarial.md
-   - Edge case arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-edge-cases.md
-   - Code review arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-4.2-review.md
+   - Spec triage: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md
+   - Code acceptance audit: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md
+   - Code triage: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md
 
 3. Read the pipeline report at ${PIPELINE_REPORT} and populate the 'Reviewer Assessment' section:
-   - For each arbiter report, read the reviewer signal assessment section
+   - Read the reviewer signal assessment section from both triage reports (spec triage 1.3 and code triage 3.3, if they exist)
    - Fill in the per-phase table (Model | Phase | Findings | Accepted | Signal | Notes)
    - Fill in the aggregate table (Model | Total Findings | Accepted | Accept Rate | Avg Signal)
    - Remove the HTML comment placeholder
@@ -1467,10 +1609,10 @@ Perform ALL of the following:
    ### Pipeline Summary
    - Duration, models used, result (steps passed, files changed), link to pipeline-report.md
 
-   ### Arbiter Reviews
+   ### Review Summary
    A summary table:
-   | Phase | Step | Critical | Applied | Skipped | Report |
-   With one row per arbiter report linking to the file.
+   | Phase | Step | Findings | Patch | Defer | Intent Gap | Bad Spec | Report |
+   With one row per review artifact (spec triage, acceptance audit, code triage) linking to the file.
 
    ### Notable Decisions
    Key decisions made during the pipeline (not already in Change Log).
@@ -1490,13 +1632,13 @@ Perform ALL of the following:
    Do NOT repeat completion notes, file lists, decision logs, or fix summaries — those are already in the Dev Agent Record and Change Log."
 }
 
-step_7_2_close() {
+step_6_2_close() {
     if [[ -z "$STORY_FILE_PATH" ]]; then
         detect_story_file_path
     fi
 
     local story_ref="${STORY_FILE_PATH:-the story file for ${STORY_ID}}"
-    run_ai "7.2" "/bmad-sm yolo - Close out story ${STORY_ID}. The story file is at: ${story_ref}
+    run_ai "6.2" "/bmad-sm yolo - Close out story ${STORY_ID}. The story file is at: ${story_ref}
 
 1. Set the story status to done in the story file if not already set.
 2. Update _bmad-output/implementation-artifacts/sprint-status.yaml to set the story status to done if not already set."
@@ -1534,36 +1676,21 @@ run_pipeline() {
 
     run_step "1.1" "Create Story" step_1_1_create_story
 
-    # Step 1.2: Validate Story (4 AIs in parallel)
+    # Step 1.2: Spec Reviews (3 AIs × 2 types in parallel)
     run_parallel_reviews \
         "1.2a|Validate Story (GPT)|validate|gpt" \
-        "1.2c|Validate Story (MiniMax)|validate|minimax" \
-        "1.2d|Validate Story (MiMo)|validate|mimo" \
-        "1.2e|Validate Story (Claude)|validate|claude"
+        "1.2b|Adversarial Review (GPT)|adversarial|gpt" \
+        "1.2c|Validate Story (MiMo)|validate|mimo" \
+        "1.2d|Adversarial Review (MiMo)|adversarial|mimo" \
+        "1.2e|Validate Story (Claude)|validate|claude" \
+        "1.2f|Adversarial Review (Claude)|adversarial|claude"
 
-    # Step 1.3: Validate Story Arbiter (skipped with --skip-reviews or --fast-reviews)
+    # Steps 1.3-1.4: Triage → Fix (skipped with --skip-reviews or --fast-reviews)
     if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
-        run_step "1.3" "Validate Story Arbiter (analyst)" run_arbiter "1.3" "validate" \
-            "Fix all confirmed issues in the story file at ${story_file_ref}." \
-            "" "/bmad-analyst yolo -"
+        run_step "1.3" "Spec Triage" step_1_3_spec_triage
+        run_step "1.4" "Fix Patch Items (analyst)" step_1_4_fix_patch
     else
-        log_skip "Step 1.3 — no arbiter needed (single/no reviewer)"
-    fi
-
-    # Step 1.4: Adversarial Review (4 AIs in parallel)
-    run_parallel_reviews \
-        "1.4a|Adversarial Review (GPT)|adversarial|gpt" \
-        "1.4c|Adversarial Review (MiniMax)|adversarial|minimax" \
-        "1.4d|Adversarial Review (MiMo)|adversarial|mimo" \
-        "1.4e|Adversarial Review (Claude)|adversarial|claude"
-
-    # Step 1.5: Adversarial Review Arbiter (skipped with --skip-reviews or --fast-reviews)
-    if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
-        run_step "1.5" "Adversarial Review Arbiter (analyst)" run_arbiter "1.5" "adversarial" \
-            "Fix all confirmed issues in the story file at ${story_file_ref}." \
-            "" "/bmad-analyst yolo -"
-    else
-        log_skip "Step 1.5 — no arbiter needed (single/no reviewer)"
+        log_skip "Steps 1.3–1.4 — $([[ "$SKIP_REVIEWS" == "true" ]] && echo "--skip-reviews" || echo "--fast-reviews")"
     fi
 
     git_checkpoint "phase 1 — story preparation"
@@ -1580,93 +1707,66 @@ run_pipeline() {
 
     git_checkpoint "phase 2 — implementation"
 
-    # --- Phase 3: Edge Cases (5 Hunters) ---
-    log_phase "3" "Edge Cases (5 Hunters)"
+    # --- Phase 3: Code Review ---
+    log_phase "3" "Code Review"
 
-    # Step 3.1: Edge Case Hunt (4 AIs in parallel)
+    # Step 3.1: Parallel Reviews (3 AIs × 2 review types = 6 sessions)
     run_parallel_reviews \
         "3.1a|Edge Cases (GPT)|edge-cases|gpt" \
-        "3.1c|Edge Cases (MiniMax)|edge-cases|minimax" \
-        "3.1d|Edge Cases (MiMo)|edge-cases|mimo" \
-        "3.1e|Edge Cases (Claude)|edge-cases|claude"
+        "3.1b|Adversarial (GPT)|code-adversarial|gpt" \
+        "3.1c|Edge Cases (MiMo)|edge-cases|mimo" \
+        "3.1d|Adversarial (MiMo)|code-adversarial|mimo" \
+        "3.1e|Edge Cases (Claude)|edge-cases|claude" \
+        "3.1f|Adversarial (Claude)|code-adversarial|claude"
 
-    # Step 3.2: Edge Case Arbiter (skipped with --skip-reviews or --fast-reviews)
-    if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
-        run_step "3.2" "Edge Case Arbiter (dev)" run_arbiter "3.2" "edge-cases" \
-            "Fix all confirmed edge cases." \
-            "- Clear bug (concrete failure path with a reproducible scenario): fix immediately
-- Substantive edge case (real impact — crash, data loss, security bypass): fix if the argument is sound
-- Speculative/hypothetical (rare scenario without concrete consequences): skip
-- Out of scope: skip" \
-            "/bmad-dev yolo -"
+    # Steps 3.2-3.4: acceptance audit → triage → fix (skipped with --skip-reviews)
+    if [[ "$SKIP_REVIEWS" == "false" ]]; then
+        run_step "3.2" "Acceptance Auditor" step_3_2_acceptance_auditor
+        run_step "3.3" "Triage" step_3_3_triage
+        run_step "3.4" "Fix Patch Items (dev)" step_3_4_dev_fix
     else
-        log_skip "Step 3.2 — no arbiter needed (single/no reviewer)"
+        log_skip "Steps 3.2–3.4 — --skip-reviews"
     fi
 
-    git_checkpoint "phase 3 — edge case fixes"
+    git_checkpoint "phase 3 — code review fixes"
 
-    # --- Phase 4: Code Review (5 Reviewers) ---
-    log_phase "4" "Code Review"
-
-    # Step 4.1: Code Review (4 AIs in parallel)
-    run_parallel_reviews \
-        "4.1a|Review (GPT)|review|gpt" \
-        "4.1c|Review (MiniMax)|review|minimax" \
-        "4.1d|Review (MiMo)|review|mimo" \
-        "4.1e|Review (Claude)|review|claude"
-
-    # Step 4.2: Code Review Arbiter (skipped with --skip-reviews or --fast-reviews)
-    if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
-        run_step "4.2" "Code Review Arbiter (dev)" run_arbiter "4.2" "review" \
-            "Fix all confirmed critical, high, medium, and low issues." \
-            "- Clear bug (concrete failure path demonstrated): fix immediately
-- Substantive issue (real impact on correctness, security, or performance): fix if the argument is sound
-- Speculative/stylistic (hypothetical scenario, preference-based): skip
-- Out of scope: skip" \
-            "/bmad-dev yolo -"
-    else
-        log_skip "Step 4.2 — no arbiter needed (single/no reviewer)"
-    fi
-
-    git_checkpoint "phase 4 — code review fixes"
-
-    # --- Phase 5: Traceability & Automation ---
+    # --- Phase 4: Traceability & Automation ---
     if [[ "$SKIP_TEA" == "true" ]]; then
-        log_skip "Phase 5 — TEA not installed"
+        log_skip "Phase 4 — TEA not installed"
     else
-        log_phase "5" "Traceability & Automation"
+        log_phase "4" "Traceability & Automation"
 
-        run_step "5.1" "Testarch Trace" step_5_1_trace
-        run_step "5.2" "Testarch Automate" step_5_2_automate
-        git_checkpoint "phase 5 — traceability & automation"
+        run_step "4.1" "Testarch Trace" step_4_1_trace
+        run_step "4.2" "Testarch Automate" step_4_2_automate
+        git_checkpoint "phase 4 — traceability & automation"
     fi
 
-    # --- Phase 6: Epic End ---
+    # --- Phase 5: Epic End ---
     if is_epic_end && [[ "$SKIP_EPIC_PHASES" == "false" ]]; then
-        log_phase "6" "Epic End"
+        log_phase "5" "Epic End"
 
         if [[ "$SKIP_TEA" == "true" ]]; then
-            log_skip "Steps 6.1–6.3 — TEA not installed"
+            log_skip "Steps 5.1–5.3 — TEA not installed"
         else
             run_parallel_reviews \
-                "6.1|Epic Trace|step_6_1_epic_trace" \
-                "6.2|Epic NFR Assessment|step_6_2_epic_nfr" \
-                "6.3|Epic Test Review|step_6_3_epic_test_review"
+                "5.1|Epic Trace|step_5_1_epic_trace" \
+                "5.2|Epic NFR Assessment|step_5_2_epic_nfr" \
+                "5.3|Epic Test Review|step_5_3_epic_test_review"
         fi
 
-        run_step "6.4" "Retrospective" step_6_4_retrospective
-        run_step "6.5" "Generate Project Context" step_6_5_project_context
-        git_checkpoint "phase 6 — epic end"
+        run_step "5.4" "Retrospective" step_5_4_retrospective
+        run_step "5.5" "Generate Project Context" step_5_5_project_context
+        git_checkpoint "phase 5 — epic end"
     else
         if [[ "$SKIP_EPIC_PHASES" == "true" ]]; then
-            log_skip "Phase 6 — --skip-epic-phases"
+            log_skip "Phase 5 — --skip-epic-phases"
         elif ! is_epic_end; then
-            log_skip "Phase 6 — not last story in epic"
+            log_skip "Phase 5 — not last story in epic"
         fi
     fi
 
-    # --- Phase 7: Finalization ---
-    log_phase "7" "Finalization"
+    # --- Phase 6: Finalization ---
+    log_phase "6" "Finalization"
 
     # Generate pipeline report before the tech-writer runs so it can read it
     if [[ "$DRY_RUN" != "true" ]]; then
@@ -1674,10 +1774,10 @@ run_pipeline() {
         log_ok "Pipeline report: ${PIPELINE_REPORT}"
     fi
 
-    run_step "7.1" "Document Story (tech-writer)" step_7_1_document
-    run_step "7.2" "Close Story (SM)" step_7_2_close
+    run_step "6.1" "Document Story (tech-writer)" step_6_1_document
+    run_step "6.2" "Close Story (SM)" step_6_2_close
 
-    git_checkpoint "phase 7 — finalization"
+    git_checkpoint "phase 6 — finalization"
 
     # Squash all phase commits into a single WIP commit
     git_squash_pipeline
@@ -1774,10 +1874,10 @@ Options:
                          Valid IDs: ${STEP_ORDER}
   --dry-run              Preview all steps without executing
   --skip-cache           Bypass pre-flight cache and force full checks
-  --skip-epic-phases     Skip phases 0 (epic start) and 6 (epic end)
-  --skip-tea             Skip TEA phases even if installed (0, 2.1, 5.x, 6.1-6.3)
-  --skip-reviews         Skip all parallel review + arbiter phases (1.2-1.5, 3.x, 4.x)
-  --fast-reviews         Run only GPT reviewer per phase, skip arbiter
+  --skip-epic-phases     Skip phases 0 (epic start) and 5 (epic end)
+  --skip-tea             Skip TEA phases even if installed (0, 2.1, 4.x, 5.1-5.3)
+  --skip-reviews         Skip all review phases (1.2-1.4, 3.x)
+  --fast-reviews         Run only 1 GPT reviewer per phase, skip triage+fix
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
   --safe-mode            Disable permission-bypass flags (AI tools prompt for approval)
@@ -1786,26 +1886,25 @@ Options:
 
 Step Numbering:
   Phase N → steps N.1, N.2, ...
-  Parallel sub-steps: N.Ma, N.Mb, N.Mc, N.Md, N.Me (review models)
+  Parallel sub-steps: N.Ma–N.Mf (review models, up to 6 per group)
   --from-step uses parent step ID (e.g., 3.1 reruns entire parallel group)
 
   Phase 0: Epic Start     (0.1 TEA)
-  Phase 1: Preparation    (1.1 create, 1.2 validate, 1.3 arbiter, 1.4 adversarial, 1.5 arbiter)
+  Phase 1: Preparation    (1.1 create, 1.2a-f spec reviews, 1.3 triage, 1.4 fix)
   Phase 2: Implementation (2.1 TDD, 2.2 impl)
-  Phase 3: Edge Cases     (3.1 hunt, 3.2 arbiter)
-  Phase 4: Code Review    (4.1 review, 4.2 arbiter)
-  Phase 5: Traceability   (5.1 trace, 5.2 automate)
-  Phase 6: Epic End       (6.1-6.3 parallel, 6.4 retro, 6.5 context)
-  Phase 7: Finalization   (7.1 document, 7.2 close)
+  Phase 3: Code Review    (3.1a-f parallel reviews, 3.2 acceptance audit, 3.3 triage, 3.4 fix)
+  Phase 4: Traceability   (4.1 trace, 4.2 automate)
+  Phase 5: Epic End       (5.1-5.3 parallel, 5.4 retro, 5.5 context)
+  Phase 6: Finalization   (6.1 document, 6.2 close)
 
 AI Profiles (edit at top of script):
-  AI_OPUS      = Claude Opus 4.6 / max effort   — critical path + code-touching arbiters
-  AI_OPUS_HIGH = Claude Opus 4.6 / high effort  — structured, non-critical (pre-impl arbiters, retro, docs)
+  AI_OPUS      = Claude Opus 4.6 / max effort   — critical path, triage, acceptance audit, dev fix
+  AI_OPUS_HIGH = Claude Opus 4.6 / high effort  — structured, non-critical (spec reviews, retro, docs)
   AI_SONNET    = Claude Sonnet 4.6 / high        — lightweight bookkeeping
   AI_GPT       = Codex GPT 5.4 / xhigh reason   — code reviews + edge cases
   AI_GPT_HIGH  = Codex GPT 5.4 / high reason    — spec-level reviews (pre-implementation)
   # AI_COPILOT = Copilot Gemini 3 Pro Preview     — available but not assigned (low quality reviews)
-  AI_MINIMAX   = OpenCode MiniMax M2.5 / max     — parallel reviews
+  # AI_MINIMAX — removed (low signal-to-noise ratio)
   AI_MIMO      = OpenCode MiMo V2 Pro / max      — parallel reviews
 
 Examples:
@@ -1813,8 +1912,8 @@ Examples:
   ./auto-bmad-story.sh --dry-run                          # Preview the pipeline
   ./auto-bmad-story.sh --skip-cache                       # Force full pre-flight checks
   ./auto-bmad-story.sh --story 2-3-some-story             # Run a specific story
-  ./auto-bmad-story.sh --from-step 3.1 --story 1-1-auth   # Resume from edge cases
-  ./auto-bmad-story.sh --fast-reviews                      # Quick run: 1 reviewer, no arbiter
+  ./auto-bmad-story.sh --from-step 3.1 --story 1-1-auth   # Resume from code review
+  ./auto-bmad-story.sh --fast-reviews                      # Quick run: 1 GPT reviewer, triage+fix skipped
   ./auto-bmad-story.sh --skip-reviews --skip-tea           # Minimal: create → implement → close
   ./auto-bmad-story.sh --skip-git                          # No branch/checkpoint/squash
   ./auto-bmad-story.sh --safe-mode                         # AI tools prompt for permissions
@@ -1855,7 +1954,7 @@ parse_args() {
 }
 
 main() {
-    trap 'stop_activity_monitor 2>/dev/null || true; _restore_cursor; [[ "$_ABORT" == true ]] && exit 130' EXIT
+    trap 'stop_activity_monitor 2>/dev/null || true; _restore_cursor; [[ "$_ABORT" == true ]] && exit 130 || true' EXIT
     parse_args "$@"
 
     tput civis 2>/dev/null || true   # hide cursor for cleaner output
@@ -1904,7 +2003,7 @@ main() {
     [[ "$DRY_RUN" == "true" ]]      && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
     [[ "$SKIP_CACHE" == "true" ]]   && echo -e "  Cache:      ${YELLOW}Bypassed (--skip-cache)${NC}"
     [[ "$SKIP_REVIEWS" == "true" ]]  && echo -e "  Reviews:    ${YELLOW}Skipped${NC}"
-    [[ "$FAST_REVIEWS" == "true" ]]  && echo -e "  Reviews:    ${YELLOW}Fast (GPT only, no arbiter)${NC}"
+    [[ "$FAST_REVIEWS" == "true" ]]  && echo -e "  Reviews:    ${YELLOW}Fast (GPT only, triage+fix skipped)${NC}"
     [[ "$SKIP_TEA" == "true" ]]      && echo -e "  TEA:        ${YELLOW}Skipped${NC}"
     [[ "$SKIP_GIT" == "true" ]]      && echo -e "  Git:        ${YELLOW}Disabled (no branch, checkpoint, or squash)${NC}"
     [[ "$NO_TRACES" == "true" ]]     && echo -e "  No traces:  ${YELLOW}Artifacts removed after finalization${NC}"
