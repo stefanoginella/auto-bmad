@@ -202,14 +202,18 @@ STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 
 _sanitize_step_id() { local s="${1//./_}"; echo "${s//-/_}"; }
 
 # In-memory step tracking via dynamic variables (bash 3.2 compat)
-set_step_status()   { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_status"   '%s' "$2"; }
-get_step_status()   { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_status";   echo "${!v:-skipped}"; }
-set_step_duration() { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_duration" '%s' "$2"; }
-get_step_duration() { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_duration"; echo "${!v:-0}"; }
-set_step_name()     { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_name"     '%s' "$2"; }
-get_step_name()     { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_name";     echo "${!v:-$1}"; }
-set_step_start()    { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_start"    '%s' "$2"; }
-get_step_start()    { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_start";    echo "${!v:-$2}"; }
+# Generic setter/getter — field is one of: status, duration, name, start
+_set_step_field() { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_$2" '%s' "$3"; }
+_get_step_field() { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_$2"; echo "${!v:-$3}"; }
+
+set_step_status()   { _set_step_field "$1" status   "$2"; }
+get_step_status()   { _get_step_field "$1" status   "skipped"; }
+set_step_duration() { _set_step_field "$1" duration "$2"; }
+get_step_duration() { _get_step_field "$1" duration "0"; }
+set_step_name()     { _set_step_field "$1" name     "$2"; }
+get_step_name()     { _get_step_field "$1" name     "$1"; }
+set_step_start()    { _set_step_field "$1" start    "$2"; }
+get_step_start()    { _get_step_field "$1" start    "$2"; }
 
 # ============================================================
 # Color & Logging
@@ -233,11 +237,25 @@ log_phase() {
     [[ -n "$PIPELINE_LOG" ]] && printf "# ═══ Phase %s — %s ═══\n" "$1" "$2" >> "$PIPELINE_LOG" || true
 }
 
+# Format "cli/model" from cfg_* globals (call parse_step_config first)
+_format_model_info() {
+    local info="${cfg_cli}"
+    [[ -n "$cfg_model" ]] && info="${info}/${cfg_model}"
+    echo "$info"
+}
+
+# Append a step entry to PIPELINE_LOG
+_log_pipeline_entry() {
+    local step_id="$1" model_info="$2" duration="$3" status="$4" step_name="$5"
+    printf "  %-6s  %-20s  %-22s  %-10s  %-8s  %s\n" \
+        "$step_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$model_info" \
+        "$(format_duration "$duration")" "$status" "$step_name" >> "$PIPELINE_LOG"
+}
+
 log_step() {
     local step_id="$1" step_name="$2"
     parse_step_config "$step_id"
-    local detail="${cfg_cli}"
-    [[ -n "$cfg_model" ]] && detail="${detail}/${cfg_model}"
+    local detail="$(_format_model_info)"
     [[ -n "$cfg_effort" ]] && detail="${detail}/${cfg_effort}"
     echo ""
     echo -e "${BOLD}${BLUE}>>> Step ${step_id}: ${step_name}${NC}  ${DIM}[${detail}]${NC}"
@@ -1023,8 +1041,7 @@ run_step() {
     : > "$CURRENT_STEP_LOG"
 
     parse_step_config "$step_id"
-    local model_info="${cfg_cli}"
-    [[ -n "$cfg_model" ]] && model_info="${model_info}/${cfg_model}"
+    local model_info; model_info="$(_format_model_info)"
 
     local start_time; start_time=$(date +%s)
 
@@ -1036,7 +1053,7 @@ run_step() {
         local duration=$((end_time - start_time))
         set_step_duration "$step_id" "$duration"
         set_step_status "$step_id" "ok"
-        printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "$step_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$model_info" "$(format_duration $duration)" "ok" "$step_name" >> "$PIPELINE_LOG"
+        _log_pipeline_entry "$step_id" "$model_info" "$duration" "ok" "$step_name"
         log_ok "Completed in $(format_duration $duration)"
     else
         stop_activity_monitor
@@ -1044,7 +1061,7 @@ run_step() {
         local duration=$((end_time - start_time))
         set_step_duration "$step_id" "$duration"
         set_step_status "$step_id" "FAILED"
-        printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "$step_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$model_info" "$(format_duration $duration)" "FAILED" "$step_name" >> "$PIPELINE_LOG"
+        _log_pipeline_entry "$step_id" "$model_info" "$duration" "FAILED" "$step_name"
         echo "# FAILED at step ${step_id} after $(format_duration $((end_time - PIPELINE_START_TIME))) wall time" >> "$PIPELINE_LOG"
         echo "# Resume: ./auto-bmad-story.sh --from-step ${step_id} --story ${STORY_ID}" >> "$PIPELINE_LOG"
         log_error "Step ${step_id} (${step_name}) FAILED after $(format_duration $duration)"
@@ -1156,31 +1173,35 @@ run_parallel_reviews() {
         durations+=("0")
     done
 
+    # Pre-cache model info per step (avoids re-parsing in poll loop)
+    local -a model_infos=()
+    for ((i=0; i<count; i++)); do
+        parse_step_config "${sids[$i]}"
+        model_infos+=("$(_format_model_info)")
+    done
+
     local running=$count
     local spinner_idx=0
 
     while (( running > 0 )); do
+        local now; now=$(date +%s)
+
         # Poll each background process
         for ((i=0; i<count; i++)); do
             [[ "${statuses[$i]}" != "running" ]] && continue
             if ! kill -0 "${pids[$i]}" 2>/dev/null; then
-                local now; now=$(date +%s)
                 local t0; t0=$(get_step_start "${sids[$i]}" "$now")
                 local dur=$((now - t0))
                 durations[$i]="$dur"
                 set_step_duration "${sids[$i]}" "$dur"
-                local step_log="${TMP_DIR}/step-${sids[$i]}.log"
-                parse_step_config "${sids[$i]}"
-                local p_model="${cfg_cli}"
-                [[ -n "$cfg_model" ]] && p_model="${p_model}/${cfg_model}"
                 if wait "${pids[$i]}" 2>/dev/null; then
                     statuses[$i]="ok"
                     set_step_status "${sids[$i]}" "ok"
-                    printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "${sids[$i]}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$p_model" "$(format_duration $dur)" "ok" "${snames[$i]}" >> "$PIPELINE_LOG"
+                    _log_pipeline_entry "${sids[$i]}" "${model_infos[$i]}" "$dur" "ok" "${snames[$i]}"
                 else
                     statuses[$i]="FAILED"
                     set_step_status "${sids[$i]}" "FAILED"
-                    printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "${sids[$i]}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$p_model" "$(format_duration $dur)" "FAILED" "${snames[$i]}" >> "$PIPELINE_LOG"
+                    _log_pipeline_entry "${sids[$i]}" "${model_infos[$i]}" "$dur" "FAILED" "${snames[$i]}"
                 fi
                 running=$((running - 1))
             fi
@@ -1193,8 +1214,8 @@ run_parallel_reviews() {
             echo -ne "\033[2K"
             case "${statuses[$i]}" in
                 running)
-                    local t0; t0=$(get_step_start "${sids[$i]}" "$(date +%s)")
-                    local elapsed=$(( $(date +%s) - t0 ))
+                    local t0; t0=$(get_step_start "${sids[$i]}" "$now")
+                    local elapsed=$(( now - t0 ))
                     echo -e "  ${frame} ${snames[$i]}  ${DIM}$(format_duration $elapsed)${NC}"
                     ;;
                 ok)
