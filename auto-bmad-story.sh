@@ -138,7 +138,7 @@ step_config() {
         case "$suffix" in
             a|b) echo "$AI_GPT"; return ;;
             c|d) echo "$AI_MIMO"; return ;;
-            e|f) echo "$AI_OPUS_HIGH"; return ;;
+            e|f) echo "$AI_OPUS"; return ;;
         esac
     fi
 
