@@ -8,6 +8,7 @@ design-artifacts/
 
 # Temporary
 tmp.md
+.tmp/
 
 # OS
 .DS_Store
