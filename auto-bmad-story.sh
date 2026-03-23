@@ -25,9 +25,12 @@ set -euo pipefail
 # --- Abort Handling (CTRL+C kills the entire pipeline) ---
 _ABORT=false
 
+_restore_cursor() { tput cnorm 2>/dev/null || true; }
+
 _handle_abort() {
     _ABORT=true
     stop_activity_monitor 2>/dev/null || true
+    _restore_cursor
     echo ""
     echo -e "\033[1;31m ✘ Pipeline aborted by user (CTRL+C)\033[0m" >&2
     exit 130
@@ -638,8 +641,30 @@ detect_story_file_path() {
 }
 
 # ============================================================
-# Pre-flight Checks
+# Pre-flight Checks (cached for 24h in .tmp/auto-bmad)
 # ============================================================
+
+PREFLIGHT_CACHE="${PROJECT_ROOT}/.tmp/auto-bmad/preflight-cache"
+PREFLIGHT_CACHE_MAX_AGE=86400   # 24 hours
+
+_preflight_cache_valid() {
+    [[ -f "$PREFLIGHT_CACHE" ]] || return 1
+    local now mtime age
+    now=$(date +%s)
+    # macOS stat -f %m, GNU stat -c %Y
+    if mtime=$(stat -f %m "$PREFLIGHT_CACHE" 2>/dev/null); then
+        :
+    else
+        mtime=$(stat -c %Y "$PREFLIGHT_CACHE" 2>/dev/null) || return 1
+    fi
+    age=$(( now - mtime ))
+    (( age < PREFLIGHT_CACHE_MAX_AGE ))
+}
+
+_preflight_cache_write() {
+    mkdir -p "$(dirname "$PREFLIGHT_CACHE")"
+    touch "$PREFLIGHT_CACHE"
+}
 
 check_bmad_version() {
     if [[ ! -f "$BMAD_MANIFEST" ]]; then
@@ -889,6 +914,16 @@ check_model_availability() {
             echo "$rc" > "${tmpdir}/${safe}"
         ) &
     done
+
+    # Spinner while waiting for parallel checks
+    local i=0
+    while [[ $(jobs -rp | wc -l) -gt 0 ]]; do
+        local idx=$((i % ${#SPINNER_FRAMES}))
+        printf '\r  %s Checking models...' "${SPINNER_FRAMES:idx:1}" >&2
+        sleep 0.1
+        i=$((i + 1))
+    done
+    printf '\r\033[K' >&2
     wait
 
     # Collect results
@@ -913,9 +948,17 @@ check_model_availability() {
 }
 
 preflight_checks() {
-    local errors=0
+    echo ""
+    echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    if _preflight_cache_valid; then
+        echo -e "${BOLD}${CYAN}  Pre-flight Checks ${DIM}(cached — less than 24h old)${NC}"
+        echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
+        return 0
+    fi
+    echo -e "${BOLD}${CYAN}  Pre-flight Checks${NC}"
+    echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
 
-    echo -e "${BOLD}Pre-flight checks${NC}"
+    local errors=0
 
     check_bmad_version
 
@@ -952,6 +995,8 @@ preflight_checks() {
         log_error "${errors} pre-flight check(s) failed. Aborting."
         exit 1
     fi
+
+    _preflight_cache_write
     echo ""
 }
 
@@ -1641,8 +1686,8 @@ print_summary() {
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
     echo ""
 
-    printf "  ${BOLD}%-6s %-28s %-12s %-10s${NC}\n" "Step" "Name" "Duration" "Status"
-    printf "  %-6s %-28s %-12s %-10s\n" "------" "----------------------------" "------------" "----------"
+    printf "  ${BOLD}%-5s %-37s %-12s %-7s${NC}\n" "Step" "Name" "Duration" "Status"
+    printf "  %-5s %-37s %-12s %-7s\n" "-----" "-------------------------------------" "------------" "-------"
 
     for sid in $STEP_ORDER; do
         local status; status="$(get_step_status "$sid")"
@@ -1651,7 +1696,7 @@ print_summary() {
 
         [[ "$status" == "skipped" ]] && continue
 
-        local dur_str="—"
+        local dur_str="-"
         [[ "$duration" != "0" ]] && dur_str="$(format_duration "$duration")"
 
         local status_color=""
@@ -1662,7 +1707,7 @@ print_summary() {
             *)        status_color="${NC}" ;;
         esac
 
-        printf "  %-6s %-28s %-12s ${status_color}%-10s${NC}\n" \
+        printf "  %-5s %-37s %-12s ${status_color}%-7s${NC}\n" \
             "$sid" "$name" "$dur_str" "$status"
     done
 
@@ -1796,8 +1841,10 @@ parse_args() {
 }
 
 main() {
-    trap 'stop_activity_monitor 2>/dev/null || true; [[ "$_ABORT" == true ]] && exit 130' EXIT
+    trap 'stop_activity_monitor 2>/dev/null || true; _restore_cursor; [[ "$_ABORT" == true ]] && exit 130' EXIT
     parse_args "$@"
+
+    tput civis 2>/dev/null || true   # hide cursor for cleaner output
 
     preflight_checks
 
