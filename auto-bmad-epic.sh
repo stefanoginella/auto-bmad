@@ -13,6 +13,11 @@ set -euo pipefail
 #   --from-story ID      Resume from a specific story (e.g., 1-3-some-slug)
 #   --dry-run            Preview the full epic plan without executing
 #   --no-merge           Skip auto-PR/merge between stories (manual git)
+#   --skip-tea           Pass-through: skip TEA phases in each story
+#   --skip-reviews       Pass-through: skip all review + arbiter phases
+#   --fast-reviews       Pass-through: run only GPT reviewer, skip arbiter
+#   --skip-git           Pass-through: skip git write ops in each story
+#   --no-traces          Pass-through: remove pipeline artifacts after each story
 #   --help               Show usage
 # ============================================================
 
@@ -63,6 +68,7 @@ EPIC_ID=""
 DRY_RUN=false
 FROM_STORY=""
 NO_MERGE=false
+STORY_EXTRA_FLAGS=""         # pass-through flags for auto-bmad-story.sh
 EPIC_START_TIME=""
 
 # Story arrays (parallel indexed)
@@ -695,7 +701,7 @@ run_epic() {
         local story_start; story_start=$(date +%s)
         local story_exit=0
 
-        "$STORY_SCRIPT" --story "$sid" 2>&1 | tee -a "$EPIC_LOG" || true
+        "$STORY_SCRIPT" --story "$sid" $STORY_EXTRA_FLAGS 2>&1 | tee -a "$EPIC_LOG" || true
         story_exit=${PIPESTATUS[0]}
 
         local story_end; story_end=$(date +%s)
@@ -789,12 +795,20 @@ Options:
   --no-merge           Skip auto-PR/merge between stories (manual git)
   --help               Show this help message
 
+Story pass-through flags (forwarded to auto-bmad-story.sh):
+  --skip-tea           Skip TEA phases even if installed
+  --skip-reviews       Skip all parallel review + arbiter phases
+  --fast-reviews       Run only GPT reviewer per phase, skip arbiter
+  --skip-git           Skip git write ops (branch, checkpoint, squash)
+  --no-traces          Remove pipeline artifacts after finalization
+
 Examples:
   ./auto-bmad-epic.sh                             # Run next epic
   ./auto-bmad-epic.sh --dry-run                   # Preview the pipeline
   ./auto-bmad-epic.sh --epic 2                    # Run epic 2
   ./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline  # Resume
   ./auto-bmad-epic.sh --no-merge                  # No auto-PR between stories
+  ./auto-bmad-epic.sh --fast-reviews               # Quick: 1 reviewer per story
 HELPEOF
 }
 
@@ -817,6 +831,8 @@ parse_args() {
                 shift 2 ;;
             --dry-run)     DRY_RUN=true; shift ;;
             --no-merge)    NO_MERGE=true; shift ;;
+            --skip-tea|--skip-reviews|--fast-reviews|--skip-git|--no-traces)
+                           STORY_EXTRA_FLAGS="${STORY_EXTRA_FLAGS} $1"; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)
                 log_error "Unknown argument: $1"
@@ -870,9 +886,10 @@ main() {
     echo ""
     echo -e "  Epic:       ${BOLD}${EPIC_ID}${NC}"
     echo -e "  Stories:    ${BOLD}${STORY_COUNT} total, ${remaining} remaining${NC}"
-    [[ "$DRY_RUN" == "true" ]]  && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
-    [[ "$NO_MERGE" == "true" ]] && echo -e "  Merge:      ${YELLOW}DISABLED${NC}"
-    [[ -n "$FROM_STORY" ]]      && echo -e "  Resume:     from story ${BOLD}${FROM_STORY}${NC}"
+    [[ "$DRY_RUN" == "true" ]]           && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
+    [[ "$NO_MERGE" == "true" ]]          && echo -e "  Merge:      ${YELLOW}DISABLED${NC}"
+    [[ -n "$STORY_EXTRA_FLAGS" ]]        && echo -e "  Story flags:${YELLOW}${STORY_EXTRA_FLAGS}${NC}"
+    [[ -n "$FROM_STORY" ]]               && echo -e "  Resume:     from story ${BOLD}${FROM_STORY}${NC}"
     echo -e "  Artifacts:  ${DIM}${EPIC_ARTIFACTS}/${NC}"
     echo ""
 

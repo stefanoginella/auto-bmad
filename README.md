@@ -3,14 +3,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 [![Language: Bash](https://img.shields.io/badge/Language-Bash-green.svg)]()
 [![AI CLIs: 4](https://img.shields.io/badge/AI_CLIs-4-orange.svg)]()
+[![Reviewers: 5](https://img.shields.io/badge/Reviewers-5-yellow.svg)]()
 [![BMad: 6.2.0](https://img.shields.io/badge/BMad-6.2.0-purple.svg)](https://github.com/bmad-code-org/BMAD-METHOD)
 [![TEA: 1.7.1](https://img.shields.io/badge/TEA-1.7.1-red.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise)
 
 Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with multi-AI consensus reviews — designed for unattended, sandboxed execution.
 
-- **4 AI providers** (Claude, GPT, Gemini, OpenCode) running review steps in parallel
+- **4 AI providers** (Claude, GPT, Copilot, OpenCode) running review steps in parallel
 - **14+ pipeline steps** across 7 phases per story — from story creation to documentation
-- **Consensus-based multi-AI reviews** with configurable arbiter (4-way fan-out + merge)
+- **5-way parallel multi-AI reviews** with argument-quality arbiter (fan-out + merge)
 - **Full epic orchestration** with automatic PR, CI gating, and squash-merge between stories
 
 > **Warning:** These scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc).
@@ -67,11 +68,11 @@ auto-bmad-epic.sh
   ├── Story 1 ──→ auto-bmad-story.sh
   │     ├─ Phase 0: Epic start (TEA test design)
   │     ├─ Phase 1: Story prep
-  │     │     ├── 4 AIs review in parallel ──→ Arbiter (Opus)
-  │     │     └── 4 AIs adversarial review ──→ Arbiter (Opus)
+  │     │     ├── 5 AIs review in parallel ──→ Arbiter (Opus)
+  │     │     └── 5 AIs adversarial review ──→ Arbiter (Opus)
   │     ├─ Phase 2: TDD + implementation
-  │     ├─ Phase 3: Edge cases (4 AIs ──→ Arbiter)
-  │     ├─ Phase 4: Code review (4 AIs ──→ Arbiter)
+  │     ├─ Phase 3: Edge cases (5 AIs ──→ Arbiter)
+  │     ├─ Phase 4: Code review (5 AIs ──→ Arbiter)
   │     ├─ Phase 5: Traceability
   │     ├─ Phase 6: Epic end (retro, NFR, context)
   │     └─ Phase 7: Finalization (docs + close)
@@ -85,18 +86,20 @@ auto-bmad-epic.sh
 
 ### Multi-AI Review Pattern
 
-Reviews (validation, adversarial, edge cases, code review) use a **4-way parallel review + arbiter** pattern:
+Reviews (validation, adversarial, edge cases, code review) use a **5-way parallel review + arbiter** pattern:
 
-1. Four AI CLIs review independently in parallel (GPT, Gemini, MiniMax, MiMo)
+1. Five AI reviewers run independently in parallel (GPT, Copilot/Gemini, MiniMax, MiMo, Claude)
 2. Each produces a findings report saved to the story artifacts directory
-3. An arbiter (Claude Opus) cross-references all findings using consensus rules:
+3. An arbiter (Claude Opus) cross-references all findings, groups overlapping issues, and evaluates each on **argument quality** — not vote count:
 
-| Agreement | Action |
-|-----------|--------|
-| **4/4 agree** | Fix immediately — high confidence |
-| **3/4 agree** | Fix — good confidence |
-| **2/4 agree** | Evaluate both sides, fix if substantive |
-| **1/4 flags** | Only fix if clearly a real issue with concrete impact |
+| Evaluation | Action |
+|------------|--------|
+| **Clear bug** (concrete failure path) | Fix immediately |
+| **Substantive** (real impact on correctness/security/perf) | Fix if argument is sound |
+| **Speculative/stylistic** (hypothetical, preference-based) | Skip |
+| **Out of scope** | Skip |
+
+Reviewer agreement is recorded as context (e.g., "flagged by 3/5") but is not the decision criteria. A single well-argued finding with a concrete code path outweighs multiple vague flags.
 
 ## Prerequisites
 
@@ -111,7 +114,7 @@ Reviews (validation, adversarial, edge cases, code review) use a **4-way paralle
 
 - [`claude`](https://docs.anthropic.com/en/docs/claude-code) — Claude Code CLI
 - [`codex`](https://github.com/openai/codex) — OpenAI Codex CLI
-- [`gemini`](https://github.com/google-gemini/gemini-cli) — Google Gemini CLI
+- [`copilot`](https://docs.github.com/copilot/how-tos/copilot-cli) — GitHub Copilot CLI
 - [`opencode`](https://github.com/opencode-ai/opencode) — OpenCode CLI (MiniMax, MiMo)
 
 ### For auto-merge between stories
@@ -151,12 +154,15 @@ Automates one story through the full BMAD implementation workflow.
 
 Options:
   --story STORY_ID       Override auto-detection (e.g., 1-2-database-schemas)
-  --from-step STEP_ID    Resume from a specific step (e.g., 6a, 8)
+  --from-step STEP_ID    Resume from a specific step (e.g., 3.1, 7.1)
   --dry-run              Preview all steps without executing
   --skip-epic-phases     Skip phases 0 and 6 even at epic boundaries
-  --json-log             Extract arbiter findings into review-log.json (JSONL)
-  --no-traces            Remove all pipeline artifacts after finalization
-                         (implies --json-log; JSON + pipeline logs are kept)
+  --skip-tea             Skip TEA phases even if installed (0, 2.1, 5.x, 6.1-6.3)
+  --skip-reviews         Skip all parallel review + arbiter phases (1.2-1.5, 3.x, 4.x)
+  --fast-reviews         Run only GPT reviewer per phase, skip arbiter
+  --skip-git             Skip git write ops (branch, checkpoint, squash)
+  --no-traces            Remove pipeline artifacts after finalization
+                         (pipeline report is kept)
   --help                 Show usage
 ```
 
@@ -165,10 +171,10 @@ Options:
 | Phase | Steps | Name | What happens |
 |-------|-------|------|-------------|
 | 0 | 0 | Epic Start | TEA Test Design at epic level. *Only runs on the first story in an epic.* |
-| 1 | 1, 2a-2e, 3a-3e | Story Preparation | Create story, validate (4 AIs + arbiter), adversarial review (4 AIs + arbiter) |
+| 1 | 1, 2a-2e, 3a-3e | Story Preparation | Create story, validate (5 AIs + arbiter), adversarial review (5 AIs + arbiter) |
 | 2 | 4, 5 | TDD + Implementation | Generate failing acceptance tests (red phase), then implement (green phase) |
-| 3 | 6a-6e | Edge Cases | 4 parallel edge case hunters + arbiter applies fixes |
-| 4 | 7a-7d, 8 | Code Review | 4 parallel code reviewers + arbiter applies fixes |
+| 3 | 6a-6e | Edge Cases | 5 parallel edge case hunters + arbiter applies fixes |
+| 4 | 7a-7e, 8 | Code Review | 5 parallel code reviewers + arbiter applies fixes |
 | 5 | 9, 10 | Traceability | Testarch trace + test automation expansion |
 | 6 | 11a-11c, 12, 13 | Epic End | Epic trace/NFR/test review, retrospective, project context. *Only runs on the last story in an epic.* |
 | 7 | 14a, 14b | Finalization | Tech writer documents story, scrum master closes it |
@@ -184,7 +190,7 @@ Eight AI profiles are assigned to different steps based on the task:
 | `AI_SONNET` | Claude Sonnet 4.6 | high | Lightweight bookkeeping (traceability, closing) |
 | `AI_GPT` | Codex GPT 5.4 | xhigh | Code reviews, edge cases |
 | `AI_GPT_HIGH` | Codex GPT 5.4 | high | Spec-level reviews (pre-implementation) |
-| `AI_GEMINI` | Gemini 3 Pro | — | Parallel reviews |
+| `AI_COPILOT` | Copilot Gemini 3 Pro | — | Parallel reviews |
 | `AI_MINIMAX` | OpenCode MiniMax M2.5 | max | Parallel reviews |
 | `AI_MIMO` | OpenCode MiMo V2 Pro | max | Parallel reviews |
 
@@ -206,23 +212,18 @@ Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bma
 - Arbiter decision reports (`*-arbiter-*.md`)
 - Pipeline log (`pipeline.log`) — append-only run record with timestamps, CLI/model per step, phase markers, and a completion summary with wall/compute time and git diff stats
 
-### Review JSON Log (`--json-log`)
+### Review Modes
 
-Extracts structured data from arbiter decision tables into a JSONL file (`review-log.json`). Each line is a JSON object for one arbiter step:
+The pipeline runs 5 parallel reviewers (GPT, Copilot, MiniMax, MiMo, Claude) per review phase, then an arbiter synthesizes findings. Two flags control this:
 
-```json
-{"story":"1-1-auth","step":"2e","review_type":"validate","timestamp":"...","total":5,"fixed":3,"skipped":2,"verdict":"changes_made","findings":[...]}
-```
-
-Use this to evaluate review effectiveness across stories — track catch rates, fix/skip ratios, and consensus patterns. Requires `jq` for full output; falls back to raw JSONL without aggregation if `jq` is not installed.
+- **`--fast-reviews`** — Run only the GPT reviewer (highest signal), skip the arbiter. Cuts 20 AI calls down to ~4. Good for iteration.
+- **`--skip-reviews`** — Skip all review phases entirely. Pipeline becomes: create story → implement → document → close. Supersedes `--fast-reviews` if both are passed.
 
 ### No Traces Mode (`--no-traces`)
 
-Removes all pipeline-generated artifacts after finalization — review reports, arbiter reports, the entire `auto-bmad/{SHORT_ID}/` directory. Two files are preserved:
-- `auto-bmad/review-log--{SHORT_ID}.json` — structured arbiter findings
-- `auto-bmad/pipeline--{SHORT_ID}.log` — full pipeline run record
+Removes all pipeline-generated artifacts after finalization — review reports, arbiter reports, the entire `auto-bmad/{SHORT_ID}/` directory. The pipeline report is preserved at `auto-bmad/pipeline-report--{SHORT_ID}.md`.
 
-This is useful when the review reports have already been indexed into the story file (step 14a) and you don't want leftover pipeline files in the repo. Implies `--json-log`.
+This is useful when the review reports have already been indexed into the story file and you don't want leftover pipeline files in the repo.
 
 ### Resume on Failure
 
@@ -249,6 +250,13 @@ Options:
   --dry-run              Preview the full epic plan without executing
   --no-merge             Skip auto-PR/merge between stories (manual git)
   --help                 Show usage
+
+Story pass-through flags (forwarded to auto-bmad-story.sh):
+  --skip-tea             Skip TEA phases even if installed
+  --skip-reviews         Skip all parallel review + arbiter phases
+  --fast-reviews         Run only GPT reviewer per phase, skip arbiter
+  --skip-git             Skip git write ops (branch, checkpoint, squash)
+  --no-traces            Remove pipeline artifacts after finalization
 ```
 
 ### What It Does
@@ -363,11 +371,11 @@ Both scripts keep all configuration in clearly marked blocks at the top — fork
 
 ### AI Profiles
 
-Edit the eight `AI_*` variables at the top of `auto-bmad-story.sh`. Format: `"cli|model|effort"`.
+Edit the `AI_*` variables at the top of `auto-bmad-story.sh`. Format: `"cli|model|effort"`.
 
 ```bash
-# Example: swap Gemini for a different model
-AI_GEMINI="gemini|gemini-2.5-pro|"
+# Example: swap Copilot model
+AI_COPILOT="copilot|gpt-5.4|"
 ```
 
 ### Step Assignment
@@ -375,8 +383,8 @@ AI_GEMINI="gemini|gemini-2.5-pro|"
 Edit `step_config()` in `auto-bmad-story.sh` to reassign steps to different AI profiles. Step IDs use a consistent scheme:
 
 - **Numeric** (0, 1, 4, 5, ...) — sequential steps, run one at a time
-- **Letter suffix** (2a, 2b, 2c, 2d) — parallel slots within a phase (a=GPT, b=Gemini, c=MiniMax, d=MiMo)
-- **`e` suffix** (2e, 3e, 6e) or step 8 — arbiter that runs after parallel slots complete
+- **Letter suffix** (2a, 2b, 2c, 2d, 2e) — parallel slots within a phase (a=GPT, b=Copilot, c=MiniMax, d=MiMo, e=Claude)
+- **Numeric after parallel** (3, 8) — arbiter that runs after parallel slots complete
 
 ### Git / CI Configuration
 
@@ -393,10 +401,10 @@ Use `--no-merge` to skip all git operations between stories for non-GitHub or ma
 
 ### AI CLI not found
 
-The scripts check for `claude`, `codex`, `gemini`, and `opencode` in PATH at startup. Verify each is installed:
+The scripts check for `claude`, `codex`, `copilot`, and `opencode` in PATH at startup. Verify each is installed:
 
 ```bash
-for cli in claude codex gemini opencode; do command -v "$cli" >/dev/null && echo "$cli ✓" || echo "$cli ✗"; done
+for cli in claude codex copilot opencode; do command -v "$cli" >/dev/null && echo "$cli ✓" || echo "$cli ✗"; done
 ```
 
 ### BMAD version mismatch
@@ -447,11 +455,17 @@ Both scripts expect this file at `_bmad-output/implementation-artifacts/sprint-s
 # Preview a single story's pipeline
 ./auto-bmad-story.sh --story 1-2-database-schemas --dry-run
 
-# Run with JSON review logging for effectiveness analysis
-./auto-bmad-story.sh --json-log
+# Quick run — single reviewer, no arbiter
+./auto-bmad-story.sh --fast-reviews
+
+# Minimal pipeline — create, implement, close (no reviews or TEA)
+./auto-bmad-story.sh --skip-reviews --skip-tea
 
 # Run clean — no pipeline artifacts left behind
 ./auto-bmad-story.sh --no-traces
+
+# Epic with fast reviews for all stories
+./auto-bmad-epic.sh --epic 1 --fast-reviews
 ```
 
 ## Lineage
