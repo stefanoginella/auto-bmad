@@ -14,7 +14,7 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 - **5-way parallel multi-AI reviews** with argument-quality arbiter (fan-out + merge)
 - **Full epic orchestration** with automatic PR, CI gating, and squash-merge between stories
 
-> **Warning:** These scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc).
+> **Warning:** By default, these scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc), or use `--safe-mode` to let each AI tool prompt for permissions.
 
 ## Table of Contents
 
@@ -163,6 +163,7 @@ Options:
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
                          (pipeline report is kept)
+  --safe-mode            Disable permission-bypass flags (AI tools prompt for approval)
   --help                 Show usage
 ```
 
@@ -219,6 +220,15 @@ The pipeline runs 5 parallel reviewers (GPT, Copilot, MiniMax, MiMo, Claude) per
 - **`--fast-reviews`** — Run only the GPT reviewer (highest signal), skip the arbiter. Cuts 20 AI calls down to ~4. Good for iteration.
 - **`--skip-reviews`** — Skip all review phases entirely. Pipeline becomes: create story → implement → document → close. Supersedes `--fast-reviews` if both are passed.
 
+### Safe Mode (`--safe-mode`)
+
+Disables the permission-bypass flags (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`) so each AI CLI uses its native permission prompting. The pipeline will pause at each step for user approval instead of running unattended.
+
+Useful for:
+- **First run on a new codebase** — review what each AI step does before trusting it
+- **After model updates** — verify behavior hasn't shifted
+- **Combined with `--skip-git`** — the most conservative possible run (`--safe-mode --skip-git`)
+
 ### No Traces Mode (`--no-traces`)
 
 Removes all pipeline-generated artifacts after finalization — review reports, arbiter reports, the entire `auto-bmad/{SHORT_ID}/` directory. The pipeline report is preserved at `auto-bmad/pipeline-report--{SHORT_ID}.md`.
@@ -252,11 +262,13 @@ Options:
   --help                 Show usage
 
 Story pass-through flags (forwarded to auto-bmad-story.sh):
+  --skip-epic-phases     Skip phases 0 (epic start) and 6 (epic end)
   --skip-tea             Skip TEA phases even if installed
   --skip-reviews         Skip all parallel review + arbiter phases
   --fast-reviews         Run only GPT reviewer per phase, skip arbiter
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
+  --safe-mode            Disable permission-bypass flags (AI tools prompt for approval)
 ```
 
 ### What It Does
@@ -466,6 +478,12 @@ Both scripts expect this file at `_bmad-output/implementation-artifacts/sprint-s
 
 # Epic with fast reviews for all stories
 ./auto-bmad-epic.sh --epic 1 --fast-reviews
+
+# Safe mode — AI tools prompt for permissions instead of auto-approving
+./auto-bmad-story.sh --safe-mode
+
+# Cautious first run — safe mode + no git writes
+./auto-bmad-story.sh --safe-mode --skip-git
 ```
 
 ## Lineage

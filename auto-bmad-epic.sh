@@ -13,11 +13,13 @@ set -euo pipefail
 #   --from-story ID      Resume from a specific story (e.g., 1-3-some-slug)
 #   --dry-run            Preview the full epic plan without executing
 #   --no-merge           Skip auto-PR/merge between stories (manual git)
+#   --skip-epic-phases   Pass-through: skip phases 0 and 6 at epic boundaries
 #   --skip-tea           Pass-through: skip TEA phases in each story
 #   --skip-reviews       Pass-through: skip all review + arbiter phases
 #   --fast-reviews       Pass-through: run only GPT reviewer, skip arbiter
 #   --skip-git           Pass-through: skip git write ops in each story
 #   --no-traces          Pass-through: remove pipeline artifacts after each story
+#   --safe-mode          Pass-through: AI tools prompt for permissions
 #   --help               Show usage
 # ============================================================
 
@@ -796,11 +798,13 @@ Options:
   --help               Show this help message
 
 Story pass-through flags (forwarded to auto-bmad-story.sh):
+  --skip-epic-phases   Skip phases 0 (epic start) and 6 (epic end)
   --skip-tea           Skip TEA phases even if installed
   --skip-reviews       Skip all parallel review + arbiter phases
   --fast-reviews       Run only GPT reviewer per phase, skip arbiter
   --skip-git           Skip git write ops (branch, checkpoint, squash)
   --no-traces          Remove pipeline artifacts after finalization
+  --safe-mode          Disable permission-bypass flags (AI tools prompt for approval)
 
 Examples:
   ./auto-bmad-epic.sh                             # Run next epic
@@ -831,7 +835,7 @@ parse_args() {
                 shift 2 ;;
             --dry-run)     DRY_RUN=true; shift ;;
             --no-merge)    NO_MERGE=true; shift ;;
-            --skip-tea|--skip-reviews|--fast-reviews|--skip-git|--no-traces)
+            --skip-epic-phases|--skip-tea|--skip-reviews|--fast-reviews|--skip-git|--no-traces|--safe-mode)
                            STORY_EXTRA_FLAGS="${STORY_EXTRA_FLAGS} $1"; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)

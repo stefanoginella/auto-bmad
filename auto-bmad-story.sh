@@ -18,6 +18,7 @@ set -euo pipefail
 #   --fast-reviews       Run only 1 reviewer (GPT) per review phase, skip arbiter
 #   --skip-git           Skip git write operations (branch, checkpoint, squash)
 #   --no-traces          Remove pipeline artifacts after finalization
+#   --safe-mode          Disable permission-bypass flags (AI tools prompt for approval)
 #   --help               Show usage
 # ============================================================
 
@@ -156,6 +157,7 @@ SKIP_REVIEWS=false
 FAST_REVIEWS=false
 SKIP_GIT=false
 NO_TRACES=false
+SAFE_MODE=false
 PIPELINE_START_TIME=""
 
 # Step ordering for --from-step comparison (parallel sub-steps map to parent)
@@ -405,20 +407,24 @@ run_ai() {
     local exit_code=0
     case "$cfg_cli" in
         claude)
-            local cmd=(claude -p "$prompt" --model "$cfg_model" --dangerously-skip-permissions)
+            local cmd=(claude -p "$prompt" --model "$cfg_model")
+            [[ "$SAFE_MODE" != true ]] && cmd+=(--dangerously-skip-permissions)
             [[ -n "$cfg_effort" ]] && cmd+=(--effort "$cfg_effort")
             "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         codex)
             local cprompt; cprompt="$(codex_prompt "$prompt")"
-            local cmd=(codex exec "$cprompt" -m "$cfg_model" --full-auto)
+            local cmd=(codex exec "$cprompt" -m "$cfg_model")
+            [[ "$SAFE_MODE" != true ]] && cmd+=(--full-auto)
             [[ -n "$cfg_effort" ]] && cmd+=(-c "model_reasoning_effort=${cfg_effort}")
             "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         copilot)
-            copilot -p "$prompt" --model "$cfg_model" --yolo 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
+            local cmd=(copilot -p "$prompt" --model "$cfg_model")
+            [[ "$SAFE_MODE" != true ]] && cmd+=(--yolo)
+            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         opencode)
@@ -1717,6 +1723,7 @@ Options:
   --fast-reviews         Run only GPT reviewer per phase, skip arbiter
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
+  --safe-mode            Disable permission-bypass flags (AI tools prompt for approval)
                          (pipeline report is kept)
   --help                 Show this help message
 
@@ -1752,6 +1759,7 @@ Examples:
   ./auto-bmad.sh --fast-reviews                      # Quick run: 1 reviewer, no arbiter
   ./auto-bmad.sh --skip-reviews --skip-tea           # Minimal: create → implement → close
   ./auto-bmad.sh --skip-git                          # No branch/checkpoint/squash
+  ./auto-bmad.sh --safe-mode                         # AI tools prompt for permissions
 HELPEOF
 }
 
@@ -1773,6 +1781,7 @@ parse_args() {
             --fast-reviews)     FAST_REVIEWS=true; shift ;;
             --skip-git)         SKIP_GIT=true; shift ;;
             --no-traces)        NO_TRACES=true; shift ;;
+            --safe-mode)        SAFE_MODE=true; shift ;;
             --help|-h)        show_help; exit 0 ;;
             *)
                 log_error "Unknown argument: $1"
@@ -1837,6 +1846,7 @@ main() {
     [[ "$SKIP_TEA" == "true" ]]      && echo -e "  TEA:        ${YELLOW}Skipped${NC}"
     [[ "$SKIP_GIT" == "true" ]]      && echo -e "  Git:        ${YELLOW}Disabled (no branch, checkpoint, or squash)${NC}"
     [[ "$NO_TRACES" == "true" ]]     && echo -e "  No traces:  ${YELLOW}Artifacts removed after finalization${NC}"
+    [[ "$SAFE_MODE" == "true" ]]     && echo -e "  Safe mode:  ${YELLOW}AI tools will prompt for permissions${NC}"
     [[ -n "$FROM_STEP" ]]            && echo -e "  Resume:     from step ${BOLD}${FROM_STEP}${NC}"
     echo -e "  Artifacts:  ${DIM}${STORY_ARTIFACTS}/${NC}"
 
