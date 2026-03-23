@@ -1705,7 +1705,7 @@ print_summary() {
 
 show_help() {
     cat <<HELPEOF
-auto-bmad.sh — BMAD Story Pipeline Orchestrator
+auto-bmad-story.sh — BMAD Story Pipeline Orchestrator
 
 Automates one story at a time through the full BMAD implementation
 workflow using multiple AI CLIs (claude, codex, copilot, opencode).
@@ -1792,7 +1792,7 @@ parse_args() {
         esac
     done
     # --skip-reviews supersedes --fast-reviews
-    [[ "$SKIP_REVIEWS" == "true" ]] && FAST_REVIEWS=false
+    if [[ "$SKIP_REVIEWS" == "true" ]]; then FAST_REVIEWS=false; fi
 }
 
 main() {
