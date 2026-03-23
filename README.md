@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 [![Language: Bash](https://img.shields.io/badge/Language-Bash-green.svg)]()
 [![AI CLIs: 4](https://img.shields.io/badge/AI_CLIs-4-orange.svg)]()
-[![Reviewers: 5](https://img.shields.io/badge/Reviewers-5-yellow.svg)]()
+[![Reviewers: 4](https://img.shields.io/badge/Reviewers-4-yellow.svg)]()
 [![BMad: 6.2.0](https://img.shields.io/badge/BMad-6.2.0-purple.svg)](https://github.com/bmad-code-org/BMAD-METHOD)
 [![TEA: 1.7.1](https://img.shields.io/badge/TEA-1.7.1-red.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise)
 
@@ -11,7 +11,7 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 
 - **4 AI providers** (Claude, GPT, Copilot, OpenCode) running review steps in parallel
 - **14+ pipeline steps** across 7 phases per story — from story creation to documentation
-- **5-way parallel multi-AI reviews** with argument-quality arbiter (fan-out + merge)
+- **4-way parallel multi-AI reviews** with argument-quality arbiter (fan-out + merge)
 - **Full epic orchestration** with automatic PR, CI gating, and squash-merge between stories
 
 > **Warning:** By default, these scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc), or use `--safe-mode` to let each AI tool prompt for permissions.
@@ -68,11 +68,11 @@ auto-bmad-epic.sh
   ├── Story 1 ──→ auto-bmad-story.sh
   │     ├─ Phase 0: Epic start (TEA test design)
   │     ├─ Phase 1: Story prep
-  │     │     ├── 5 AIs review in parallel ──→ Arbiter (Opus)
-  │     │     └── 5 AIs adversarial review ──→ Arbiter (Opus)
+  │     │     ├── 4 AIs review in parallel ──→ Arbiter (Opus)
+  │     │     └── 4 AIs adversarial review ──→ Arbiter (Opus)
   │     ├─ Phase 2: TDD + implementation
-  │     ├─ Phase 3: Edge cases (5 AIs ──→ Arbiter)
-  │     ├─ Phase 4: Code review (5 AIs ──→ Arbiter)
+  │     ├─ Phase 3: Edge cases (4 AIs ──→ Arbiter)
+  │     ├─ Phase 4: Code review (4 AIs ──→ Arbiter)
   │     ├─ Phase 5: Traceability
   │     ├─ Phase 6: Epic end (retro, NFR, context)
   │     └─ Phase 7: Finalization (docs + close)
@@ -86,9 +86,9 @@ auto-bmad-epic.sh
 
 ### Multi-AI Review Pattern
 
-Reviews (validation, adversarial, edge cases, code review) use a **5-way parallel review + arbiter** pattern:
+Reviews (validation, adversarial, edge cases, code review) use a **4-way parallel review + arbiter** pattern:
 
-1. Five AI reviewers run independently in parallel (GPT, Copilot/Gemini, MiniMax, MiMo, Claude)
+1. Four AI reviewers run independently in parallel (GPT, MiniMax, MiMo, Claude)
 2. Each produces a findings report saved to the story artifacts directory
 3. An arbiter (Claude Opus) cross-references all findings, groups overlapping issues, and evaluates each on **argument quality** — not vote count:
 
@@ -99,7 +99,7 @@ Reviews (validation, adversarial, edge cases, code review) use a **5-way paralle
 | **Speculative/stylistic** (hypothetical, preference-based) | Skip |
 | **Out of scope** | Skip |
 
-Reviewer agreement is recorded as context (e.g., "flagged by 3/5") but is not the decision criteria. A single well-argued finding with a concrete code path outweighs multiple vague flags.
+Reviewer agreement is recorded as context (e.g., "flagged by 3/4") but is not the decision criteria. A single well-argued finding with a concrete code path outweighs multiple vague flags.
 
 ## Prerequisites
 
@@ -110,12 +110,12 @@ Reviewer agreement is recorded as context (e.g., "flagged by 3/5") but is not th
 - **BMad framework** installed (`_bmad/` directory) — tested against BMad 6.2.0 / TEA 1.7.1
 - **Sprint status** generated at `_bmad-output/implementation-artifacts/sprint-status.yaml`
 
-### AI CLIs (all four needed for full parallel reviews)
+### AI CLIs (all three needed for full parallel reviews)
 
 - [`claude`](https://docs.anthropic.com/en/docs/claude-code) — Claude Code CLI
 - [`codex`](https://github.com/openai/codex) — OpenAI Codex CLI
-- [`copilot`](https://docs.github.com/copilot/how-tos/copilot-cli) — GitHub Copilot CLI
 - [`opencode`](https://github.com/opencode-ai/opencode) — OpenCode CLI (MiniMax, MiMo)
+- [`copilot`](https://docs.github.com/copilot/how-tos/copilot-cli) — GitHub Copilot CLI (supported but not assigned to any step)
 
 ### For auto-merge between stories
 
@@ -172,17 +172,17 @@ Options:
 | Phase | Steps | Name | What happens |
 |-------|-------|------|-------------|
 | 0 | 0 | Epic Start | TEA Test Design at epic level. *Only runs on the first story in an epic.* |
-| 1 | 1, 2a-2e, 3a-3e | Story Preparation | Create story, validate (5 AIs + arbiter), adversarial review (5 AIs + arbiter) |
+| 1 | 1, 2a-2e, 3a-3e | Story Preparation | Create story, validate (4 AIs + arbiter), adversarial review (4 AIs + arbiter) |
 | 2 | 4, 5 | TDD + Implementation | Generate failing acceptance tests (red phase), then implement (green phase) |
-| 3 | 6a-6e | Edge Cases | 5 parallel edge case hunters + arbiter applies fixes |
-| 4 | 7a-7e, 8 | Code Review | 5 parallel code reviewers + arbiter applies fixes |
+| 3 | 6a-6e | Edge Cases | 4 parallel edge case hunters + arbiter applies fixes |
+| 4 | 7a-7e, 8 | Code Review | 4 parallel code reviewers + arbiter applies fixes |
 | 5 | 9, 10 | Traceability | Testarch trace + test automation expansion |
 | 6 | 11a-11c, 12, 13 | Epic End | Epic trace/NFR/test review, retrospective, project context. *Only runs on the last story in an epic.* |
 | 7 | 14a, 14b | Finalization | Tech writer documents story, scrum master closes it |
 
 ### AI Profiles
 
-Eight AI profiles are assigned to different steps based on the task:
+Seven AI profiles are assigned to different steps based on the task:
 
 | Profile | CLI / Model | Effort | Used for |
 |---------|-------------|--------|----------|
@@ -191,9 +191,10 @@ Eight AI profiles are assigned to different steps based on the task:
 | `AI_SONNET` | Claude Sonnet 4.6 | high | Lightweight bookkeeping (traceability, closing) |
 | `AI_GPT` | Codex GPT 5.4 | xhigh | Code reviews, edge cases |
 | `AI_GPT_HIGH` | Codex GPT 5.4 | high | Spec-level reviews (pre-implementation) |
-| `AI_COPILOT` | Copilot Gemini 3 Pro | — | Parallel reviews |
 | `AI_MINIMAX` | OpenCode MiniMax M2.5 | max | Parallel reviews |
 | `AI_MIMO` | OpenCode MiMo V2 Pro | max | Parallel reviews |
+
+> **Note:** `AI_COPILOT` (Copilot Gemini 3 Pro) is defined but commented out — Gemini reviews were consistently low quality.
 
 ### Story Detection
 
@@ -215,9 +216,9 @@ Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bma
 
 ### Review Modes
 
-The pipeline runs 5 parallel reviewers (GPT, Copilot, MiniMax, MiMo, Claude) per review phase, then an arbiter synthesizes findings. Two flags control this:
+The pipeline runs 4 parallel reviewers (GPT, MiniMax, MiMo, Claude) per review phase, then an arbiter synthesizes findings. Two flags control this:
 
-- **`--fast-reviews`** — Run only the GPT reviewer (highest signal), skip the arbiter. Cuts 20 AI calls down to ~4. Good for iteration.
+- **`--fast-reviews`** — Run only the GPT reviewer (highest signal), skip the arbiter. Cuts 16 AI calls down to ~4. Good for iteration.
 - **`--skip-reviews`** — Skip all review phases entirely. Pipeline becomes: create story → implement → document → close. Supersedes `--fast-reviews` if both are passed.
 
 ### Safe Mode (`--safe-mode`)
@@ -386,8 +387,8 @@ Both scripts keep all configuration in clearly marked blocks at the top — fork
 Edit the `AI_*` variables at the top of `auto-bmad-story.sh`. Format: `"cli|model|effort"`.
 
 ```bash
-# Example: swap Copilot model
-AI_COPILOT="copilot|gpt-5.4|"
+# Example: swap MiniMax for a different OpenCode model
+AI_MINIMAX="opencode|opencode/some-other-model|max"
 ```
 
 ### Step Assignment
@@ -395,7 +396,7 @@ AI_COPILOT="copilot|gpt-5.4|"
 Edit `step_config()` in `auto-bmad-story.sh` to reassign steps to different AI profiles. Step IDs use a consistent scheme:
 
 - **Numeric** (0, 1, 4, 5, ...) — sequential steps, run one at a time
-- **Letter suffix** (2a, 2b, 2c, 2d, 2e) — parallel slots within a phase (a=GPT, b=Copilot, c=MiniMax, d=MiMo, e=Claude)
+- **Letter suffix** (2a, 2c, 2d, 2e) — parallel slots within a phase (a=GPT, c=MiniMax, d=MiMo, e=Claude)
 - **Numeric after parallel** (3, 8) — arbiter that runs after parallel slots complete
 
 ### Git / CI Configuration

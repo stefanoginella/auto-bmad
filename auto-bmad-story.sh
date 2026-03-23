@@ -70,7 +70,8 @@ BMAD_BUILD_TEA_VERSION="1.7.1"
 # CLI Tools
 # ============================================================
 
-TOOL_NAMES=(claude codex copilot opencode)
+TOOL_NAMES=(claude codex opencode)
+# copilot (GitHub Copilot CLI) is supported but not assigned to any step
 
 # ============================================================
 # AI Profiles — reusable combinations of cli|model|effort
@@ -87,7 +88,7 @@ AI_OPUS_HIGH="claude|opus|high"                      # Claude Opus 4.6 / high �
 AI_SONNET="claude|sonnet|high"                       # Claude Sonnet 4.6 — lightweight bookkeeping
 AI_GPT="codex|gpt-5.4|xhigh"                       # Codex GPT 5.4 — code reviews, edge cases
 AI_GPT_HIGH="codex|gpt-5.4|high"                    # Codex GPT 5.4 / high — spec-level reviews
-AI_COPILOT="copilot|gemini-3-pro-preview|"           # Copilot Gemini 3 Pro — parallel reviews
+# AI_COPILOT="copilot|gemini-3-pro-preview|"           # Copilot Gemini 3 Pro — removed: low quality reviews
 AI_MINIMAX="opencode|opencode/minimax-m2.5-free|max" # MiniMax M2.5 via OpenCode — parallel reviews
 AI_MIMO="opencode|opencode/mimo-v2-pro-free|max"     # MiMo V2 Pro via OpenCode — parallel reviews
 
@@ -105,7 +106,7 @@ step_config() {
         a) # GPT — effort depends on phase (spec vs code)
             if [[ "$phase" == "1" ]]; then echo "$AI_GPT_HIGH"
             else echo "$AI_GPT"; fi; return ;;
-        b) echo "$AI_COPILOT"; return ;;
+        # b) copilot — removed: low quality reviews
         c) echo "$AI_MINIMAX"; return ;;
         d) echo "$AI_MIMO"; return ;;
         e) echo "$AI_OPUS_HIGH"; return ;;
@@ -124,7 +125,7 @@ step_config() {
         # Epic end parallel (individual assignments, not review sub-steps)
         6.1)                         echo "$AI_GPT" ;;
         6.2)                         echo "$AI_OPUS" ;;
-        6.3)                         echo "$AI_COPILOT" ;;
+        6.3)                         echo "$AI_MINIMAX" ;;
         # Reflective / documentation — structured, non-critical
         6.4|6.5|7.1)                 echo "$AI_OPUS_HIGH" ;;
         # Finalization — bookkeeping
@@ -498,7 +499,6 @@ run_arbiter() {
 
     run_ai "$step_id" "${prompt_prefix}Read these review findings files (skip any that don't exist):
 - ${TMP_DIR}/${review_base}a-${file_prefix}-gpt.md
-- ${TMP_DIR}/${review_base}b-${file_prefix}-copilot.md
 - ${TMP_DIR}/${review_base}c-${file_prefix}-minimax.md
 - ${TMP_DIR}/${review_base}d-${file_prefix}-mimo.md
 - ${TMP_DIR}/${review_base}e-${file_prefix}-claude.md
@@ -523,8 +523,8 @@ Save your arbiter decision report to ${arbiter_report} with this structure:
 
 | # | Finding | Flagged By | Consensus | Action | Confidence |
 |---|---------|------------|-----------|--------|------------|
-| 1 | Brief description | GPT, Copilot, Claude | 3/5 | Fixed | High |
-| 2 | Brief description | MiMo | 1/5 | Skipped | Low |
+| 1 | Brief description | GPT, MiniMax, Claude | 3/4 | Fixed | High |
+| 2 | Brief description | MiMo | 1/4 | Skipped | Low |
 
 3. **Detailed rationale** — for each finding in the table, a short paragraph with:
    - The reviewers' arguments (agreements and disagreements)
@@ -889,7 +889,7 @@ check_model_availability() {
 
     # Collect unique cli:model pairs from all AI profiles
     local profile cli model _effort
-    for profile in "$AI_OPUS" "$AI_OPUS_HIGH" "$AI_SONNET" "$AI_GPT" "$AI_GPT_HIGH" "$AI_COPILOT" "$AI_MINIMAX" "$AI_MIMO"; do
+    for profile in "$AI_OPUS" "$AI_OPUS_HIGH" "$AI_SONNET" "$AI_GPT" "$AI_GPT_HIGH" "$AI_MINIMAX" "$AI_MIMO"; do
         IFS='|' read -r cli model _effort <<< "$profile"
         [[ -z "$cli" || -z "$model" ]] && continue
         local pair="${cli}:${model}"
@@ -1519,10 +1519,9 @@ run_pipeline() {
 
     run_step "1.1" "Create Story" step_1_1_create_story
 
-    # Step 1.2: Validate Story (5 AIs in parallel)
+    # Step 1.2: Validate Story (4 AIs in parallel)
     run_parallel_reviews \
         "1.2a|Validate Story (GPT)|validate|gpt" \
-        "1.2b|Validate Story (Copilot)|validate|copilot" \
         "1.2c|Validate Story (MiniMax)|validate|minimax" \
         "1.2d|Validate Story (MiMo)|validate|mimo" \
         "1.2e|Validate Story (Claude)|validate|claude"
@@ -1536,10 +1535,9 @@ run_pipeline() {
         log_skip "Step 1.3 — no arbiter needed (single/no reviewer)"
     fi
 
-    # Step 1.4: Adversarial Review (5 AIs in parallel)
+    # Step 1.4: Adversarial Review (4 AIs in parallel)
     run_parallel_reviews \
         "1.4a|Adversarial Review (GPT)|adversarial|gpt" \
-        "1.4b|Adversarial Review (Copilot)|adversarial|copilot" \
         "1.4c|Adversarial Review (MiniMax)|adversarial|minimax" \
         "1.4d|Adversarial Review (MiMo)|adversarial|mimo" \
         "1.4e|Adversarial Review (Claude)|adversarial|claude"
@@ -1570,10 +1568,9 @@ run_pipeline() {
     # --- Phase 3: Edge Cases (5 Hunters) ---
     log_phase "3" "Edge Cases (5 Hunters)"
 
-    # Step 3.1: Edge Case Hunt (5 AIs in parallel)
+    # Step 3.1: Edge Case Hunt (4 AIs in parallel)
     run_parallel_reviews \
         "3.1a|Edge Cases (GPT)|edge-cases|gpt" \
-        "3.1b|Edge Cases (Copilot)|edge-cases|copilot" \
         "3.1c|Edge Cases (MiniMax)|edge-cases|minimax" \
         "3.1d|Edge Cases (MiMo)|edge-cases|mimo" \
         "3.1e|Edge Cases (Claude)|edge-cases|claude"
@@ -1596,10 +1593,9 @@ run_pipeline() {
     # --- Phase 4: Code Review (5 Reviewers) ---
     log_phase "4" "Code Review"
 
-    # Step 4.1: Code Review (5 AIs in parallel)
+    # Step 4.1: Code Review (4 AIs in parallel)
     run_parallel_reviews \
         "4.1a|Review (GPT)|review|gpt" \
-        "4.1b|Review (Copilot)|review|copilot" \
         "4.1c|Review (MiniMax)|review|minimax" \
         "4.1d|Review (MiMo)|review|mimo" \
         "4.1e|Review (Claude)|review|claude"
@@ -1792,7 +1788,7 @@ AI Profiles (edit at top of script):
   AI_SONNET    = Claude Sonnet 4.6 / high        — lightweight bookkeeping
   AI_GPT       = Codex GPT 5.4 / xhigh reason   — code reviews + edge cases
   AI_GPT_HIGH  = Codex GPT 5.4 / high reason    — spec-level reviews (pre-implementation)
-  AI_COPILOT   = Copilot Gemini 3 Pro Preview     — parallel reviews
+  # AI_COPILOT = Copilot Gemini 3 Pro Preview     — available but not assigned (low quality reviews)
   AI_MINIMAX   = OpenCode MiniMax M2.5 / max     — parallel reviews
   AI_MIMO      = OpenCode MiMo V2 Pro / max      — parallel reviews
 
