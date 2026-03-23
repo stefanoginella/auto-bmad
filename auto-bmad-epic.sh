@@ -62,8 +62,8 @@ EPIC_ARTIFACTS=""
 EPIC_LOG=""
 
 # --- Configuration ---
-PR_MERGE_TIMEOUT=900   # 15 minutes
-PR_POLL_INTERVAL=30    # seconds
+PR_SAFETY_TIMEOUT=7200  # 2 hours — backstop for stuck runners, not normal control flow
+PR_POLL_INTERVAL=30     # seconds between CI state checks
 
 # --- Pipeline State ---
 EPIC_ID=""
@@ -418,31 +418,36 @@ PREOF
     log_ok "PR: ${pr_url}"
 
     # Enable auto-merge (squash)
+    local auto_merge=true
     gh pr merge --auto --squash "$branch" 2>&1 || {
-        log_warn "Auto-merge not enabled — repository may not have auto-merge configured"
-        echo -e "    ${DIM}Falling back to direct merge after CI passes${NC}"
+        auto_merge=false
+        log_warn "Auto-merge not available — will merge directly after CI passes"
     }
 
     # Poll for merge
-    wait_for_merge "$branch" "$pr_url"
+    wait_for_merge "$branch" "$pr_url" "$auto_merge"
 }
 
 wait_for_merge() {
     local branch="$1"
     local pr_url="${2:-}"
+    local auto_merge="${3:-true}"
     local elapsed=0
+    local last_status_line=""
 
-    echo -e "  ${DIM}Waiting for CI + merge (timeout: $(format_duration $PR_MERGE_TIMEOUT))...${NC}"
+    echo -e "  ${DIM}Waiting for CI checks...${NC}"
 
-    while (( elapsed < PR_MERGE_TIMEOUT )); do
+    while (( elapsed < PR_SAFETY_TIMEOUT )); do
         sleep "$PR_POLL_INTERVAL"
         elapsed=$((elapsed + PR_POLL_INTERVAL))
 
+        # --- Check PR state ---
         local state
         state=$(gh pr view "$branch" --json state -q '.state' 2>/dev/null || echo "UNKNOWN")
 
         case "$state" in
             MERGED)
+                [[ -n "$last_status_line" ]] && echo ""  # clear \r line
                 log_ok "PR merged after $(format_duration $elapsed)"
                 git -C "$PROJECT_ROOT" checkout main 2>/dev/null
                 git -C "$PROJECT_ROOT" pull origin main --ff-only 2>/dev/null
@@ -450,42 +455,84 @@ wait_for_merge() {
                 return 0
                 ;;
             CLOSED)
+                [[ -n "$last_status_line" ]] && echo ""
                 log_error "PR was closed without merging"
                 return 1
                 ;;
             UNKNOWN)
                 log_warn "Could not check PR status (elapsed: $(format_duration $elapsed))"
-                ;;
-            *)
-                # Still open — check if CI failed (only when all checks are terminal)
-                local check_states
-                check_states=$(gh pr checks "$branch" --json state -q '.[].state' 2>/dev/null | sort -u || echo "")
-                local has_pending=false has_failure=false
-                while IFS= read -r cs; do
-                    case "$cs" in
-                        PENDING|QUEUED|IN_PROGRESS|WAITING|"") has_pending=true ;;
-                        FAILURE|ERROR|ACTION_REQUIRED|TIMED_OUT) has_failure=true ;;
-                    esac
-                done <<< "$check_states"
-
-                if [[ "$has_failure" == "true" && "$has_pending" == "false" ]]; then
-                    echo ""
-                    log_error "CI failed on PR for story ${branch#story/}"
-                    [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
-                    echo ""
-                    echo -e "    Fix CI, merge the PR manually, then resume:"
-                    echo -e "    ${DIM}./auto-bmad-epic.sh --epic ${EPIC_ID} --from-story <next-story>${NC}"
-                    return 1
-                fi
-                printf "  ${DIM}  ...waiting (%s elapsed)${NC}\r" "$(format_duration $elapsed)"
+                continue
                 ;;
         esac
+
+        # --- PR still open — inspect CI checks ---
+        local total=0 passed=0 failed=0 pending=0 warnings=0
+        local cs
+        while IFS= read -r cs; do
+            [[ -z "$cs" ]] && continue
+            (( total++ ))
+            case "$cs" in
+                SUCCESS)                                      (( passed++ )) ;;
+                FAILURE|ERROR|ACTION_REQUIRED|TIMED_OUT)      (( failed++ )) ;;
+                NEUTRAL|SKIPPED|STALE|CANCELLED)              (( warnings++ )) ;;
+                *)                                            (( pending++ )) ;;
+            esac
+        done < <(gh pr checks "$branch" --json state -q '.[].state' 2>/dev/null)
+
+        # --- Decision logic ---
+        if (( total == 0 )); then
+            # No CI checks — merge directly
+            [[ -n "$last_status_line" ]] && echo ""
+            log_warn "No CI checks found — merging directly"
+            gh pr merge --squash "$branch" 2>&1 || {
+                log_error "Direct merge failed"
+                [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
+                return 1
+            }
+            continue  # next iteration will pick up MERGED state
+
+        elif (( failed > 0 && pending == 0 )); then
+            # All checks resolved, at least one failed
+            [[ -n "$last_status_line" ]] && echo ""
+            echo ""
+            log_error "CI failed on PR for story ${branch#story/} (${failed} failed, ${passed} passed)"
+            [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
+            echo ""
+            echo -e "    Fix CI, merge the PR manually, then resume:"
+            echo -e "    ${DIM}./auto-bmad-epic.sh --epic ${EPIC_ID} --from-story <next-story>${NC}"
+            return 1
+
+        elif (( pending == 0 && failed == 0 )); then
+            # All checks passed (possibly with warnings/neutral)
+            if (( warnings > 0 )); then
+                [[ -n "$last_status_line" ]] && echo ""
+                log_warn "CI passed with warnings (${passed} passed, ${warnings} neutral/skipped)"
+            fi
+            # Auto-merge should handle this; if it wasn't enabled, merge directly
+            if [[ "$auto_merge" == "false" ]]; then
+                [[ -n "$last_status_line" ]] && echo ""
+                log_ok "CI passed (${passed}/${total}) — merging"
+                gh pr merge --squash "$branch" 2>&1 || {
+                    log_error "Merge failed"
+                    [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
+                    return 1
+                }
+            fi
+            # Next iteration will pick up MERGED state
+            continue
+        fi
+
+        # --- Still pending — update status line ---
+        last_status_line="  ${DIM}  CI: ${passed} passed, ${pending} pending, ${failed} failed — $(format_duration $elapsed) elapsed${NC}"
+        printf "\r%-80s" ""  # clear previous line
+        printf "\r%b" "$last_status_line"
     done
 
+    [[ -n "$last_status_line" ]] && echo ""
     echo ""
-    log_error "Timed out waiting for PR merge ($(format_duration $PR_MERGE_TIMEOUT))"
+    log_error "Safety timeout reached ($(format_duration $PR_SAFETY_TIMEOUT)) — CI may be stuck"
     [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
-    echo -e "    Merge manually, then resume with --from-story"
+    echo -e "    Check for stuck runners, then merge manually and resume with --from-story"
     return 1
 }
 

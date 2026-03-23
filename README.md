@@ -279,7 +279,7 @@ Story pass-through flags (forwarded to auto-bmad-story.sh):
    - Commits changes on the story branch
    - Pushes and creates a PR via `gh`
    - Enables auto-merge (squash)
-   - Polls for CI to pass (30s interval, 15-minute timeout)
+   - Polls CI check states every 30s until all checks resolve
    - Switches to `main` after merge
 4. **Tracks epic-level metrics** — per-story durations, total wall time
 5. **Prints retrospective summary** — after the last story, parses the retrospective output for action items and significant discovery alerts
@@ -330,11 +330,11 @@ Epic 1 — STORY FAILED
 
 **CI failure on PR:**
 ```
-CI failed on PR for story 1-2-database-schemas
-  PR URL: https://github.com/.../pull/42
+  ✗ CI failed on PR for story 1-2-database-schemas (2 failed, 3 passed)
+    PR: https://github.com/.../pull/42
 
-  Fix CI, merge the PR manually, then resume:
-  ./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
+    Fix CI, merge the PR manually, then resume:
+    ./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
 ```
 
 ### Retrospective Summary
@@ -404,7 +404,7 @@ Edit these variables at the top of `auto-bmad-epic.sh`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PR_MERGE_TIMEOUT` | `900` (15 min) | Max seconds to wait for CI to pass on a PR |
+| `PR_SAFETY_TIMEOUT` | `7200` (2 hours) | Backstop for stuck CI runners — not the normal control flow |
 | `PR_POLL_INTERVAL` | `30` | Seconds between CI status checks |
 
 Use `--no-merge` to skip all git operations between stories for non-GitHub or manual workflows.
@@ -431,9 +431,9 @@ Use `--from-step` to resume from the failed step:
 ./auto-bmad-story.sh --story 1-2-database-schemas --from-step 6a
 ```
 
-### CI timeout on PR merge
+### CI failure or stuck checks
 
-Increase `PR_MERGE_TIMEOUT` in `auto-bmad-epic.sh`, or fix CI manually, merge the PR, then resume the epic:
+If CI fails, the epic script stops immediately with a link to the PR. If CI appears stuck (runners hung, orphaned checks), the 2-hour safety timeout will eventually fire. Fix CI manually, merge the PR, then resume:
 
 ```bash
 ./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
