@@ -215,7 +215,7 @@ Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bma
 - Spec triage (`*-1.3-spec-triage.md`) — classified spec findings with resolution status
 - Code acceptance audit (`*-3.2-code-acceptance.md`) — AC compliance matrix (PASS / PARTIAL / FAIL per criterion)
 - Code triage (`*-3.3-code-triage.md`) — classified code findings with reviewer signal assessment and overlap matrix
-- Pipeline report (`pipeline-report.md`) — timestamps, CLI/model per step, wall/compute time, git diff stats
+- Pipeline report (`*-6.1-pipeline-report.md`) — timestamps, CLI/model per step, wall/compute time, git diff stats
 
 ### Review Modes
 
