@@ -107,7 +107,7 @@ Reviewer agreement is recorded as context (e.g., "flagged by 3/5") but is not th
 
 - **Bash** 3.2+
 - **Git** repository with a `main` branch
-- **BMad framework** installed (`_bmad/` directory) — tested against BMad 6.2.0 / TEA 1.7.0
+- **BMad framework** installed (`_bmad/` directory) — tested against BMad 6.2.0 / TEA 1.7.1
 - **Sprint status** generated at `_bmad-output/implementation-artifacts/sprint-status.yaml`
 
 ### AI CLIs (all four needed for full parallel reviews)
@@ -421,7 +421,7 @@ for cli in claude codex copilot opencode; do command -v "$cli" >/dev/null && ech
 
 ### BMAD version mismatch
 
-The story script validates against BMad 6.2.0 / TEA 1.7.0. A mismatch produces a warning but does not block execution. Update the `BMAD_BUILD_VERSION` and `BMAD_BUILD_TEA_VERSION` variables if you are running a different BMad version.
+The story script validates against BMad / TEA versions. A mismatch produces a warning but does not block execution. Update the `BMAD_BUILD_VERSION` and `BMAD_BUILD_TEA_VERSION` variables if you are running a different BMad version.
 
 ### Story pipeline fails mid-step
 
