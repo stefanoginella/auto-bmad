@@ -8,7 +8,7 @@ set -euo pipefail
 # implementation workflow, using multiple AI CLIs for diversity.
 # CLIs: claude, codex, copilot (GitHub Copilot CLI), opencode
 #
-# Usage: ./auto-bmad.sh [options]
+# Usage: ./auto-bmad-story.sh [options]
 #   --story STORY_ID     Override auto-detection
 #   --from-step ID       Resume pipeline from step ID (e.g., 2a1, 7c)
 #   --dry-run            Preview all steps without executing
@@ -1036,10 +1036,10 @@ run_step() {
         set_step_status "$step_id" "FAILED"
         printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "$step_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$model_info" "$(format_duration $duration)" "FAILED" "$step_name" >> "$PIPELINE_LOG"
         echo "# FAILED at step ${step_id} after $(format_duration $((end_time - PIPELINE_START_TIME))) wall time" >> "$PIPELINE_LOG"
-        echo "# Resume: ./auto-bmad.sh --from-step ${step_id} --story ${STORY_ID}" >> "$PIPELINE_LOG"
+        echo "# Resume: ./auto-bmad-story.sh --from-step ${step_id} --story ${STORY_ID}" >> "$PIPELINE_LOG"
         log_error "Step ${step_id} (${step_name}) FAILED after $(format_duration $duration)"
         log_error "Step log: ${CURRENT_STEP_LOG}"
-        log_error "Resume: ./auto-bmad.sh --from-step ${step_id} --story ${STORY_ID}"
+        log_error "Resume: ./auto-bmad-story.sh --from-step ${step_id} --story ${STORY_ID}"
         exit 1
     fi
 }
@@ -1710,7 +1710,7 @@ auto-bmad.sh — BMAD Story Pipeline Orchestrator
 Automates one story at a time through the full BMAD implementation
 workflow using multiple AI CLIs (claude, codex, copilot, opencode).
 
-Usage: ./auto-bmad.sh [options]
+Usage: ./auto-bmad-story.sh [options]
 
 Options:
   --story STORY_ID       Override auto-detection of next story
@@ -1752,14 +1752,14 @@ AI Profiles (edit at top of script):
   AI_MIMO      = OpenCode MiMo V2 Pro / max      — parallel reviews
 
 Examples:
-  ./auto-bmad.sh                                    # Run next story
-  ./auto-bmad.sh --dry-run                          # Preview the pipeline
-  ./auto-bmad.sh --story 2-3-some-story             # Run a specific story
-  ./auto-bmad.sh --from-step 3.1 --story 1-1-auth   # Resume from edge cases
-  ./auto-bmad.sh --fast-reviews                      # Quick run: 1 reviewer, no arbiter
-  ./auto-bmad.sh --skip-reviews --skip-tea           # Minimal: create → implement → close
-  ./auto-bmad.sh --skip-git                          # No branch/checkpoint/squash
-  ./auto-bmad.sh --safe-mode                         # AI tools prompt for permissions
+  ./auto-bmad-story.sh                                    # Run next story
+  ./auto-bmad-story.sh --dry-run                          # Preview the pipeline
+  ./auto-bmad-story.sh --story 2-3-some-story             # Run a specific story
+  ./auto-bmad-story.sh --from-step 3.1 --story 1-1-auth   # Resume from edge cases
+  ./auto-bmad-story.sh --fast-reviews                      # Quick run: 1 reviewer, no arbiter
+  ./auto-bmad-story.sh --skip-reviews --skip-tea           # Minimal: create → implement → close
+  ./auto-bmad-story.sh --skip-git                          # No branch/checkpoint/squash
+  ./auto-bmad-story.sh --safe-mode                         # AI tools prompt for permissions
 HELPEOF
 }
 
