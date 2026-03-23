@@ -122,13 +122,13 @@ step_config() {
     local suffix="${step: -1}"    # last char: a, b, c, d, or digit
     local phase="${step%%.*}"     # phase number
 
-    # Phase 1 override: 6 review sessions (3 AIs × 2 types), no MiniMax
-    # a,b → GPT (spec-level) | c,d → MiMo | e,f → Claude/Opus
+    # Phase 1 override: 3 validation reviews (one per AI)
+    # a → GPT (spec-level) | b → MiMo | c → Claude/Opus
     if [[ "$phase" == "1" ]]; then
         case "$suffix" in
-            a|b) echo "$AI_GPT_HIGH"; return ;;
-            c|d) echo "$AI_MIMO"; return ;;
-            e|f) echo "$AI_OPUS_HIGH"; return ;;
+            a) echo "$AI_GPT_HIGH"; return ;;
+            b) echo "$AI_MIMO"; return ;;
+            c) echo "$AI_OPUS_HIGH"; return ;;
         esac
     fi
 
@@ -157,8 +157,8 @@ step_config() {
     case "$step" in
         # Phase 1: spec triage + fix (critical path)
         1.3|1.4)                     echo "$AI_OPUS" ;;
-        # Phase 3: acceptance auditor, triage, dev fix (critical path)
-        3.2|3.3|3.4)                 echo "$AI_OPUS" ;;
+        # Phase 3: acceptance auditor, triage, dev fix, spec resolve (critical path)
+        3.2|3.3|3.4|3.5)            echo "$AI_OPUS" ;;
         # Critical path: epic start, story creation, TDD, implementation
         0.1|1.1|2.1|2.2)            echo "$AI_OPUS" ;;
         # Traceability & automation — structured, mechanical
@@ -207,7 +207,7 @@ SAFE_MODE=false
 PIPELINE_START_TIME=""
 
 # Step ordering for --from-step comparison (parallel sub-steps map to parent)
-STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 4.1 4.2 5.1 5.2 5.3 5.4 5.5 6.1 6.2"
+STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 6.1 6.2"
 
 # Sanitize step IDs for use as bash variable names (replace . and - with _)
 _sanitize_step_id() { local s="${1//./_}"; echo "${s//-/_}"; }
@@ -502,8 +502,6 @@ run_review_step() {
     case "$file_prefix" in
         validate)
             prompt="/bmad-create-story yolo - validate story ${STORY_ID}. Do not fix anything or edit any source files. Just report all issues, recommendations and optimizations and save them to ${f}" ;;
-        adversarial)
-            prompt="/bmad-review-adversarial-general yolo - review the story ${STORY_ID} specification. Do not fix anything or edit any source files. Just report all findings and save them to ${f}" ;;
         edge-cases)
             prompt="/bmad-review-edge-case-hunter yolo - review all code changes for story ${STORY_ID} (commits ${COMMIT_BASELINE}..HEAD). Do not fix anything or edit any source files. Just report all edge case findings and save them to ${f}" ;;
         code-adversarial)
@@ -1260,21 +1258,19 @@ step_1_3_spec_triage() {
 - ${f}"
     done
 
-    run_ai "1.3" "You are the Spec Triage Analyst. Read ALL of the following spec review findings files (skip any that don't exist):
+    run_ai "1.3" "You are the Spec Triage Analyst. Read ALL of the following spec validation review files (skip any that don't exist):
 ${review_files}
 
-Cross-reference all findings across all reviews. Your job:
+Cross-reference findings across all validation reviews. Your job:
 
 1. **Normalize**: convert each finding into a consistent format (id, source, title, detail, location)
-2. **Deduplicate**: group overlapping findings (same underlying issue flagged by different reviewers or review types) into single entries. Use the most specific finding as the base. Track all original sources.
+2. **Deduplicate**: merge overlapping findings (same issue flagged by multiple reviewers). Use the most specific finding as the base.
 3. **Classify** each unique finding into exactly one category:
    - **intent_gap** — spec/intent is incomplete; cannot resolve from existing information
-   - **bad_spec** — upstream spec (epic, architecture, PRD) is wrong or ambiguous; should be amended upstream
+   - **bad_spec** — upstream spec (epic, architecture, PRD) is wrong or ambiguous; should be amended
    - **patch** — story issue fixable without human input (contradictions, wrong values, missing details inferable from architecture/epic)
    - **defer** — pre-existing issue not caused by this story
    - **reject** — noise, false positive, stylistic preference, or scope expansion disguised as quality improvement
-
-Evaluate on argument quality — not reviewer count. A single reviewer demonstrating a concrete problem outweighs four reviewers raising vague concerns. Record how many reviewers flagged each finding as useful context, not decision criteria.
 
 IMPORTANT: Be conservative with 'patch'. If a finding adds NEW requirements, tasks, or acceptance criteria not present in the epic or architecture, classify it as 'intent_gap' or 'reject' — not 'patch'. Only classify as 'patch' when the fix corrects something that is clearly wrong or inconsistent within the existing scope.
 
@@ -1286,41 +1282,45 @@ Save your triage report to ${triage_report} with this structure:
 
 2. **Decision summary table** (markdown) — one row per finding:
 
-| # | Finding | Category | Flagged By | Confidence | Rationale |
-|---|---------|----------|------------|------------|-----------|
+| # | Finding | Category | Reviewers | Confidence | Rationale |
+|---|---------|----------|-----------|------------|-----------|
 
-3. **Detailed rationale** — for each finding in the table, a short paragraph with:
-   - The reviewers' arguments (agreements and disagreements)
+3. **Detailed rationale** — for each finding, a short paragraph with:
+   - The reviewers' arguments
    - Your reasoning for the classification
-   - For 'patch' items: what specifically needs to be fixed in the story
+   - For 'patch' items: what specifically needs to be fixed
+   - For 'bad_spec' items: what is wrong or ambiguous in the upstream spec
+   - For 'intent_gap' items: what information is missing and where it should come from
 
-4. **Reviewer signal assessment** — for each review session that produced a file:
-
-| Reviewer | Type | Findings | Survived | Unique | Dupes | Signal | Notes |
-|----------|------|----------|----------|--------|-------|--------|-------|
-
-Where: Survived = not rejected, Unique = only this reviewer caught it, Dupes = also flagged by others, Signal = high/medium/low
-
-5. **Overlap matrix** — which reviewers agreed on which findings:
-
-| Finding | GPT-Val | GPT-Adv | MiMo-Val | MiMo-Adv | Claude-Val | Claude-Adv |
-|---------|---------|---------|----------|----------|------------|------------|
-
-6. **Classification counts**: total findings, per-category counts, reject count"
+4. **Classification counts**: total findings, per-category counts, reject count"
 }
 
-step_1_4_fix_patch() {
+step_1_4_resolve_spec_findings() {
     local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
     run_ai "1.4" "/bmad-analyst yolo - Read the spec triage report at ${triage_report}.
 
-Fix ALL items classified as 'patch' in the decision summary table. For each patch item:
-1. Read the detailed rationale to understand what needs to change in the story
+Resolve ALL items classified as 'patch', 'bad_spec', or 'intent_gap' in the decision summary table. For each finding, follow the appropriate strategy:
+
+**patch** — Fix directly in the story file:
+1. Read the detailed rationale to understand what needs to change
 2. Fix the issue in the story file
 3. Verify the fix is consistent with the rest of the story
 
-Skip items classified as 'intent_gap', 'bad_spec', 'defer', or 'reject' — those are intentionally deferred or dismissed.
+**bad_spec** — The upstream spec (epic, architecture, PRD) is wrong or ambiguous:
+1. Read the relevant upstream artifacts (epic, architecture, PRD) to understand the full context
+2. Amend the story to resolve the ambiguity, picking the interpretation most consistent with upstream intent
+3. Add a Change Log entry with: [bad_spec] tag, finding ID, what was ambiguous, which upstream artifact informed the decision, what was changed in the story, and the rationale
 
-After all fixes, briefly note what you changed for each patch item."
+**intent_gap** — The captured intent is incomplete:
+1. Search upstream artifacts (epic, architecture, PRD, project context) for information that fills the gap
+2. If fillable from existing artifacts: amend the story and add a Change Log entry with: [intent_gap] tag, finding ID, what was missing, which upstream artifact provided the answer, what was added to the story, and the reasoning
+3. If NOT fillable (the information simply does not exist in any upstream artifact): do NOT invent new requirements. Instead, append to the triage report a section '## Unresolvable Findings' listing each unfillable intent_gap with: finding ID, title, what is missing, and why it cannot be inferred. Then move on.
+
+**defer** — Skip (pre-existing, not this story's concern).
+
+CONSTRAINT: When resolving bad_spec or intent_gap, you may ONLY use information already present in upstream artifacts. Do NOT invent new requirements, tasks, or acceptance criteria.
+
+After all resolutions, briefly note what you changed for each item and its category."
 }
 
 # --- Phase 2: TDD + Implementation ---
@@ -1434,9 +1434,35 @@ Fix ALL items classified as 'patch' in the decision summary table. For each patc
 2. Implement the fix
 3. Verify the fix doesn't break existing tests
 
-Skip items classified as 'intent_gap', 'bad_spec', 'defer', or 'reject' — those are intentionally deferred or dismissed.
+Skip items classified as 'intent_gap', 'bad_spec', 'defer', or 'reject' — those require spec-level resolution, not code fixes.
 
 After all fixes, briefly note what you changed for each patch item."
+}
+
+step_3_5_resolve_code_spec_findings() {
+    local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
+    run_ai "3.5" "/bmad-analyst yolo - Read the code triage report at ${triage_report}.
+
+Resolve ALL items classified as 'bad_spec' or 'intent_gap' in the decision summary table. These are spec-level issues surfaced during code review — the dev has already fixed 'patch' items in step 3.4 and code is already implemented.
+
+IMPORTANT: Since implementation is already complete, every story amendment must be thoroughly documented so reviewers can trace what changed, why, and whether the existing code still aligns.
+
+**bad_spec** — The spec led to incorrect or ambiguous implementation:
+1. Read the relevant upstream artifacts (epic, architecture, PRD) to understand the full context
+2. Amend the story file to clarify the spec, picking the interpretation most consistent with upstream intent
+3. Add a Change Log entry with: [bad_spec:post-impl] tag, finding ID, what was ambiguous in the original spec, which upstream artifact informed the decision, the exact story sections modified (quote old → new), and whether the current implementation (including any step 3.4 fixes) is consistent with the resolution — flag any inconsistency explicitly
+4. If the implementation diverges from the amended spec, note this clearly as a follow-up action item in the Change Log — do NOT modify code
+
+**intent_gap** — Code review found the captured intent is incomplete:
+1. Search upstream artifacts (epic, architecture, PRD, project context) for information that fills the gap
+2. If fillable from existing artifacts: amend the story and add a Change Log entry with: [intent_gap:post-impl] tag, finding ID, what was missing, which upstream artifact provided the answer, the exact story sections modified (quote old → new), and whether the current implementation covers this gap — flag if it does not
+3. If NOT fillable: do NOT invent new requirements. Instead, append to the triage report a section '## Unresolvable Findings' listing each unfillable intent_gap with: finding ID, title, what is missing, and why it cannot be inferred. Then move on.
+
+Skip 'patch' (already fixed by dev), 'defer', and 'reject' items.
+
+CONSTRAINT: You may ONLY use information already present in upstream artifacts. Do NOT invent new requirements, tasks, or acceptance criteria. Do NOT modify any code — only amend the story file and document changes.
+
+After all resolutions, briefly note what you changed for each item and its category."
 }
 
 # --- Phase 4: Traceability & Automation ---
@@ -1676,19 +1702,16 @@ run_pipeline() {
 
     run_step "1.1" "Create Story" step_1_1_create_story
 
-    # Step 1.2: Spec Reviews (3 AIs × 2 types in parallel)
+    # Step 1.2: Spec Validation Reviews (3 AIs in parallel)
     run_parallel_reviews \
         "1.2a|Validate Story (GPT)|validate|gpt" \
-        "1.2b|Adversarial Review (GPT)|adversarial|gpt" \
-        "1.2c|Validate Story (MiMo)|validate|mimo" \
-        "1.2d|Adversarial Review (MiMo)|adversarial|mimo" \
-        "1.2e|Validate Story (Claude)|validate|claude" \
-        "1.2f|Adversarial Review (Claude)|adversarial|claude"
+        "1.2b|Validate Story (MiMo)|validate|mimo" \
+        "1.2c|Validate Story (Claude)|validate|claude"
 
     # Steps 1.3-1.4: Triage → Fix (skipped with --skip-reviews or --fast-reviews)
     if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
         run_step "1.3" "Spec Triage" step_1_3_spec_triage
-        run_step "1.4" "Fix Patch Items (analyst)" step_1_4_fix_patch
+        run_step "1.4" "Resolve Spec Findings (analyst)" step_1_4_resolve_spec_findings
     else
         log_skip "Steps 1.3–1.4 — $([[ "$SKIP_REVIEWS" == "true" ]] && echo "--skip-reviews" || echo "--fast-reviews")"
     fi
@@ -1719,13 +1742,14 @@ run_pipeline() {
         "3.1e|Edge Cases (Claude)|edge-cases|claude" \
         "3.1f|Adversarial (Claude)|code-adversarial|claude"
 
-    # Steps 3.2-3.4: acceptance audit → triage → fix (skipped with --skip-reviews)
+    # Steps 3.2-3.5: acceptance audit → triage → dev fix → resolve spec findings
     if [[ "$SKIP_REVIEWS" == "false" ]]; then
         run_step "3.2" "Acceptance Auditor" step_3_2_acceptance_auditor
         run_step "3.3" "Triage" step_3_3_triage
         run_step "3.4" "Fix Patch Items (dev)" step_3_4_dev_fix
+        run_step "3.5" "Resolve Spec Findings (analyst)" step_3_5_resolve_code_spec_findings
     else
-        log_skip "Steps 3.2–3.4 — --skip-reviews"
+        log_skip "Steps 3.2–3.5 — --skip-reviews"
     fi
 
     git_checkpoint "phase 3 — code review fixes"
@@ -1832,6 +1856,29 @@ print_summary() {
         echo -e "  ${GREEN}✓${NC} WIP commit: ${BOLD}${final_sha}${NC}"
         echo -e "  ${DIM}Pipeline report: ${PIPELINE_REPORT}${NC}"
 
+        # Surface unresolved spec findings (intent_gap/bad_spec that couldn't be auto-resolved)
+        local spec_triage="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
+        local code_triage="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
+        local unresolved_count=0
+        local triage_file
+        for triage_file in "$spec_triage" "$code_triage"; do
+            if [[ -f "$triage_file" ]]; then
+                local n
+                n=$(grep -c '## Unresolvable Findings' "$triage_file" 2>/dev/null || true)
+                if [[ "$n" -gt 0 ]]; then
+                    # Count individual findings under the Unresolvable section
+                    local items
+                    items=$(sed -n '/## Unresolvable Findings/,/^## /p' "$triage_file" 2>/dev/null | grep -c '^\*\*\|^- \*\*\|^[0-9]' || true)
+                    unresolved_count=$((unresolved_count + items))
+                fi
+            fi
+        done
+        if [[ "$unresolved_count" -gt 0 ]]; then
+            echo ""
+            echo -e "  ${YELLOW}⚠  ${unresolved_count} unresolvable finding(s) require manual review${NC}"
+            echo -e "  ${DIM}Check triage reports for details: ${STORY_ARTIFACTS}/${NC}"
+        fi
+
         # Print copy-paste manual finalization commands
         local commit_msg
         commit_msg="$(extract_story_commit_msg)"
@@ -1886,13 +1933,13 @@ Options:
 
 Step Numbering:
   Phase N → steps N.1, N.2, ...
-  Parallel sub-steps: N.Ma–N.Mf (review models, up to 6 per group)
+  Parallel sub-steps: N.Ma–N.Mc (spec) or N.Ma–N.Mf (code) review models
   --from-step uses parent step ID (e.g., 3.1 reruns entire parallel group)
 
   Phase 0: Epic Start     (0.1 TEA)
-  Phase 1: Preparation    (1.1 create, 1.2a-f spec reviews, 1.3 triage, 1.4 fix)
+  Phase 1: Preparation    (1.1 create, 1.2a-c validation reviews, 1.3 triage, 1.4 resolve)
   Phase 2: Implementation (2.1 TDD, 2.2 impl)
-  Phase 3: Code Review    (3.1a-f parallel reviews, 3.2 acceptance audit, 3.3 triage, 3.4 fix)
+  Phase 3: Code Review    (3.1a-f parallel reviews, 3.2 acceptance audit, 3.3 triage, 3.4 fix, 3.5 resolve)
   Phase 4: Traceability   (4.1 trace, 4.2 automate)
   Phase 5: Epic End       (5.1-5.3 parallel, 5.4 retro, 5.5 context)
   Phase 6: Finalization   (6.1 document, 6.2 close)

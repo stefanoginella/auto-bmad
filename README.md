@@ -10,7 +10,7 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 
 - **3 AI providers** (Claude, GPT, MiMo) running review steps in parallel
 - **14+ pipeline steps** across 7 phases per story — from story creation to documentation
-- **6-way parallel reviews** (spec + code) with structured triage and automated fix
+- **3-way spec validation + 6-way code reviews** with structured triage and automated resolution
 - **Full epic orchestration** with automatic PR, CI gating, and squash-merge between stories
 
 > **Warning:** By default, these scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc), or use `--safe-mode` to let each AI tool prompt for permissions.
@@ -67,15 +67,16 @@ auto-bmad-epic.sh
   ├── Story 1 ──→ auto-bmad-story.sh
   │     ├─ Phase 0: Epic start (TEA test design)
   │     ├─ Phase 1: Story prep
-  │     │     ├── 6 parallel spec reviews (3 AIs × validate + adversarial)
+  │     │     ├── 3 parallel spec validations (GPT, MiMo, Claude)
   │     │     ├── Spec Triage (Opus) — normalize, dedup, classify
-  │     │     └── Fix patch items (Opus/analyst)
+  │     │     └── Resolve findings (Opus/analyst) — patch + bad_spec + intent_gap
   │     ├─ Phase 2: TDD + implementation
   │     ├─ Phase 3: Code review
   │     │     ├── 6 parallel code reviews (3 AIs × edge-cases + adversarial)
   │     │     ├── Acceptance Auditor (Opus)
   │     │     ├── Triage (Opus) — normalize, dedup, classify
-  │     │     └── Dev fix (Opus) — patch items only
+  │     │     ├── Dev fix (Opus) — patch items only
+  │     │     └── Resolve spec findings (Opus/analyst) — bad_spec + intent_gap
   │     ├─ Phase 4: Traceability
   │     ├─ Phase 5: Epic end (retro, NFR, context)
   │     └─ Phase 6: Finalization (docs + close)
@@ -89,24 +90,24 @@ auto-bmad-epic.sh
 
 ### Multi-AI Review Pattern
 
-Both spec reviews (Phase 1) and code reviews (Phase 3) use the same structured triage pattern:
+Both spec reviews (Phase 1) and code reviews (Phase 3) use structured triage:
 
-1. **6 parallel reviews** — 3 AIs (GPT, MiMo, Claude) each run two review types in parallel
-2. **Triage** (Opus) — normalizes and deduplicates all findings across all 6 reviews, then classifies each into:
+1. **Parallel reviews** — Phase 1: 3 validation reviews (GPT, MiMo, Claude). Phase 3: 6 code reviews (3 AIs × edge-cases + adversarial)
+2. **Triage** (Opus) — normalizes, deduplicates, and classifies findings into:
 
 | Category | Meaning | Action |
 |----------|---------|--------|
 | **patch** | Issue fixable without human input | Fixed automatically |
-| **intent_gap** | Spec/intent is incomplete | Flagged for human review |
-| **bad_spec** | Upstream spec is wrong or ambiguous | Flagged for spec amendment |
+| **intent_gap** | Spec/intent is incomplete | Auto-resolved from upstream artifacts, or flagged as unresolvable |
+| **bad_spec** | Upstream spec is wrong or ambiguous | Auto-resolved by amending story from upstream context |
 | **defer** | Pre-existing issue, not caused by this change | Noted for future attention |
 | **reject** | Noise, false positive, or handled elsewhere | Dropped |
 
-3. **Fix** — automatically fixes all `patch` items (analyst for spec, dev for code)
+3. **Resolve** / **Fix** — the analyst resolves `patch`, `bad_spec`, and `intent_gap` findings automatically using upstream artifacts (epic, architecture, PRD). Any `intent_gap` that cannot be filled from existing artifacts is marked **unresolvable** and surfaced in the pipeline summary. In Phase 3, the dev fixes `patch` items (code bugs) first, then the analyst resolves `bad_spec` and `intent_gap` (spec-level issues surfaced by code review).
 
 Phase 3 adds an **Acceptance Auditor** (Opus) before triage that verifies every acceptance criterion against the implementation: PASS / PARTIAL / FAIL / UNTESTABLE.
 
-Triage evaluates on **argument quality**, not reviewer count. A single reviewer demonstrating a concrete bug outweighs four reviewers raising vague concerns. The spec triage is additionally conservative — findings that add NEW requirements not present in the epic or architecture are classified as `intent_gap` or `reject`, not `patch`, preventing scope creep. The triage report includes a reviewer signal assessment and overlap matrix for tuning the reviewer lineup over time.
+Triage evaluates on **argument quality**, not reviewer count. A single reviewer demonstrating a concrete bug outweighs four reviewers raising vague concerns. The spec triage is additionally conservative — findings that add NEW requirements not present in the epic or architecture are classified as `intent_gap` or `reject`, not `patch`, preventing scope creep.
 
 ## Prerequisites
 
