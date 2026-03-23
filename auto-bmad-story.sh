@@ -142,17 +142,6 @@ step_config() {
         esac
     fi
 
-    # Parallel sub-steps: suffix is a letter (other phases)
-    case "$suffix" in
-        a) # GPT — effort depends on phase (spec vs code)
-            if [[ "$phase" == "1" ]]; then echo "$AI_GPT_HIGH"
-            else echo "$AI_GPT"; fi; return ;;
-        # b) copilot — removed: low quality reviews
-        c) echo "$AI_MIMO"; return ;;
-        d) echo "$AI_MIMO"; return ;;
-        e) echo "$AI_OPUS_HIGH"; return ;;
-    esac
-
     # Non-parallel steps
     case "$step" in
         # Phase 1: spec triage + fix (critical path)
