@@ -14,6 +14,7 @@ set -euo pipefail
 #   --dry-run            Preview the full epic plan without executing
 #   --no-merge           Skip auto-PR/merge between stories (manual git)
 #   --skip-epic-phases   Pass-through: skip phases 0 and 6 at epic boundaries
+#   --skip-cache         Pass-through: bypass story-script pre-flight cache
 #   --skip-tea           Pass-through: skip TEA phases in each story
 #   --skip-reviews       Pass-through: skip all review + arbiter phases
 #   --fast-reviews       Pass-through: run only GPT reviewer, skip arbiter
@@ -64,6 +65,7 @@ EPIC_LOG=""
 # --- Configuration ---
 PR_SAFETY_TIMEOUT=7200  # 2 hours — backstop for stuck runners, not normal control flow
 PR_POLL_INTERVAL=30     # seconds between CI state checks
+PR_EMPTY_CHECKS_GRACE_POLLS=10  # allow time for checks to appear before assuming none exist
 
 # --- Pipeline State ---
 EPIC_ID=""
@@ -434,6 +436,7 @@ wait_for_merge() {
     local auto_merge="${3:-true}"
     local elapsed=0
     local last_status_line=""
+    local empty_checks_polls=0
 
     echo -e "  ${DIM}Waiting for CI checks...${NC}"
 
@@ -467,6 +470,34 @@ wait_for_merge() {
 
         # --- PR still open — inspect CI checks ---
         local total=0 passed=0 failed=0 pending=0 warnings=0
+        local checks_output=""
+        if ! checks_output=$(gh pr checks "$branch" --json state -q '.[].state' 2>/dev/null); then
+            [[ -n "$last_status_line" ]] && echo ""
+            log_warn "Could not read PR checks yet (elapsed: $(format_duration $elapsed))"
+            continue
+        fi
+
+        if [[ -z "$checks_output" ]]; then
+            empty_checks_polls=$((empty_checks_polls + 1))
+
+            if [[ "$auto_merge" == "false" && $empty_checks_polls -ge $PR_EMPTY_CHECKS_GRACE_POLLS ]]; then
+                [[ -n "$last_status_line" ]] && echo ""
+                log_warn "No CI checks detected after $(format_duration $((empty_checks_polls * PR_POLL_INTERVAL))) — merging directly"
+                gh pr merge --squash "$branch" 2>&1 || {
+                    log_error "Direct merge failed"
+                    [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
+                    return 1
+                }
+                continue
+            fi
+
+            last_status_line="  ${DIM}  CI: waiting for checks to appear — $(format_duration $elapsed) elapsed${NC}"
+            printf "\r%-80s" ""  # clear previous line
+            printf "\r%b" "$last_status_line"
+            continue
+        fi
+
+        empty_checks_polls=0
         local cs
         while IFS= read -r cs; do
             [[ -z "$cs" ]] && continue
@@ -477,21 +508,10 @@ wait_for_merge() {
                 NEUTRAL|SKIPPED|STALE|CANCELLED)              (( warnings++ )) ;;
                 *)                                            (( pending++ )) ;;
             esac
-        done < <(gh pr checks "$branch" --json state -q '.[].state' 2>/dev/null)
+        done <<< "$checks_output"
 
         # --- Decision logic ---
-        if (( total == 0 )); then
-            # No CI checks — merge directly
-            [[ -n "$last_status_line" ]] && echo ""
-            log_warn "No CI checks found — merging directly"
-            gh pr merge --squash "$branch" 2>&1 || {
-                log_error "Direct merge failed"
-                [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
-                return 1
-            }
-            continue  # next iteration will pick up MERGED state
-
-        elif (( failed > 0 && pending == 0 )); then
+        if (( failed > 0 && pending == 0 )); then
             # All checks resolved, at least one failed
             [[ -n "$last_status_line" ]] && echo ""
             echo ""
@@ -846,6 +866,7 @@ Options:
 
 Story pass-through flags (forwarded to auto-bmad-story.sh):
   --skip-epic-phases   Skip phases 0 (epic start) and 6 (epic end)
+  --skip-cache         Bypass story-script pre-flight cache
   --skip-tea           Skip TEA phases even if installed
   --skip-reviews       Skip all parallel review + arbiter phases
   --fast-reviews       Run only GPT reviewer per phase, skip arbiter
@@ -882,7 +903,7 @@ parse_args() {
                 shift 2 ;;
             --dry-run)     DRY_RUN=true; shift ;;
             --no-merge)    NO_MERGE=true; shift ;;
-            --skip-epic-phases|--skip-tea|--skip-reviews|--fast-reviews|--skip-git|--no-traces|--safe-mode)
+            --skip-epic-phases|--skip-cache|--skip-tea|--skip-reviews|--fast-reviews|--skip-git|--no-traces|--safe-mode)
                            STORY_EXTRA_FLAGS="${STORY_EXTRA_FLAGS} $1"; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)

@@ -12,6 +12,7 @@ set -euo pipefail
 #   --story STORY_ID     Override auto-detection
 #   --from-step ID       Resume pipeline from step ID (e.g., 2a1, 7c)
 #   --dry-run            Preview all steps without executing
+#   --skip-cache         Bypass pre-flight cache and force full checks
 #   --skip-epic-phases   Skip phases 0 and 6 even at epic boundaries
 #   --skip-tea           Skip TEA phases even if TEA is installed
 #   --skip-reviews       Skip all parallel review and arbiter phases
@@ -155,6 +156,7 @@ CURRENT_STEP_LOG=""
 COMMIT_BASELINE=""   # SHA before pipeline — used for final squash
 DRY_RUN=false
 FROM_STEP=""
+SKIP_CACHE=false
 SKIP_EPIC_PHASES=false
 SKIP_TEA=false
 SKIP_REVIEWS=false
@@ -948,19 +950,32 @@ check_model_availability() {
 }
 
 preflight_checks() {
+    local cache_mode="full"
+    if [[ "$SKIP_CACHE" == "true" ]]; then
+        cache_mode="bypass"
+    elif _preflight_cache_valid; then
+        cache_mode="cached"
+    fi
+
     echo ""
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
-    if _preflight_cache_valid; then
+    case "$cache_mode" in
+        cached)
         echo -e "${BOLD}${CYAN}  Pre-flight Checks ${DIM}(cached — less than 24h old)${NC}"
-        echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
-        return 0
-    fi
-    echo -e "${BOLD}${CYAN}  Pre-flight Checks${NC}"
+            ;;
+        bypass)
+            echo -e "${BOLD}${CYAN}  Pre-flight Checks ${DIM}(cache bypassed --skip-cache)${NC}"
+            ;;
+        *)
+            echo -e "${BOLD}${CYAN}  Pre-flight Checks${NC}"
+            ;;
+    esac
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
 
-    local errors=0
-
     check_bmad_version
+    [[ "$cache_mode" == "cached" ]] && return 0
+
+    local errors=0
 
     if [[ -f "$SPRINT_STATUS" ]]; then
         log_ok "Sprint status file exists"
@@ -1758,6 +1773,7 @@ Options:
   --from-step STEP_ID    Resume pipeline from a specific step
                          Valid IDs: ${STEP_ORDER}
   --dry-run              Preview all steps without executing
+  --skip-cache           Bypass pre-flight cache and force full checks
   --skip-epic-phases     Skip phases 0 (epic start) and 6 (epic end)
   --skip-tea             Skip TEA phases even if installed (0, 2.1, 5.x, 6.1-6.3)
   --skip-reviews         Skip all parallel review + arbiter phases (1.2-1.5, 3.x, 4.x)
@@ -1795,6 +1811,7 @@ AI Profiles (edit at top of script):
 Examples:
   ./auto-bmad-story.sh                                    # Run next story
   ./auto-bmad-story.sh --dry-run                          # Preview the pipeline
+  ./auto-bmad-story.sh --skip-cache                       # Force full pre-flight checks
   ./auto-bmad-story.sh --story 2-3-some-story             # Run a specific story
   ./auto-bmad-story.sh --from-step 3.1 --story 1-1-auth   # Resume from edge cases
   ./auto-bmad-story.sh --fast-reviews                      # Quick run: 1 reviewer, no arbiter
@@ -1809,6 +1826,7 @@ parse_args() {
         case "$1" in
             --dry-run)        DRY_RUN=true; shift ;;
             --from-step)      FROM_STEP="$2"; shift 2 ;;
+            --skip-cache)     SKIP_CACHE=true; shift ;;
             --story)
                 STORY_ID="$2"
                 if [[ ! "$STORY_ID" =~ ^[0-9]+-[0-9]+ ]]; then
@@ -1884,6 +1902,7 @@ main() {
     echo -e "  Epic start: $(is_epic_start && echo -e "${GREEN}Yes (first story)${NC}" || echo "No")"
     echo -e "  Epic end:   $(is_epic_end && echo -e "${GREEN}Yes (last story)${NC}" || echo "No")"
     [[ "$DRY_RUN" == "true" ]]      && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
+    [[ "$SKIP_CACHE" == "true" ]]   && echo -e "  Cache:      ${YELLOW}Bypassed (--skip-cache)${NC}"
     [[ "$SKIP_REVIEWS" == "true" ]]  && echo -e "  Reviews:    ${YELLOW}Skipped${NC}"
     [[ "$FAST_REVIEWS" == "true" ]]  && echo -e "  Reviews:    ${YELLOW}Fast (GPT only, no arbiter)${NC}"
     [[ "$SKIP_TEA" == "true" ]]      && echo -e "  TEA:        ${YELLOW}Skipped${NC}"
