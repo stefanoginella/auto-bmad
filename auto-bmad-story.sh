@@ -88,29 +88,38 @@ AI_MIMO="opencode|opencode/mimo-v2-pro-free|max"     # MiMo V2 Pro via OpenCode 
 # ============================================================
 
 step_config() {
-    case "$1" in
-        # Parallel code reviews (a=GPT, b=Gemini, c=MiniMax, d=MiMo)
-        6a|7a)                       echo "$AI_GPT" ;;
-        # Parallel spec reviews — pre-implementation, 4-way redundancy
-        2a|3a)                       echo "$AI_GPT_HIGH" ;;
-        2b|3b|6b|7b)                 echo "$AI_GEMINI" ;;
-        2c|3c|6c|7c)                 echo "$AI_MINIMAX" ;;
-        2d|3d|6d|7d)                 echo "$AI_MIMO" ;;
-        # Critical-path arbiters (code-touching)
-        6e|8)                        echo "$AI_OPUS" ;;
+    local step="$1"
+    local suffix="${step: -1}"    # last char: a, b, c, d, or digit
+    local phase="${step%%.*}"     # phase number
+
+    # Parallel sub-steps: suffix is a letter
+    case "$suffix" in
+        a) # GPT — effort depends on phase (spec vs code)
+            if [[ "$phase" == "1" ]]; then echo "$AI_GPT_HIGH"
+            else echo "$AI_GPT"; fi; return ;;
+        b) echo "$AI_GEMINI"; return ;;
+        c) echo "$AI_MINIMAX"; return ;;
+        d) echo "$AI_MIMO"; return ;;
+    esac
+
+    # Non-parallel steps
+    case "$step" in
         # Pre-implementation arbiters (spec-level, downstream gates catch misses)
-        2e|3e)                       echo "$AI_OPUS_HIGH" ;;
-        # Epic end parallel
-        11a)                         echo "$AI_GPT" ;;
-        11c)                         echo "$AI_GEMINI" ;;
-        # Finalization — bookkeeping
-        14b)                         echo "$AI_SONNET" ;;
+        1.3|1.5)                     echo "$AI_OPUS_HIGH" ;;
+        # Critical-path arbiters (code-touching)
+        3.2|4.2)                     echo "$AI_OPUS" ;;
+        # Critical path: epic start, story creation, TDD, implementation
+        0.1|1.1|2.1|2.2)            echo "$AI_OPUS" ;;
         # Traceability & automation — structured, mechanical
-        9|10)                        echo "$AI_SONNET" ;;
+        5.1|5.2)                     echo "$AI_SONNET" ;;
+        # Epic end parallel (individual assignments, not review sub-steps)
+        6.1)                         echo "$AI_GPT" ;;
+        6.2)                         echo "$AI_OPUS" ;;
+        6.3)                         echo "$AI_GEMINI" ;;
         # Reflective / documentation — structured, non-critical
-        12|13|14a)                   echo "$AI_OPUS_HIGH" ;;
-        # Everything else: Opus max (critical path)
-        0|1|4|5|11b)                echo "$AI_OPUS" ;;
+        6.4|6.5|7.1)                 echo "$AI_OPUS_HIGH" ;;
+        # Finalization — bookkeeping
+        7.2)                         echo "$AI_SONNET" ;;
         *)                           echo "||" ;;
     esac
 }
@@ -128,10 +137,12 @@ STORY_ID=""
 STORY_SHORT_ID=""   # numeric-only prefix (e.g. "1-1") — used for artifacts
 EPIC_ID=""
 STORY_FILE_PATH=""
-STORY_ARTIFACTS=""
-PIPELINE_LOG=""
+STORY_ARTIFACTS=""   # permanent artifacts (arbiter reports, pipeline report)
+TMP_DIR=""           # temp files (individual reviews, step logs) — cleaned on success
+PIPELINE_LOG=""      # raw step log in TMP_DIR (temporary)
+PIPELINE_REPORT=""   # structured markdown in STORY_ARTIFACTS (permanent)
 CURRENT_STEP_LOG=""
-COMMIT_BASELINE=""  # SHA before pipeline — used for final squash
+COMMIT_BASELINE=""   # SHA before pipeline — used for final squash
 DRY_RUN=false
 FROM_STEP=""
 SKIP_EPIC_PHASES=false
@@ -140,18 +151,21 @@ JSON_LOG=false
 NO_TRACES=false
 PIPELINE_START_TIME=""
 
-# Step ordering for --from-step comparison
-STEP_ORDER="0 1 2a 2b 2c 2d 2e 3a 3b 3c 3d 3e 4 5 6a 6b 6c 6d 6e 7a 7b 7c 7d 8 9 10 11a 11b 11c 12 13 14a 14b"
+# Step ordering for --from-step comparison (parallel sub-steps map to parent)
+STEP_ORDER="0.1 1.1 1.2 1.3 1.4 1.5 2.1 2.2 3.1 3.2 4.1 4.2 5.1 5.2 6.1 6.2 6.3 6.4 6.5 7.1 7.2"
+
+# Sanitize step IDs for use as bash variable names (replace . and - with _)
+_sanitize_step_id() { local s="${1//./_}"; echo "${s//-/_}"; }
 
 # In-memory step tracking via dynamic variables (bash 3.2 compat)
-set_step_status()   { printf -v "track_${1}_status"   '%s' "$2"; }
-get_step_status()   { local v="track_${1}_status";   echo "${!v:-skipped}"; }
-set_step_duration() { printf -v "track_${1}_duration" '%s' "$2"; }
-get_step_duration() { local v="track_${1}_duration"; echo "${!v:-0}"; }
-set_step_name()     { printf -v "track_${1}_name"     '%s' "$2"; }
-get_step_name()     { local v="track_${1}_name";     echo "${!v:-$1}"; }
-set_step_start()    { printf -v "track_${1}_start"    '%s' "$2"; }
-get_step_start()    { local v="track_${1}_start";    echo "${!v:-$2}"; }
+set_step_status()   { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_status"   '%s' "$2"; }
+get_step_status()   { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_status";   echo "${!v:-skipped}"; }
+set_step_duration() { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_duration" '%s' "$2"; }
+get_step_duration() { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_duration"; echo "${!v:-0}"; }
+set_step_name()     { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_name"     '%s' "$2"; }
+get_step_name()     { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_name";     echo "${!v:-$1}"; }
+set_step_start()    { local k; k="$(_sanitize_step_id "$1")"; printf -v "track_${k}_start"    '%s' "$2"; }
+get_step_start()    { local k; k="$(_sanitize_step_id "$1")"; local v="track_${k}_start";    echo "${!v:-$2}"; }
 
 # ============================================================
 # Color & Logging
@@ -314,9 +328,8 @@ git_checkpoint() {
     git -C "$PROJECT_ROOT" commit -m "wip(${STORY_SHORT_ID}): ${phase_label}" --no-verify --quiet
 }
 
-# Squash all checkpoint commits made since COMMIT_BASELINE into a single commit.
-# The final commit message is extracted from the story file (Auto-bmad Completion section)
-# or falls back to a descriptive conventional-commit message.
+# Squash all checkpoint commits made since COMMIT_BASELINE into a single WIP commit.
+# The real commit message is left for the epic script or manual finalization.
 git_squash_pipeline() {
     [[ "$DRY_RUN" == "true" ]] && return 0
 
@@ -328,27 +341,26 @@ git_squash_pipeline() {
         return 0
     fi
 
-    # Try to extract the commit message from the story file.
-    # The tech-writer writes a conventional-commit message inside a ``` block
-    # in the "Auto-bmad Completion" section.
-    local commit_msg=""
-    if [[ -n "$STORY_FILE_PATH" && -f "$STORY_FILE_PATH" ]]; then
-        commit_msg="$(sed -n '/## Auto-bmad Completion/,/^## /{ /^```/,/^```/{ /^```/d; p; }; }' "$STORY_FILE_PATH" 2>/dev/null | head -5)"
-    fi
-
-    # Fallback: derive a readable description from the story slug
-    if [[ -z "$commit_msg" ]]; then
-        # "1-1-monorepo-devcontainer-setup" → "monorepo devcontainer setup"
-        local slug="${STORY_ID#*-*-}"          # strip "1-1-" prefix
-        local description="${slug//-/ }"       # hyphens → spaces
-        commit_msg="feat(${STORY_SHORT_ID}): ${description}"
-    fi
-
     # --no-verify: the squashed commit aggregates already-validated checkpoint
     # commits. Pre-commit hooks will run when this branch is PR'd / merged.
     git -C "$PROJECT_ROOT" reset --soft "$COMMIT_BASELINE"
-    git -C "$PROJECT_ROOT" commit -m "$commit_msg" --no-verify --quiet
-    log_ok "Squashed pipeline commits into single commit"
+    git -C "$PROJECT_ROOT" commit -m "wip(${STORY_SHORT_ID}): pipeline complete — ready for review" --no-verify --quiet
+    log_ok "Squashed pipeline commits into WIP commit (finalize with epic script or manually)"
+}
+
+# Extract commit message from story file's Auto-bmad Completion section.
+# Used by print_summary for copy-paste commands and by epic script for final commit.
+extract_story_commit_msg() {
+    local msg=""
+    if [[ -n "$STORY_FILE_PATH" && -f "$STORY_FILE_PATH" ]]; then
+        msg="$(sed -n '/## Auto-bmad Completion/,/^## /{ /^```/,/^```/{ /^```/d; p; }; }' "$STORY_FILE_PATH" 2>/dev/null | head -5)"
+    fi
+    if [[ -z "$msg" ]]; then
+        local slug="${STORY_ID#*-*-}"
+        local description="${slug//-/ }"
+        msg="feat(${STORY_SHORT_ID}): ${description}"
+    fi
+    echo "$msg"
 }
 
 # ============================================================
@@ -422,10 +434,11 @@ run_ai() {
 # ============================================================
 
 # run_review_step <step_id> <file_prefix> <ai_suffix>
-# Dispatches the appropriate slash command based on file_prefix
+# Dispatches the appropriate slash command based on file_prefix.
+# Individual review files go to TMP_DIR (discarded after arbiter synthesizes).
 run_review_step() {
     local step_id="$1" file_prefix="$2" ai_suffix="$3"
-    local f="${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${step_id}-${file_prefix}-${ai_suffix}.md"
+    local f="${TMP_DIR}/${step_id}-${file_prefix}-${ai_suffix}.md"
     local prompt
     case "$file_prefix" in
         validate)
@@ -442,6 +455,7 @@ run_review_step() {
 
 # run_arbiter <step_id> <file_prefix> <fix_instruction> [consensus_rules] [agent_cmd]
 # agent_cmd: optional slash command prefix (e.g., "/bmad-dev yolo -")
+# Reads individual reviews from TMP_DIR, writes arbiter report to STORY_ARTIFACTS.
 run_arbiter() {
     local step_id="$1" file_prefix="$2" fix_instruction="$3"
     local consensus_rules="${4:-}"
@@ -454,27 +468,33 @@ run_arbiter() {
 - Single flag (1/4): only fix if it's clearly a real issue with a concrete impact, skip speculative or hypothetical concerns"
     fi
 
-    # Derive reviewer step base from arbiter step_id
-    local review_base
-    case "$step_id" in
-        *e) review_base="${step_id%e}" ;;
-        8)  review_base="7" ;;
-        *)  review_base="${step_id}" ;;
-    esac
+    # Derive reviewer parallel step from arbiter step: P.S → P.(S-1)
+    local phase="${step_id%%.*}"
+    local sub="${step_id##*.}"
+    local prev_sub=$((sub - 1))
+    local review_base="${phase}.${prev_sub}"
 
     local prompt_prefix=""
     [[ -n "$agent_cmd" ]] && prompt_prefix="${agent_cmd} "
 
-    local arbiter_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${step_id}-arbiter-${file_prefix}.md"
+    # Permanent arbiter report: {story-short-id}-{step}-{type}.md
+    local arbiter_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-${step_id}-${file_prefix}.md"
 
     run_ai "$step_id" "${prompt_prefix}Read these review findings files (skip any that don't exist):
-- ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${review_base}a-${file_prefix}-gpt.md
-- ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${review_base}b-${file_prefix}-gemini.md
-- ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${review_base}c-${file_prefix}-minimax.md
-- ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--${review_base}d-${file_prefix}-mimo.md
+- ${TMP_DIR}/${review_base}a-${file_prefix}-gpt.md
+- ${TMP_DIR}/${review_base}b-${file_prefix}-gemini.md
+- ${TMP_DIR}/${review_base}c-${file_prefix}-minimax.md
+- ${TMP_DIR}/${review_base}d-${file_prefix}-mimo.md
 
 You are the arbiter. Cross-reference all findings using these rules:
 ${consensus_rules}
+
+Note on reviewer reliability (use as context, not hard rules):
+GPT and MiMo historically have the highest accept rates and best signal-to-noise.
+MiniMax produces the most findings but many are out-of-scope or speculative.
+Gemini occasionally returns empty or minimal responses.
+Weight your judgment accordingly — a finding from a high-signal reviewer alone may warrant action,
+while a speculative finding from a single low-signal reviewer may not.
 
 ${fix_instruction}
 
@@ -494,7 +514,13 @@ Save your arbiter decision report to ${arbiter_report} with this structure:
    - Your reasoning for fixing or skipping
    - What was changed (if fixed)
 
-4. **Summary**: total findings reviewed, fixes applied, items skipped, and any patterns or observations worth noting for future runs"
+4. **Reviewer signal assessment** — for each reviewer that participated, note:
+   - Total findings submitted
+   - How many were accepted vs skipped
+   - Signal quality rating (high/medium/low)
+   - Any notable patterns (e.g., empty response, scope creep, high precision)
+
+5. **Summary**: total findings reviewed, fixes applied, items skipped, and any patterns or observations worth noting for future runs"
 
     # Extract JSON log from arbiter report if --json-log is enabled
     if [[ "$JSON_LOG" == "true" ]]; then
@@ -994,10 +1020,16 @@ should_run_step() {
         return 0
     fi
 
+    # Map parallel sub-steps (e.g. 1.2a) to parent step (1.2) for ordering
+    local effective_id="$step_id"
+    if [[ "$step_id" =~ ^[0-9]+\.[0-9]+[a-d]$ ]]; then
+        effective_id="${step_id%[a-d]}"
+    fi
+
     local from_pos=-1 step_pos=-1 pos=0
     for s in $STEP_ORDER; do
         [[ "$s" == "$FROM_STEP" ]] && from_pos=$pos
-        [[ "$s" == "$step_id" ]] && step_pos=$pos
+        [[ "$s" == "$effective_id" ]] && step_pos=$pos
         pos=$((pos + 1))
     done
 
@@ -1031,8 +1063,8 @@ run_step() {
 
     log_step "$step_id" "$step_name"
 
-    # Per-step raw output log (deleted on success, kept on failure)
-    CURRENT_STEP_LOG="${STORY_ARTIFACTS}/step-${step_id}.log"
+    # Per-step raw output log — lives in TMP_DIR, cleaned at pipeline end
+    CURRENT_STEP_LOG="${TMP_DIR}/step-${step_id}.log"
     : > "$CURRENT_STEP_LOG"
 
     parse_step_config "$step_id"
@@ -1050,7 +1082,6 @@ run_step() {
         set_step_duration "$step_id" "$duration"
         set_step_status "$step_id" "ok"
         printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "$step_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$model_info" "$(format_duration $duration)" "ok" "$step_name" >> "$PIPELINE_LOG"
-        rm -f "$CURRENT_STEP_LOG"
         log_ok "Completed in $(format_duration $duration)"
     else
         stop_activity_monitor
@@ -1097,11 +1128,11 @@ run_parallel_reviews() {
         # Record start time for duration tracking
         set_step_start "$sid" "$(date +%s)"
 
-        # Each parallel step gets its own raw output log.
+        # Each parallel step gets its own raw output log in TMP_DIR.
         # CURRENT_STEP_LOG is captured per-iteration before backgrounding so
         # each subshell inherits the correct path (avoids race with the loop
         # reassigning the variable for the next iteration).
-        local step_log="${STORY_ARTIFACTS}/step-${sid}.log"
+        local step_log="${TMP_DIR}/step-${sid}.log"
         : > "$step_log"
 
         # Suppress terminal output — log file still gets full output via tee.
@@ -1153,7 +1184,7 @@ run_parallel_reviews() {
                 local dur=$((now - t0))
                 durations[$i]="$dur"
                 set_step_duration "${sids[$i]}" "$dur"
-                local step_log="${STORY_ARTIFACTS}/step-${sids[$i]}.log"
+                local step_log="${TMP_DIR}/step-${sids[$i]}.log"
                 parse_step_config "${sids[$i]}"
                 local p_model="${cfg_cli}"
                 [[ -n "$cfg_model" ]] && p_model="${p_model}/${cfg_model}"
@@ -1161,7 +1192,6 @@ run_parallel_reviews() {
                     statuses[$i]="ok"
                     set_step_status "${sids[$i]}" "ok"
                     printf "  %-6s  %s  %-22s  %-10s  %-8s  %s\n" "${sids[$i]}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$p_model" "$(format_duration $dur)" "ok" "${snames[$i]}" >> "$PIPELINE_LOG"
-                    rm -f "$step_log"
                 else
                     statuses[$i]="FAILED"
                     set_step_status "${sids[$i]}" "FAILED"
@@ -1205,14 +1235,14 @@ run_parallel_reviews() {
 
 # --- Phase 0: Epic Start ---
 
-step_0_test_design() {
-    run_ai "0" "/bmad-testarch-test-design yolo - run in epic-level mode for epic ${EPIC_ID}"
+step_0_1_test_design() {
+    run_ai "0.1" "/bmad-testarch-test-design yolo - run in epic-level mode for epic ${EPIC_ID}"
 }
 
 # --- Phase 1: Story Preparation ---
 
-step_1_create_story() {
-    run_ai "1" "/bmad-create-story yolo - story ${STORY_ID}"
+step_1_1_create_story() {
+    run_ai "1.1" "/bmad-create-story yolo - story ${STORY_ID}"
     detect_story_file_path
     if [[ -n "$STORY_FILE_PATH" ]]; then
         log_ok "Story file: ${STORY_FILE_PATH}"
@@ -1223,55 +1253,62 @@ step_1_create_story() {
 
 # --- Phase 2: TDD + Implementation ---
 
-step_4_tdd_red() {
-    run_ai "4" "/bmad-testarch-atdd yolo - story ${STORY_ID} - Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not implement, create or modify any production code, API routes, UI components, database schemas, or application logic"
+step_2_1_tdd_red() {
+    run_ai "2.1" "/bmad-testarch-atdd yolo - story ${STORY_ID} - Your scope is strictly TDD red phase: generate failing acceptance tests ONLY. Do not implement, create or modify any production code, API routes, UI components, database schemas, or application logic"
 }
 
-step_5_implementation() {
-    run_ai "5" "/bmad-dev-story yolo - ${STORY_ID}"
+step_2_2_implementation() {
+    run_ai "2.2" "/bmad-dev-story yolo - ${STORY_ID}"
 }
 
 # --- Phase 5: Traceability & Automation ---
 
-step_9_trace() {
-    run_ai "9" "/bmad-testarch-trace yolo - story ${STORY_ID}"
+step_5_1_trace() {
+    run_ai "5.1" "/bmad-testarch-trace yolo - story ${STORY_ID}"
 }
 
-step_10_automate() {
-    run_ai "10" "/bmad-testarch-automate yolo - story ${STORY_ID}"
+step_5_2_automate() {
+    run_ai "5.2" "/bmad-testarch-automate yolo - story ${STORY_ID}"
 }
 
 # --- Phase 6: Epic End ---
 
-step_11a_epic_trace() {
-    run_ai "11a" "/bmad-testarch-trace yolo - run in epic-level mode for epic ${EPIC_ID}"
+step_6_1_epic_trace() {
+    run_ai "6.1" "/bmad-testarch-trace yolo - run in epic-level mode for epic ${EPIC_ID}"
 }
 
-step_11b_epic_nfr() {
-    run_ai "11b" "/bmad-testarch-nfr yolo - run in epic-level mode for epic ${EPIC_ID}"
+step_6_2_epic_nfr() {
+    run_ai "6.2" "/bmad-testarch-nfr yolo - run in epic-level mode for epic ${EPIC_ID}"
 }
 
-step_11c_epic_test_review() {
-    run_ai "11c" "/bmad-testarch-test-review yolo - run in epic-level mode for epic ${EPIC_ID}"
+step_6_3_epic_test_review() {
+    run_ai "6.3" "/bmad-testarch-test-review yolo - run in epic-level mode for epic ${EPIC_ID}"
 }
 
-step_12_retrospective() {
-    run_ai "12" "/bmad-retrospective yolo - epic ${EPIC_ID}"
+step_6_4_retrospective() {
+    run_ai "6.4" "/bmad-retrospective yolo - epic ${EPIC_ID}"
 }
 
-step_13_project_context() {
-    run_ai "13" "/bmad-generate-project-context yolo - if a project context file already exists, update it"
+step_6_5_project_context() {
+    run_ai "6.5" "/bmad-generate-project-context yolo - if a project context file already exists, update it"
 }
 
-# --- Pipeline Log Footer ---
+# --- Generate Pipeline Report (structured markdown) ---
 
-finalize_pipeline_log() {
+generate_pipeline_report() {
     local total_compute=0
     local steps_ok=0 steps_failed=0
 
-    for sid in $STEP_ORDER; do
+    # Collect all step IDs including parallel sub-steps by scanning the raw log
+    local all_step_ids=""
+    if [[ -f "$PIPELINE_LOG" ]]; then
+        all_step_ids=$(awk '/^  [0-9]/ { print $1 }' "$PIPELINE_LOG" 2>/dev/null)
+    fi
+
+    # Calculate totals from tracked steps (STEP_ORDER + any sub-steps that ran)
+    for sid in $STEP_ORDER $all_step_ids; do
         local status; status="$(get_step_status "$sid")"
-        [[ "$status" == "skipped" || "$status" == "dry-run" ]] && continue
+        [[ "$status" == "skipped" || "$status" == "dry-run" || "$status" == "" ]] && continue
 
         local duration; duration="$(get_step_duration "$sid")"
         if [[ "$duration" != "0" ]]; then
@@ -1286,33 +1323,86 @@ finalize_pipeline_log() {
     local savings=$((total_compute - wall_time))
     (( savings < 0 )) && savings=0
 
+    local final_sha=""
+    if [[ -n "$COMMIT_BASELINE" ]]; then
+        final_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)"
+    fi
+
+    local branch_name
+    branch_name="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'n/a')"
+
     {
-        echo "#"
-        echo "# ═══ Complete ═══"
-        echo "# Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        echo "# Wall time: $(format_duration $wall_time)"
-        echo "# Compute time: $(format_duration $total_compute) (parallelism savings: $(format_duration $savings))"
-        echo "# Steps: ${steps_ok} ok, ${steps_failed} failed"
-        if [[ -n "$COMMIT_BASELINE" ]]; then
-            local final_sha
-            final_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)"
-            echo "# Commit: ${final_sha}"
-            echo "#"
-            echo "# Git changes:"
-            git -C "$PROJECT_ROOT" diff --stat "$COMMIT_BASELINE" HEAD 2>/dev/null | sed 's/^/#   /' || echo "#   (no changes)"
+        echo "# Pipeline Report — ${STORY_ID}"
+        echo ""
+        echo "## Summary"
+        echo ""
+        echo "| Metric | Value |"
+        echo "|--------|-------|"
+        echo "| Story | ${STORY_ID} |"
+        echo "| Branch | ${branch_name} |"
+        echo "| Started | $(grep -m1 '^# Started:' "$PIPELINE_LOG" 2>/dev/null | sed 's/^# Started: //' || echo 'n/a') |"
+        echo "| Finished | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
+        echo "| Wall Time | $(format_duration $wall_time) |"
+        echo "| Compute Time | $(format_duration $total_compute) |"
+        echo "| Parallelism Savings | $(format_duration $savings) |"
+        echo "| Steps | ${steps_ok} ok, ${steps_failed} failed |"
+        [[ -n "$final_sha" ]] && echo "| Commit | ${final_sha} (WIP) |"
+        echo ""
+        echo "## Step Log"
+        echo ""
+        echo "| Step | Timestamp | Model | Duration | Status | Name |"
+        echo "|------|-----------|-------|----------|--------|------|"
+
+        # Parse the raw pipeline log entries into markdown table rows
+        if [[ -f "$PIPELINE_LOG" ]]; then
+            while IFS= read -r line; do
+                # Match step entry lines: "  STEP_ID  TIMESTAMP  MODEL  DURATION  STATUS  NAME"
+                if [[ "$line" =~ ^[[:space:]]+([0-9][^[:space:]]*)[[:space:]]+([0-9T:Z-]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+(ok|FAILED)[[:space:]]+(.+)$ ]]; then
+                    printf "| %s | %s | %s | %s | %s | %s |\n" \
+                        "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+                        "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
+                fi
+            done < "$PIPELINE_LOG"
         fi
-    } >> "$PIPELINE_LOG"
+
+        echo ""
+
+        # Git changes section
+        if [[ -n "$COMMIT_BASELINE" ]]; then
+            echo "## Git Changes"
+            echo ""
+            echo '```'
+            git -C "$PROJECT_ROOT" diff --stat "$COMMIT_BASELINE" HEAD 2>/dev/null || echo "(no changes)"
+            echo '```'
+            echo ""
+        fi
+
+        # Placeholder for reviewer assessment (populated by tech-writer step 7.1)
+        echo "## Reviewer Assessment"
+        echo ""
+        echo "<!-- Populated by the tech-writer step. Read each arbiter report and fill in: -->"
+        echo ""
+        echo "| Model | Phase | Findings | Accepted | Signal | Notes |"
+        echo "|-------|-------|----------|----------|--------|-------|"
+        echo ""
+        echo "### Aggregate Model Performance"
+        echo ""
+        echo "| Model | Total Findings | Accepted | Accept Rate | Avg Signal |"
+        echo "|-------|---------------|----------|-------------|------------|"
+        echo ""
+
+    } > "$PIPELINE_REPORT"
 }
 
 # --- Phase 7: Finalization ---
 
-step_14a_document() {
+step_7_1_document() {
     if [[ -z "$STORY_FILE_PATH" ]]; then
         detect_story_file_path
     fi
 
     local story_ref="${STORY_FILE_PATH:-the story file for ${STORY_ID}}"
-    run_ai "14a" "/bmad-tech-writer yolo - Finalize documentation for story ${STORY_ID}. The story file is at: ${story_ref}
+    run_ai "7.1" "/bmad-tech-writer yolo - Finalize documentation for story ${STORY_ID}. The story file is at: ${story_ref}
 
 Perform ALL of the following:
 
@@ -1324,36 +1414,54 @@ Perform ALL of the following:
    - Change Log must include entries for arbiter fixes from edge case and code review steps (if those steps ran)
    Fix anything that is missing or incomplete.
 
-2. Add an '## Auto-bmad Pipeline Artifacts' section after the Dev Agent Record. This is a reference index ONLY — do not duplicate content already in the Dev Agent Record, Change Log, or the artifacts themselves. List each artifact file with a one-line outcome (pass/fail/N findings). Skip any that don't exist:
-   - Validation reports: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--2{a,b,c,d}-validate-*.md
-   - Validation arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--2e-arbiter-validate.md
-   - Adversarial reports: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--3{a,b,c,d}-adversarial-*.md
-   - Adversarial arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--3e-arbiter-adversarial.md
-   - Edge case reports: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--6{a,b,c,d}-edge-cases-*.md
-   - Edge case arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--6e-arbiter-edge-cases.md
-   - Code reviews: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--7{a,b,c,d}-review-*.md
-   - Code review arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--8-arbiter-review.md
-   - Traceability: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--9-*.md
-   - Test automation: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}--10-*.md
+2. Add an '## Auto-bmad Pipeline Artifacts' section after the Dev Agent Record. This is a reference index ONLY — do not duplicate content already in the Dev Agent Record, Change Log, or the artifacts themselves. List each artifact with a one-line outcome (pass/fail/N findings). Skip any that don't exist:
+   - Pipeline report: ${STORY_ARTIFACTS}/pipeline-report.md
+   - Validation arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-validate.md
+   - Adversarial arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.5-adversarial.md
+   - Edge case arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-edge-cases.md
+   - Code review arbiter: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-4.2-review.md
 
-3. Read the pipeline log at ${PIPELINE_LOG} and embed its full contents into the story file as an '## Auto-bmad Pipeline Log' section inside a code block. Copy verbatim — do not summarize or reformat.
+3. Read the pipeline report at ${PIPELINE_REPORT} and populate the 'Reviewer Assessment' section:
+   - For each arbiter report, read the reviewer signal assessment section
+   - Fill in the per-phase table (Model | Phase | Findings | Accepted | Signal | Notes)
+   - Fill in the aggregate table (Model | Total Findings | Accepted | Accept Rate | Avg Signal)
+   - Remove the HTML comment placeholder
 
 4. Add an '## Auto-bmad Completion' section with ONLY information not already captured in the Dev Agent Record or Change Log:
-   - Open questions or concerns remaining after implementation
-   - Notable decisions taken
-   - Learnings from the pipeline run
-   - Anything requiring manual testing not covered by automated tests
-   - The commit message to use for all changes made in story ${STORY_ID} following Conventional Commits 1.0.0 specifications (<type>(<scope>): <subject> headline format with a <summary> in the body after a blank line) - https://www.conventionalcommits.org/en/v1.0.0/ Type should be one of: build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test.
+
+   ### Pipeline Summary
+   - Duration, models used, result (steps passed, files changed), link to pipeline-report.md
+
+   ### Arbiter Reviews
+   A summary table:
+   | Phase | Step | Critical | Applied | Skipped | Report |
+   With one row per arbiter report linking to the file.
+
+   ### Notable Decisions
+   Key decisions made during the pipeline (not already in Change Log).
+
+   ### Pipeline Learnings
+   Useful observations from the pipeline run.
+
+   ### Manual Testing Required
+   Checklist of items requiring manual verification (as checkboxes).
+
+   ### Open Questions
+   Anything unresolved.
+
+   ### Commit Message
+   The commit message for all changes in story ${STORY_ID} inside a code block, following Conventional Commits 1.0.0 (<type>(<scope>): <subject> headline with <summary> body). Type: build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test.
+
    Do NOT repeat completion notes, file lists, decision logs, or fix summaries — those are already in the Dev Agent Record and Change Log."
 }
 
-step_14b_close() {
+step_7_2_close() {
     if [[ -z "$STORY_FILE_PATH" ]]; then
         detect_story_file_path
     fi
 
     local story_ref="${STORY_FILE_PATH:-the story file for ${STORY_ID}}"
-    run_ai "14b" "/bmad-sm yolo - Close out story ${STORY_ID}. The story file is at: ${story_ref}
+    run_ai "7.2" "/bmad-sm yolo - Close out story ${STORY_ID}. The story file is at: ${story_ref}
 
 1. Set the story status to done in the story file if not already set.
 2. Update _bmad-output/implementation-artifacts/sprint-status.yaml to set the story status to done if not already set."
@@ -1375,7 +1483,7 @@ run_pipeline() {
             log_skip "Phase 0 — TEA not installed"
         else
             log_phase "0" "Epic Start: Pre-Implementation"
-            run_step "0" "TEA Test Design (epic-level)" step_0_test_design
+            run_step "0.1" "TEA Test Design (epic-level)" step_0_1_test_design
             git_checkpoint "phase 0 — epic start"
         fi
     else
@@ -1389,27 +1497,29 @@ run_pipeline() {
     # --- Phase 1: Story Preparation ---
     log_phase "1" "Story Preparation"
 
-    run_step "1" "Create Story" step_1_create_story
+    run_step "1.1" "Create Story" step_1_1_create_story
 
-    # Step 2: Validate Story (4 AIs in parallel + arbiter)
+    # Step 1.2: Validate Story (4 AIs in parallel)
     run_parallel_reviews \
-        "2a|Validate Story (GPT)|validate|gpt" \
-        "2b|Validate Story (Gemini)|validate|gemini" \
-        "2c|Validate Story (MiniMax)|validate|minimax" \
-        "2d|Validate Story (MiMo)|validate|mimo"
+        "1.2a|Validate Story (GPT)|validate|gpt" \
+        "1.2b|Validate Story (Gemini)|validate|gemini" \
+        "1.2c|Validate Story (MiniMax)|validate|minimax" \
+        "1.2d|Validate Story (MiMo)|validate|mimo"
 
-    run_step "2e" "Validate Story Arbiter (analyst)" run_arbiter "2e" "validate" \
+    # Step 1.3: Validate Story Arbiter
+    run_step "1.3" "Validate Story Arbiter (analyst)" run_arbiter "1.3" "validate" \
         "Fix all confirmed issues in the story file at ${story_file_ref}." \
         "" "/bmad-analyst yolo -"
 
-    # Step 3: Adversarial Review (4 AIs in parallel + arbiter)
+    # Step 1.4: Adversarial Review (4 AIs in parallel)
     run_parallel_reviews \
-        "3a|Adversarial Review (GPT)|adversarial|gpt" \
-        "3b|Adversarial Review (Gemini)|adversarial|gemini" \
-        "3c|Adversarial Review (MiniMax)|adversarial|minimax" \
-        "3d|Adversarial Review (MiMo)|adversarial|mimo"
+        "1.4a|Adversarial Review (GPT)|adversarial|gpt" \
+        "1.4b|Adversarial Review (Gemini)|adversarial|gemini" \
+        "1.4c|Adversarial Review (MiniMax)|adversarial|minimax" \
+        "1.4d|Adversarial Review (MiMo)|adversarial|mimo"
 
-    run_step "3e" "Adversarial Review Arbiter (analyst)" run_arbiter "3e" "adversarial" \
+    # Step 1.5: Adversarial Review Arbiter
+    run_step "1.5" "Adversarial Review Arbiter (analyst)" run_arbiter "1.5" "adversarial" \
         "Fix all confirmed issues in the story file at ${story_file_ref}." \
         "" "/bmad-analyst yolo -"
 
@@ -1419,24 +1529,26 @@ run_pipeline() {
     log_phase "2" "TDD + Implementation"
 
     if [[ "$SKIP_TEA" == "true" ]]; then
-        log_skip "Step 4 — TEA not installed"
+        log_skip "Step 2.1 — TEA not installed"
     else
-        run_step "4" "TDD Red Phase" step_4_tdd_red
+        run_step "2.1" "TDD Red Phase" step_2_1_tdd_red
     fi
-    run_step "5" "Implementation" step_5_implementation
+    run_step "2.2" "Implementation" step_2_2_implementation
 
     git_checkpoint "phase 2 — implementation"
 
-    # --- Phase 3: Edge Case Hunter (4 AIs in parallel) ---
+    # --- Phase 3: Edge Cases (4 Hunters) ---
     log_phase "3" "Edge Cases (4 Hunters)"
 
+    # Step 3.1: Edge Case Hunt (4 AIs in parallel)
     run_parallel_reviews \
-        "6a|Edge Cases (GPT)|edge-cases|gpt" \
-        "6b|Edge Cases (Gemini)|edge-cases|gemini" \
-        "6c|Edge Cases (MiniMax)|edge-cases|minimax" \
-        "6d|Edge Cases (MiMo)|edge-cases|mimo"
+        "3.1a|Edge Cases (GPT)|edge-cases|gpt" \
+        "3.1b|Edge Cases (Gemini)|edge-cases|gemini" \
+        "3.1c|Edge Cases (MiniMax)|edge-cases|minimax" \
+        "3.1d|Edge Cases (MiMo)|edge-cases|mimo"
 
-    run_step "6e" "Edge Case Arbiter (dev)" run_arbiter "6e" "edge-cases" \
+    # Step 3.2: Edge Case Arbiter
+    run_step "3.2" "Edge Case Arbiter (dev)" run_arbiter "3.2" "edge-cases" \
         "Fix all confirmed edge cases." \
         "- Unanimous (4/4 agree): fix immediately by adding the suggested guard
 - Strong consensus (3/4 agree): fix, good confidence
@@ -1446,16 +1558,18 @@ run_pipeline() {
 
     git_checkpoint "phase 3 — edge case fixes"
 
-    # --- Phase 4: Code Review (4 AIs in parallel) ---
-    log_phase "4" "Quadruple Code Review"
+    # --- Phase 4: Code Review (4 Reviewers) ---
+    log_phase "4" "Code Review"
 
+    # Step 4.1: Code Review (4 AIs in parallel)
     run_parallel_reviews \
-        "7a|Review (GPT)|review|gpt" \
-        "7b|Review (Gemini)|review|gemini" \
-        "7c|Review (MiniMax)|review|minimax" \
-        "7d|Review (MiMo)|review|mimo"
+        "4.1a|Review (GPT)|review|gpt" \
+        "4.1b|Review (Gemini)|review|gemini" \
+        "4.1c|Review (MiniMax)|review|minimax" \
+        "4.1d|Review (MiMo)|review|mimo"
 
-    run_step "8" "Code Review Arbiter (dev)" run_arbiter "8" "review" \
+    # Step 4.2: Code Review Arbiter
+    run_step "4.2" "Code Review Arbiter (dev)" run_arbiter "4.2" "review" \
         "Fix all confirmed critical, high, medium, and low issues." \
         "- Unanimous (4/4 agree): fix immediately, high confidence
 - Strong consensus (3/4 agree): fix, good confidence
@@ -1471,8 +1585,8 @@ run_pipeline() {
     else
         log_phase "5" "Traceability & Automation"
 
-        run_step "9" "Testarch Trace" step_9_trace
-        run_step "10" "Testarch Automate" step_10_automate
+        run_step "5.1" "Testarch Trace" step_5_1_trace
+        run_step "5.2" "Testarch Automate" step_5_2_automate
         git_checkpoint "phase 5 — traceability & automation"
     fi
 
@@ -1481,16 +1595,16 @@ run_pipeline() {
         log_phase "6" "Epic End"
 
         if [[ "$SKIP_TEA" == "true" ]]; then
-            log_skip "Steps 11a-c — TEA not installed"
+            log_skip "Steps 6.1–6.3 — TEA not installed"
         else
             run_parallel_reviews \
-                "11a|Epic Trace|step_11a_epic_trace" \
-                "11b|Epic NFR Assessment|step_11b_epic_nfr" \
-                "11c|Epic Test Review|step_11c_epic_test_review"
+                "6.1|Epic Trace|step_6_1_epic_trace" \
+                "6.2|Epic NFR Assessment|step_6_2_epic_nfr" \
+                "6.3|Epic Test Review|step_6_3_epic_test_review"
         fi
 
-        run_step "12" "Retrospective" step_12_retrospective
-        run_step "13" "Generate Project Context" step_13_project_context
+        run_step "6.4" "Retrospective" step_6_4_retrospective
+        run_step "6.5" "Generate Project Context" step_6_5_project_context
         git_checkpoint "phase 6 — epic end"
     else
         if [[ "$SKIP_EPIC_PHASES" == "true" ]]; then
@@ -1503,18 +1617,18 @@ run_pipeline() {
     # --- Phase 7: Finalization ---
     log_phase "7" "Finalization"
 
-    # Finalize pipeline log before the tech-writer runs so it can embed it
+    # Generate pipeline report before the tech-writer runs so it can read it
     if [[ "$DRY_RUN" != "true" ]]; then
-        finalize_pipeline_log
-        log_ok "Pipeline log finalized: ${PIPELINE_LOG}"
+        generate_pipeline_report
+        log_ok "Pipeline report: ${PIPELINE_REPORT}"
     fi
 
-    run_step "14a" "Document Story (tech-writer)" step_14a_document
-    run_step "14b" "Close Story (SM)" step_14b_close
+    run_step "7.1" "Document Story (tech-writer)" step_7_1_document
+    run_step "7.2" "Close Story (SM)" step_7_2_close
 
     git_checkpoint "phase 7 — finalization"
 
-    # Squash all phase commits into a single commit
+    # Squash all phase commits into a single WIP commit
     git_squash_pipeline
 }
 
@@ -1564,11 +1678,30 @@ print_summary() {
         echo ""
         local final_sha
         final_sha="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)"
-        echo -e "  ${GREEN}✓${NC} All changes committed: ${BOLD}${final_sha}${NC}"
-        echo -e "  ${DIM}Commit message sourced from the story file Auto-bmad Completion section.${NC}"
-    fi
+        echo -e "  ${GREEN}✓${NC} WIP commit: ${BOLD}${final_sha}${NC}"
+        echo -e "  ${DIM}Pipeline report: ${PIPELINE_REPORT}${NC}"
 
-    echo ""
+        # Print copy-paste manual finalization commands
+        local commit_msg
+        commit_msg="$(extract_story_commit_msg)"
+        local branch_name="story/${STORY_ID}"
+
+        echo ""
+        echo -e "${BOLD}${CYAN}───────────────────────────────────────────────────────────${NC}"
+        echo -e "${BOLD}${CYAN}  Manual Finalization${NC}"
+        echo -e "${BOLD}${CYAN}───────────────────────────────────────────────────────────${NC}"
+        echo ""
+        echo -e "  ${DIM}# Amend WIP commit with the real commit message:${NC}"
+        echo -e "  git commit --amend -m \"\$(cat <<'EOF'"
+        echo "  ${commit_msg}"
+        echo "  EOF"
+        echo "  )\""
+        echo ""
+        echo -e "  ${DIM}# Push and create PR:${NC}"
+        echo "  git push -u origin ${branch_name}"
+        echo "  gh pr create --title \"${commit_msg%%$'\n'*}\" --body \"Story ${STORY_SHORT_ID}. See story file for details.\""
+        echo ""
+    fi
 }
 
 # ============================================================
@@ -1592,24 +1725,38 @@ Options:
   --skip-epic-phases     Skip phases 0 (epic start) and 6 (epic end)
   --json-log             Extract arbiter findings into review-log.json (JSONL)
   --no-traces            Remove all pipeline artifacts after finalization
-                         (implies --json-log; JSON + pipeline logs are kept)
+                         (implies --json-log; JSON + pipeline report are kept)
   --help                 Show this help message
+
+Step Numbering:
+  Phase N → steps N.1, N.2, ...
+  Parallel sub-steps: N.Ma, N.Mb, N.Mc, N.Md (review models)
+  --from-step uses parent step ID (e.g., 3.1 reruns entire parallel group)
+
+  Phase 0: Epic Start     (0.1 TEA)
+  Phase 1: Preparation    (1.1 create, 1.2 validate, 1.3 arbiter, 1.4 adversarial, 1.5 arbiter)
+  Phase 2: Implementation (2.1 TDD, 2.2 impl)
+  Phase 3: Edge Cases     (3.1 hunt, 3.2 arbiter)
+  Phase 4: Code Review    (4.1 review, 4.2 arbiter)
+  Phase 5: Traceability   (5.1 trace, 5.2 automate)
+  Phase 6: Epic End       (6.1-6.3 parallel, 6.4 retro, 6.5 context)
+  Phase 7: Finalization   (7.1 document, 7.2 close)
 
 AI Profiles (edit at top of script):
   AI_OPUS      = Claude Opus 4.6 / max effort   — critical path + code-touching arbiters
   AI_OPUS_HIGH = Claude Opus 4.6 / high effort  — structured, non-critical (pre-impl arbiters, retro, docs)
   AI_SONNET    = Claude Sonnet 4.6 / high        — lightweight bookkeeping
-  AI_GPT      = Codex GPT 5.4 / xhigh reason  — code reviews + edge cases
-  AI_GPT_HIGH  = Codex GPT 5.4 / high reason   — spec-level reviews (pre-implementation)
-  AI_GEMINI  = Gemini 3 Pro Preview           — parallel reviews
-  AI_MINIMAX = OpenCode MiniMax M2.5 / max    — parallel reviews
-  AI_MIMO    = OpenCode MiMo V2 Pro / max     — parallel reviews
+  AI_GPT       = Codex GPT 5.4 / xhigh reason   — code reviews + edge cases
+  AI_GPT_HIGH  = Codex GPT 5.4 / high reason    — spec-level reviews (pre-implementation)
+  AI_GEMINI    = Gemini 3 Pro Preview            — parallel reviews
+  AI_MINIMAX   = OpenCode MiniMax M2.5 / max     — parallel reviews
+  AI_MIMO      = OpenCode MiMo V2 Pro / max      — parallel reviews
 
 Examples:
-  ./auto-bmad.sh                          # Run next story
-  ./auto-bmad.sh --dry-run                # Preview the pipeline
-  ./auto-bmad.sh --story 2-3-some-story   # Run a specific story
-  ./auto-bmad.sh --from-step 6a --story 1-1-auth  # Resume from step 6a
+  ./auto-bmad.sh                                    # Run next story
+  ./auto-bmad.sh --dry-run                          # Preview the pipeline
+  ./auto-bmad.sh --story 2-3-some-story             # Run a specific story
+  ./auto-bmad.sh --from-step 3.1 --story 1-1-auth   # Resume from edge cases
 HELPEOF
 }
 
@@ -1654,10 +1801,12 @@ main() {
     check_git_branch
 
     STORY_ARTIFACTS="${IMPL_ARTIFACTS}/auto-bmad/${STORY_SHORT_ID}"
-    PIPELINE_LOG="${STORY_ARTIFACTS}/pipeline.log"
-    mkdir -p "$STORY_ARTIFACTS"
+    TMP_DIR="${PROJECT_ROOT}/.tmp/auto-bmad/${STORY_SHORT_ID}"
+    PIPELINE_LOG="${TMP_DIR}/pipeline.log"
+    PIPELINE_REPORT="${STORY_ARTIFACTS}/pipeline-report.md"
+    mkdir -p "$STORY_ARTIFACTS" "$TMP_DIR"
 
-    # Initialize pipeline log — single source of truth for the run
+    # Initialize raw pipeline log in TMP_DIR — temporary, converted to report at finalization
     local branch_name
     branch_name="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'n/a')"
     {
@@ -1684,7 +1833,7 @@ main() {
     echo -e "  Epic end:   $(is_epic_end && echo -e "${GREEN}Yes (last story)${NC}" || echo "No")"
     [[ "$DRY_RUN" == "true" ]] && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
     [[ "$JSON_LOG" == "true" ]] && echo -e "  JSON log:   ${GREEN}Enabled${NC}"
-    [[ "$NO_TRACES" == "true" ]] && echo -e "  No traces:  ${YELLOW}Pipeline artifacts will be removed${NC}"
+    [[ "$NO_TRACES" == "true" ]] && echo -e "  No traces:  ${YELLOW}Arbiter reports will be removed (pipeline report kept)${NC}"
     [[ "$SKIP_TEA" == "true" ]] && echo -e "  TEA:        ${YELLOW}Skipped (not installed)${NC}"
     [[ -n "$FROM_STEP" ]] && echo -e "  Resume:     from step ${BOLD}${FROM_STEP}${NC}"
     echo -e "  Artifacts:  ${DIM}${STORY_ARTIFACTS}/${NC}"
@@ -1693,22 +1842,25 @@ main() {
 
     print_summary
 
-    # Step logs are kept only on failure — clean up any stragglers on success
-    rm -f "${STORY_ARTIFACTS}"/step-*.log 2>/dev/null || true
+    # Clean up temp directory on success (individual reviews, step logs, raw pipeline log)
+    if [[ -d "$TMP_DIR" && "$TMP_DIR" == *"/.tmp/auto-bmad/"* ]]; then
+        rm -rf "$TMP_DIR"
+        echo -e "  ${DIM}Temp files cleaned: ${TMP_DIR}${NC}"
+    fi
 
-    # --no-traces: remove all pipeline-generated artifacts, keep JSON + pipeline logs
+    # --no-traces: remove all pipeline-generated artifacts, keep JSON + pipeline report
     if [[ "$NO_TRACES" == "true" ]]; then
         local json_log="${STORY_ARTIFACTS}/review-log.json"
-        local json_backup="" pipeline_backup=""
+        local json_backup="" report_backup=""
 
-        # Preserve the JSON log and pipeline log if they exist
+        # Preserve the JSON log and pipeline report if they exist
         if [[ -f "$json_log" ]]; then
             json_backup="$(mktemp)"
             cp "$json_log" "$json_backup"
         fi
-        if [[ -f "$PIPELINE_LOG" ]]; then
-            pipeline_backup="$(mktemp)"
-            cp "$PIPELINE_LOG" "$pipeline_backup"
+        if [[ -f "$PIPELINE_REPORT" ]]; then
+            report_backup="$(mktemp)"
+            cp "$PIPELINE_REPORT" "$report_backup"
         fi
 
         # Remove all pipeline artifacts (guard against empty/dangerous paths)
@@ -1718,17 +1870,17 @@ main() {
         fi
         rm -rf "$STORY_ARTIFACTS"
 
-        # Restore preserved logs to impl artifacts root (not nested in removed dir)
+        # Restore preserved files to impl artifacts root (not nested in removed dir)
         mkdir -p "${IMPL_ARTIFACTS}/auto-bmad"
         if [[ -n "$json_backup" ]]; then
             local final_json="${IMPL_ARTIFACTS}/auto-bmad/review-log--${STORY_SHORT_ID}.json"
             mv "$json_backup" "$final_json"
             echo -e "  ${GREEN}✓${NC} Review log: ${final_json}"
         fi
-        if [[ -n "$pipeline_backup" ]]; then
-            local final_pipeline="${IMPL_ARTIFACTS}/auto-bmad/pipeline--${STORY_SHORT_ID}.log"
-            mv "$pipeline_backup" "$final_pipeline"
-            echo -e "  ${GREEN}✓${NC} Pipeline log: ${final_pipeline}"
+        if [[ -n "$report_backup" ]]; then
+            local final_report="${IMPL_ARTIFACTS}/auto-bmad/pipeline-report--${STORY_SHORT_ID}.md"
+            mv "$report_backup" "$final_report"
+            echo -e "  ${GREEN}✓${NC} Pipeline report: ${final_report}"
         fi
 
         echo -e "  ${DIM}Pipeline artifacts removed (--no-traces)${NC}"
