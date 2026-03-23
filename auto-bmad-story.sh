@@ -6,14 +6,18 @@ set -euo pipefail
 #
 # Automates one story at a time through the full BMAD
 # implementation workflow, using multiple AI CLIs for diversity.
+# CLIs: claude, codex, copilot (GitHub Copilot CLI), opencode
 #
 # Usage: ./auto-bmad.sh [options]
 #   --story STORY_ID     Override auto-detection
 #   --from-step ID       Resume pipeline from step ID (e.g., 2a1, 7c)
 #   --dry-run            Preview all steps without executing
 #   --skip-epic-phases   Skip phases 0 and 6 even at epic boundaries
-#   --json-log           Extract arbiter findings into review-log.json
-#   --no-traces          Remove all pipeline artifacts after finalization
+#   --skip-tea           Skip TEA phases even if TEA is installed
+#   --skip-reviews       Skip all parallel review and arbiter phases
+#   --fast-reviews       Run only 1 reviewer (GPT) per review phase, skip arbiter
+#   --skip-git           Skip git write operations (branch, checkpoint, squash)
+#   --no-traces          Remove pipeline artifacts after finalization
 #   --help               Show usage
 # ============================================================
 
@@ -62,7 +66,7 @@ BMAD_BUILD_TEA_VERSION="1.7.1"
 # CLI Tools
 # ============================================================
 
-TOOL_NAMES=(claude codex gemini opencode)
+TOOL_NAMES=(claude codex copilot opencode)
 
 # ============================================================
 # AI Profiles — reusable combinations of cli|model|effort
@@ -72,14 +76,14 @@ TOOL_NAMES=(claude codex gemini opencode)
 # Effort flags:  claude:   --effort (low|medium|high|max)
 #                codex:    -c model_reasoning_effort= (minimal|low|medium|high|xhigh)
 #                opencode: --variant (low|medium|high|max)
-#                gemini:   no effort flag available
+#                copilot:  no effort flag available
 
 AI_OPUS="claude|opus|max"                           # Claude Opus 4.6 — critical path, arbiters
 AI_OPUS_HIGH="claude|opus|high"                      # Claude Opus 4.6 / high — structured, non-critical
 AI_SONNET="claude|sonnet|high"                       # Claude Sonnet 4.6 — lightweight bookkeeping
 AI_GPT="codex|gpt-5.4|xhigh"                       # Codex GPT 5.4 — code reviews, edge cases
 AI_GPT_HIGH="codex|gpt-5.4|high"                    # Codex GPT 5.4 / high — spec-level reviews
-AI_GEMINI="gemini|gemini-3-pro-preview|"             # Gemini 3 Pro — parallel reviews
+AI_COPILOT="copilot|gemini-3-pro-preview|"           # Copilot Gemini 3 Pro — parallel reviews
 AI_MINIMAX="opencode|opencode/minimax-m2.5-free|max" # MiniMax M2.5 via OpenCode — parallel reviews
 AI_MIMO="opencode|opencode/mimo-v2-pro-free|max"     # MiMo V2 Pro via OpenCode — parallel reviews
 
@@ -97,9 +101,10 @@ step_config() {
         a) # GPT — effort depends on phase (spec vs code)
             if [[ "$phase" == "1" ]]; then echo "$AI_GPT_HIGH"
             else echo "$AI_GPT"; fi; return ;;
-        b) echo "$AI_GEMINI"; return ;;
+        b) echo "$AI_COPILOT"; return ;;
         c) echo "$AI_MINIMAX"; return ;;
         d) echo "$AI_MIMO"; return ;;
+        e) echo "$AI_OPUS_HIGH"; return ;;
     esac
 
     # Non-parallel steps
@@ -115,7 +120,7 @@ step_config() {
         # Epic end parallel (individual assignments, not review sub-steps)
         6.1)                         echo "$AI_GPT" ;;
         6.2)                         echo "$AI_OPUS" ;;
-        6.3)                         echo "$AI_GEMINI" ;;
+        6.3)                         echo "$AI_COPILOT" ;;
         # Reflective / documentation — structured, non-critical
         6.4|6.5|7.1)                 echo "$AI_OPUS_HIGH" ;;
         # Finalization — bookkeeping
@@ -147,7 +152,9 @@ DRY_RUN=false
 FROM_STEP=""
 SKIP_EPIC_PHASES=false
 SKIP_TEA=false
-JSON_LOG=false
+SKIP_REVIEWS=false
+FAST_REVIEWS=false
+SKIP_GIT=false
 NO_TRACES=false
 PIPELINE_START_TIME=""
 
@@ -317,7 +324,7 @@ stop_activity_monitor() {
 # intermediate checkpoints would waste time and fail on partial work.
 git_checkpoint() {
     local phase_label="$1"
-    [[ "$DRY_RUN" == "true" ]] && return 0
+    [[ "$DRY_RUN" == "true" || "$SKIP_GIT" == "true" ]] && return 0
 
     if git -C "$PROJECT_ROOT" diff --quiet && git -C "$PROJECT_ROOT" diff --cached --quiet && \
        [[ -z "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard)" ]]; then
@@ -331,7 +338,7 @@ git_checkpoint() {
 # Squash all checkpoint commits made since COMMIT_BASELINE into a single WIP commit.
 # The real commit message is left for the epic script or manual finalization.
 git_squash_pipeline() {
-    [[ "$DRY_RUN" == "true" ]] && return 0
+    [[ "$DRY_RUN" == "true" || "$SKIP_GIT" == "true" ]] && return 0
 
     local current_head
     current_head="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null)"
@@ -410,8 +417,8 @@ run_ai() {
             "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
-        gemini)
-            gemini -p "$prompt" -m "$cfg_model" --yolo 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
+        copilot)
+            copilot -p "$prompt" --model "$cfg_model" --yolo 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
             exit_code=${PIPESTATUS[0]}
             ;;
         opencode)
@@ -462,10 +469,10 @@ run_arbiter() {
     local agent_cmd="${5:-}"
 
     if [[ -z "$consensus_rules" ]]; then
-        consensus_rules="- Unanimous (4/4 agree): fix immediately, high confidence
-- Strong consensus (3/4 agree): fix, good confidence
-- Split (2/4 agree): evaluate the arguments from both sides, fix if the issue is substantive
-- Single flag (1/4): only fix if it's clearly a real issue with a concrete impact, skip speculative or hypothetical concerns"
+        consensus_rules="- Clear bug (concrete failure path demonstrated): fix immediately
+- Substantive issue (real impact on correctness, security, or performance): fix if the argument is sound
+- Speculative/stylistic (hypothetical scenario, preference-based): skip
+- Out of scope: skip"
     fi
 
     # Derive reviewer parallel step from arbiter step: P.S → P.(S-1)
@@ -482,19 +489,20 @@ run_arbiter() {
 
     run_ai "$step_id" "${prompt_prefix}Read these review findings files (skip any that don't exist):
 - ${TMP_DIR}/${review_base}a-${file_prefix}-gpt.md
-- ${TMP_DIR}/${review_base}b-${file_prefix}-gemini.md
+- ${TMP_DIR}/${review_base}b-${file_prefix}-copilot.md
 - ${TMP_DIR}/${review_base}c-${file_prefix}-minimax.md
 - ${TMP_DIR}/${review_base}d-${file_prefix}-mimo.md
+- ${TMP_DIR}/${review_base}e-${file_prefix}-claude.md
 
-You are the arbiter. Cross-reference all findings using these rules:
+You are the arbiter. Cross-reference all findings across reviews. Group overlapping findings
+(same issue flagged by multiple reviewers) into single entries.
+
+For each unique finding, evaluate on argument quality:
 ${consensus_rules}
 
-Note on reviewer reliability (use as context, not hard rules):
-GPT and MiMo historically have the highest accept rates and best signal-to-noise.
-MiniMax produces the most findings but many are out-of-scope or speculative.
-Gemini occasionally returns empty or minimal responses.
-Weight your judgment accordingly — a finding from a high-signal reviewer alone may warrant action,
-while a speculative finding from a single low-signal reviewer may not.
+Record how many reviewers flagged each finding — this is useful context,
+not the decision criteria. A single reviewer demonstrating a concrete
+bug outweighs four reviewers raising vague concerns.
 
 ${fix_instruction}
 
@@ -506,8 +514,8 @@ Save your arbiter decision report to ${arbiter_report} with this structure:
 
 | # | Finding | Flagged By | Consensus | Action | Confidence |
 |---|---------|------------|-----------|--------|------------|
-| 1 | Brief description | GPT, Gemini, MiniMax | 3/4 | Fixed | High |
-| 2 | Brief description | MiMo | 1/4 | Skipped | Low |
+| 1 | Brief description | GPT, Copilot, Claude | 3/5 | Fixed | High |
+| 2 | Brief description | MiMo | 1/5 | Skipped | Low |
 
 3. **Detailed rationale** — for each finding in the table, a short paragraph with:
    - The reviewers' arguments (agreements and disagreements)
@@ -521,59 +529,6 @@ Save your arbiter decision report to ${arbiter_report} with this structure:
    - Any notable patterns (e.g., empty response, scope creep, high precision)
 
 5. **Summary**: total findings reviewed, fixes applied, items skipped, and any patterns or observations worth noting for future runs"
-
-    # Extract JSON log from arbiter report if --json-log is enabled
-    if [[ "$JSON_LOG" == "true" ]]; then
-        extract_arbiter_json "$arbiter_report" "$step_id" "$file_prefix"
-    fi
-}
-
-# extract_arbiter_json <report_file> <step_id> <review_type>
-# Parses the arbiter's markdown decision table into JSON and appends to review-log.json
-extract_arbiter_json() {
-    local report="$1" step_id="$2" review_type="$3"
-    local json_log="${STORY_ARTIFACTS}/review-log.json"
-
-    [[ -f "$report" ]] || return 0
-
-    # Parse markdown table rows: | # | Finding | Flagged By | Consensus | Action | Confidence |
-    local findings_json
-    findings_json=$(awk -F'|' '
-    /^\| *[0-9]/ {
-        for (i=2; i<=7; i++) {
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
-            gsub(/"/, "\\\"", $i)
-        }
-        printf "{\"n\":%s,\"finding\":\"%s\",\"flagged_by\":\"%s\",\"consensus\":\"%s\",\"action\":\"%s\",\"confidence\":\"%s\"}\n", $2, $3, $4, $5, $6, $7
-    }' "$report" 2>/dev/null)
-
-    # Skip if no findings rows parsed
-    [[ -z "$findings_json" ]] && return 0
-
-    # Build entry — use jq if available, else construct manually
-    local entry
-    if command -v jq &>/dev/null; then
-        entry=$(echo "$findings_json" | jq -s \
-            --arg story "$STORY_ID" \
-            --arg step "$step_id" \
-            --arg type "$review_type" \
-            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{story: $story, step: $step, review_type: $type, timestamp: $ts,
-              total: length,
-              fixed: [.[] | select(.action | test("fix";"i"))] | length,
-              skipped: [.[] | select(.action | test("skip";"i"))] | length,
-              verdict: (if ([.[] | select(.action | test("fix";"i"))] | length) > 0 then "changes_made" else "clean_pass" end),
-              findings: .}')
-    else
-        # Fallback: raw JSONL without aggregation
-        local count; count=$(echo "$findings_json" | wc -l | tr -d ' ')
-        entry=$(printf '{"story":"%s","step":"%s","review_type":"%s","timestamp":"%s","total":%s,"findings":[%s]}' \
-            "$STORY_ID" "$step_id" "$review_type" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            "$count" "$(echo "$findings_json" | paste -sd, -)")
-    fi
-
-    # Append entry to the log (one JSON object per line — JSONL format)
-    echo "$entry" >> "$json_log"
 }
 
 # ============================================================
@@ -768,6 +723,8 @@ check_bmad_version() {
 # Ensure we're on the correct story branch, or create one from main.
 # Called after STORY_ID is known.
 check_git_branch() {
+    [[ "$SKIP_GIT" == "true" ]] && { log_skip "Git branch check — --skip-git"; return 0; }
+
     local current_branch expected_branch="story/${STORY_ID}"
     current_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" || {
         log_warn "Not a git repository — skipping branch check"
@@ -868,37 +825,19 @@ _check_codex_model() {
     return 2
 }
 
-_check_gemini_model() {
+_check_copilot_model() {
     local model="$1"
-    local tmpfile
-    tmpfile=$(mktemp)
-
-    # gemini exits quickly with 404 for invalid models but hangs for
-    # valid ones (processing the prompt). Use a background process with
-    # a timeout: still running after 8s ⇒ model is valid.
-    echo "." | gemini -p "." -m "$model" >"$tmpfile" 2>&1 &
-    local pid=$!
-
-    local i=0
-    while (( i < 80 )); do
-        kill -0 "$pid" 2>/dev/null || break
-        sleep 0.1
-        i=$((i + 1))
-    done
-
-    if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null
-        wait "$pid" 2>/dev/null
-        rm -f "$tmpfile"
-        return 0
+    # copilot validates --model before doing anything else; invalid models
+    # produce "argument 'X' is invalid. Allowed choices are ..." and exit non-zero.
+    # Use --help as a no-op target so valid models don't start a session.
+    local output
+    output=$(copilot --model "$model" --help 2>&1)
+    local rc=$?
+    if echo "$output" | grep -q "is invalid\|Allowed choices"; then
+        return 1
     fi
-
-    local result=0
-    if grep -q "code: 404\|is not found\|critical error" "$tmpfile" 2>/dev/null; then
-        result=1
-    fi
-    rm -f "$tmpfile"
-    return "$result"
+    [[ $rc -eq 0 ]] && return 0
+    return 2
 }
 
 _check_opencode_model() {
@@ -919,7 +858,7 @@ check_model_availability() {
 
     # Collect unique cli:model pairs from all AI profiles
     local profile cli model _effort
-    for profile in "$AI_OPUS" "$AI_OPUS_HIGH" "$AI_SONNET" "$AI_GPT" "$AI_GPT_HIGH" "$AI_GEMINI" "$AI_MINIMAX" "$AI_MIMO"; do
+    for profile in "$AI_OPUS" "$AI_OPUS_HIGH" "$AI_SONNET" "$AI_GPT" "$AI_GPT_HIGH" "$AI_COPILOT" "$AI_MINIMAX" "$AI_MIMO"; do
         IFS='|' read -r cli model _effort <<< "$profile"
         [[ -z "$cli" || -z "$model" ]] && continue
         local pair="${cli}:${model}"
@@ -938,7 +877,7 @@ check_model_availability() {
             case "$cli" in
                 claude)   _check_claude_model "$model";   rc=$? ;;
                 codex)    _check_codex_model "$model";    rc=$? ;;
-                gemini)   _check_gemini_model "$model";   rc=$? ;;
+                copilot)  _check_copilot_model "$model";  rc=$? ;;
                 opencode) _check_opencode_model "$model"; rc=$? ;;
             esac
             echo "$rc" > "${tmpdir}/${safe}"
@@ -1022,8 +961,8 @@ should_run_step() {
 
     # Map parallel sub-steps (e.g. 1.2a) to parent step (1.2) for ordering
     local effective_id="$step_id"
-    if [[ "$step_id" =~ ^[0-9]+\.[0-9]+[a-d]$ ]]; then
-        effective_id="${step_id%[a-d]}"
+    if [[ "$step_id" =~ ^[0-9]+\.[0-9]+[a-e]$ ]]; then
+        effective_id="${step_id%[a-e]}"
     fi
 
     local from_pos=-1 step_pos=-1 pos=0
@@ -1104,6 +1043,36 @@ run_step() {
 #            or "step_id|name|func_name" for arbitrary functions
 run_parallel_reviews() {
     [[ "$_ABORT" == true ]] && exit 130
+
+    # --skip-reviews: skip entire function
+    if [[ "$SKIP_REVIEWS" == "true" ]]; then
+        for entry in "$@"; do
+            local sid sname
+            IFS='|' read -r sid sname _ _ <<< "$entry"
+            set_step_name "$sid" "$sname"
+            set_step_status "$sid" "skipped"
+            set_step_duration "$sid" "0"
+        done
+        local first_sid last_sid
+        IFS='|' read -r first_sid _ _ _ <<< "$1"
+        IFS='|' read -r last_sid _ _ _ <<< "${!#}"
+        log_skip "Steps ${first_sid}–${last_sid} — --skip-reviews"
+        return 0
+    fi
+
+    # --fast-reviews: only run the first entry (GPT / suffix "a")
+    if [[ "$FAST_REVIEWS" == "true" ]]; then
+        local first_entry="$1"
+        shift
+        for entry in "$@"; do
+            local sid sname
+            IFS='|' read -r sid sname _ _ <<< "$entry"
+            set_step_name "$sid" "$sname"
+            set_step_status "$sid" "skipped"
+            set_step_duration "$sid" "0"
+        done
+        set -- "$first_entry"
+    fi
 
     local -a pids=() sids=() snames=()
     local count=0
@@ -1450,7 +1419,7 @@ Perform ALL of the following:
    Anything unresolved.
 
    ### Commit Message
-   The commit message for all changes in story ${STORY_ID} inside a code block, following Conventional Commits 1.0.0 (<type>(<scope>): <subject> headline with <summary> body). Type: build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test.
+   The commit message for all changes in story ${STORY_ID} inside a code block, following Conventional Commits 1.0.0 (<type>(<scope>): <subject> headline with <summary> body after a blank line). Type: build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test.
 
    Do NOT repeat completion notes, file lists, decision logs, or fix summaries — those are already in the Dev Agent Record and Change Log."
 }
@@ -1499,29 +1468,39 @@ run_pipeline() {
 
     run_step "1.1" "Create Story" step_1_1_create_story
 
-    # Step 1.2: Validate Story (4 AIs in parallel)
+    # Step 1.2: Validate Story (5 AIs in parallel)
     run_parallel_reviews \
         "1.2a|Validate Story (GPT)|validate|gpt" \
-        "1.2b|Validate Story (Gemini)|validate|gemini" \
+        "1.2b|Validate Story (Copilot)|validate|copilot" \
         "1.2c|Validate Story (MiniMax)|validate|minimax" \
-        "1.2d|Validate Story (MiMo)|validate|mimo"
+        "1.2d|Validate Story (MiMo)|validate|mimo" \
+        "1.2e|Validate Story (Claude)|validate|claude"
 
-    # Step 1.3: Validate Story Arbiter
-    run_step "1.3" "Validate Story Arbiter (analyst)" run_arbiter "1.3" "validate" \
-        "Fix all confirmed issues in the story file at ${story_file_ref}." \
-        "" "/bmad-analyst yolo -"
+    # Step 1.3: Validate Story Arbiter (skipped with --skip-reviews or --fast-reviews)
+    if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
+        run_step "1.3" "Validate Story Arbiter (analyst)" run_arbiter "1.3" "validate" \
+            "Fix all confirmed issues in the story file at ${story_file_ref}." \
+            "" "/bmad-analyst yolo -"
+    else
+        log_skip "Step 1.3 — no arbiter needed (single/no reviewer)"
+    fi
 
-    # Step 1.4: Adversarial Review (4 AIs in parallel)
+    # Step 1.4: Adversarial Review (5 AIs in parallel)
     run_parallel_reviews \
         "1.4a|Adversarial Review (GPT)|adversarial|gpt" \
-        "1.4b|Adversarial Review (Gemini)|adversarial|gemini" \
+        "1.4b|Adversarial Review (Copilot)|adversarial|copilot" \
         "1.4c|Adversarial Review (MiniMax)|adversarial|minimax" \
-        "1.4d|Adversarial Review (MiMo)|adversarial|mimo"
+        "1.4d|Adversarial Review (MiMo)|adversarial|mimo" \
+        "1.4e|Adversarial Review (Claude)|adversarial|claude"
 
-    # Step 1.5: Adversarial Review Arbiter
-    run_step "1.5" "Adversarial Review Arbiter (analyst)" run_arbiter "1.5" "adversarial" \
-        "Fix all confirmed issues in the story file at ${story_file_ref}." \
-        "" "/bmad-analyst yolo -"
+    # Step 1.5: Adversarial Review Arbiter (skipped with --skip-reviews or --fast-reviews)
+    if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
+        run_step "1.5" "Adversarial Review Arbiter (analyst)" run_arbiter "1.5" "adversarial" \
+            "Fix all confirmed issues in the story file at ${story_file_ref}." \
+            "" "/bmad-analyst yolo -"
+    else
+        log_skip "Step 1.5 — no arbiter needed (single/no reviewer)"
+    fi
 
     git_checkpoint "phase 1 — story preparation"
 
@@ -1537,45 +1516,55 @@ run_pipeline() {
 
     git_checkpoint "phase 2 — implementation"
 
-    # --- Phase 3: Edge Cases (4 Hunters) ---
-    log_phase "3" "Edge Cases (4 Hunters)"
+    # --- Phase 3: Edge Cases (5 Hunters) ---
+    log_phase "3" "Edge Cases (5 Hunters)"
 
-    # Step 3.1: Edge Case Hunt (4 AIs in parallel)
+    # Step 3.1: Edge Case Hunt (5 AIs in parallel)
     run_parallel_reviews \
         "3.1a|Edge Cases (GPT)|edge-cases|gpt" \
-        "3.1b|Edge Cases (Gemini)|edge-cases|gemini" \
+        "3.1b|Edge Cases (Copilot)|edge-cases|copilot" \
         "3.1c|Edge Cases (MiniMax)|edge-cases|minimax" \
-        "3.1d|Edge Cases (MiMo)|edge-cases|mimo"
+        "3.1d|Edge Cases (MiMo)|edge-cases|mimo" \
+        "3.1e|Edge Cases (Claude)|edge-cases|claude"
 
-    # Step 3.2: Edge Case Arbiter
-    run_step "3.2" "Edge Case Arbiter (dev)" run_arbiter "3.2" "edge-cases" \
-        "Fix all confirmed edge cases." \
-        "- Unanimous (4/4 agree): fix immediately by adding the suggested guard
-- Strong consensus (3/4 agree): fix, good confidence
-- Split (2/4 agree): evaluate the arguments from both sides, fix if the edge case has real impact
-- Single flag (1/4): only fix if it's a clearly unhandled case with concrete consequences, skip rare hypothetical scenarios" \
-        "/bmad-dev yolo -"
+    # Step 3.2: Edge Case Arbiter (skipped with --skip-reviews or --fast-reviews)
+    if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
+        run_step "3.2" "Edge Case Arbiter (dev)" run_arbiter "3.2" "edge-cases" \
+            "Fix all confirmed edge cases." \
+            "- Clear bug (concrete failure path with a reproducible scenario): fix immediately
+- Substantive edge case (real impact — crash, data loss, security bypass): fix if the argument is sound
+- Speculative/hypothetical (rare scenario without concrete consequences): skip
+- Out of scope: skip" \
+            "/bmad-dev yolo -"
+    else
+        log_skip "Step 3.2 — no arbiter needed (single/no reviewer)"
+    fi
 
     git_checkpoint "phase 3 — edge case fixes"
 
-    # --- Phase 4: Code Review (4 Reviewers) ---
+    # --- Phase 4: Code Review (5 Reviewers) ---
     log_phase "4" "Code Review"
 
-    # Step 4.1: Code Review (4 AIs in parallel)
+    # Step 4.1: Code Review (5 AIs in parallel)
     run_parallel_reviews \
         "4.1a|Review (GPT)|review|gpt" \
-        "4.1b|Review (Gemini)|review|gemini" \
+        "4.1b|Review (Copilot)|review|copilot" \
         "4.1c|Review (MiniMax)|review|minimax" \
-        "4.1d|Review (MiMo)|review|mimo"
+        "4.1d|Review (MiMo)|review|mimo" \
+        "4.1e|Review (Claude)|review|claude"
 
-    # Step 4.2: Code Review Arbiter
-    run_step "4.2" "Code Review Arbiter (dev)" run_arbiter "4.2" "review" \
-        "Fix all confirmed critical, high, medium, and low issues." \
-        "- Unanimous (4/4 agree): fix immediately, high confidence
-- Strong consensus (3/4 agree): fix, good confidence
-- Split (2/4 agree): evaluate the arguments from both sides, fix if the issue is substantive
-- Single flag (1/4): only fix if it's clearly a real issue with concrete impact (e.g., security vulnerability, data loss, crash), skip stylistic or speculative concerns" \
-        "/bmad-dev yolo -"
+    # Step 4.2: Code Review Arbiter (skipped with --skip-reviews or --fast-reviews)
+    if [[ "$SKIP_REVIEWS" == "false" && "$FAST_REVIEWS" == "false" ]]; then
+        run_step "4.2" "Code Review Arbiter (dev)" run_arbiter "4.2" "review" \
+            "Fix all confirmed critical, high, medium, and low issues." \
+            "- Clear bug (concrete failure path demonstrated): fix immediately
+- Substantive issue (real impact on correctness, security, or performance): fix if the argument is sound
+- Speculative/stylistic (hypothetical scenario, preference-based): skip
+- Out of scope: skip" \
+            "/bmad-dev yolo -"
+    else
+        log_skip "Step 4.2 — no arbiter needed (single/no reviewer)"
+    fi
 
     git_checkpoint "phase 4 — code review fixes"
 
@@ -1713,7 +1702,7 @@ show_help() {
 auto-bmad.sh — BMAD Story Pipeline Orchestrator
 
 Automates one story at a time through the full BMAD implementation
-workflow using multiple AI CLIs (claude, codex, gemini, opencode).
+workflow using multiple AI CLIs (claude, codex, copilot, opencode).
 
 Usage: ./auto-bmad.sh [options]
 
@@ -1723,14 +1712,17 @@ Options:
                          Valid IDs: ${STEP_ORDER}
   --dry-run              Preview all steps without executing
   --skip-epic-phases     Skip phases 0 (epic start) and 6 (epic end)
-  --json-log             Extract arbiter findings into review-log.json (JSONL)
-  --no-traces            Remove all pipeline artifacts after finalization
-                         (implies --json-log; JSON + pipeline report are kept)
+  --skip-tea             Skip TEA phases even if installed (0, 2.1, 5.x, 6.1-6.3)
+  --skip-reviews         Skip all parallel review + arbiter phases (1.2-1.5, 3.x, 4.x)
+  --fast-reviews         Run only GPT reviewer per phase, skip arbiter
+  --skip-git             Skip git write ops (branch, checkpoint, squash)
+  --no-traces            Remove pipeline artifacts after finalization
+                         (pipeline report is kept)
   --help                 Show this help message
 
 Step Numbering:
   Phase N → steps N.1, N.2, ...
-  Parallel sub-steps: N.Ma, N.Mb, N.Mc, N.Md (review models)
+  Parallel sub-steps: N.Ma, N.Mb, N.Mc, N.Md, N.Me (review models)
   --from-step uses parent step ID (e.g., 3.1 reruns entire parallel group)
 
   Phase 0: Epic Start     (0.1 TEA)
@@ -1748,7 +1740,7 @@ AI Profiles (edit at top of script):
   AI_SONNET    = Claude Sonnet 4.6 / high        — lightweight bookkeeping
   AI_GPT       = Codex GPT 5.4 / xhigh reason   — code reviews + edge cases
   AI_GPT_HIGH  = Codex GPT 5.4 / high reason    — spec-level reviews (pre-implementation)
-  AI_GEMINI    = Gemini 3 Pro Preview            — parallel reviews
+  AI_COPILOT   = Copilot Gemini 3 Pro Preview     — parallel reviews
   AI_MINIMAX   = OpenCode MiniMax M2.5 / max     — parallel reviews
   AI_MIMO      = OpenCode MiMo V2 Pro / max      — parallel reviews
 
@@ -1757,6 +1749,9 @@ Examples:
   ./auto-bmad.sh --dry-run                          # Preview the pipeline
   ./auto-bmad.sh --story 2-3-some-story             # Run a specific story
   ./auto-bmad.sh --from-step 3.1 --story 1-1-auth   # Resume from edge cases
+  ./auto-bmad.sh --fast-reviews                      # Quick run: 1 reviewer, no arbiter
+  ./auto-bmad.sh --skip-reviews --skip-tea           # Minimal: create → implement → close
+  ./auto-bmad.sh --skip-git                          # No branch/checkpoint/squash
 HELPEOF
 }
 
@@ -1773,8 +1768,11 @@ parse_args() {
                 fi
                 shift 2 ;;
             --skip-epic-phases) SKIP_EPIC_PHASES=true; shift ;;
-            --json-log)       JSON_LOG=true; shift ;;
-            --no-traces)      NO_TRACES=true; JSON_LOG=true; shift ;;
+            --skip-tea)         SKIP_TEA=true; shift ;;
+            --skip-reviews)     SKIP_REVIEWS=true; shift ;;
+            --fast-reviews)     FAST_REVIEWS=true; shift ;;
+            --skip-git)         SKIP_GIT=true; shift ;;
+            --no-traces)        NO_TRACES=true; shift ;;
             --help|-h)        show_help; exit 0 ;;
             *)
                 log_error "Unknown argument: $1"
@@ -1784,6 +1782,8 @@ parse_args() {
                 ;;
         esac
     done
+    # --skip-reviews supersedes --fast-reviews
+    [[ "$SKIP_REVIEWS" == "true" ]] && FAST_REVIEWS=false
 }
 
 main() {
@@ -1831,11 +1831,13 @@ main() {
     echo -e "  Epic:       ${BOLD}${EPIC_ID}${NC}"
     echo -e "  Epic start: $(is_epic_start && echo -e "${GREEN}Yes (first story)${NC}" || echo "No")"
     echo -e "  Epic end:   $(is_epic_end && echo -e "${GREEN}Yes (last story)${NC}" || echo "No")"
-    [[ "$DRY_RUN" == "true" ]] && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
-    [[ "$JSON_LOG" == "true" ]] && echo -e "  JSON log:   ${GREEN}Enabled${NC}"
-    [[ "$NO_TRACES" == "true" ]] && echo -e "  No traces:  ${YELLOW}Arbiter reports will be removed (pipeline report kept)${NC}"
-    [[ "$SKIP_TEA" == "true" ]] && echo -e "  TEA:        ${YELLOW}Skipped (not installed)${NC}"
-    [[ -n "$FROM_STEP" ]] && echo -e "  Resume:     from step ${BOLD}${FROM_STEP}${NC}"
+    [[ "$DRY_RUN" == "true" ]]      && echo -e "  Mode:       ${YELLOW}DRY RUN${NC}"
+    [[ "$SKIP_REVIEWS" == "true" ]]  && echo -e "  Reviews:    ${YELLOW}Skipped${NC}"
+    [[ "$FAST_REVIEWS" == "true" ]]  && echo -e "  Reviews:    ${YELLOW}Fast (GPT only, no arbiter)${NC}"
+    [[ "$SKIP_TEA" == "true" ]]      && echo -e "  TEA:        ${YELLOW}Skipped${NC}"
+    [[ "$SKIP_GIT" == "true" ]]      && echo -e "  Git:        ${YELLOW}Disabled (no branch, checkpoint, or squash)${NC}"
+    [[ "$NO_TRACES" == "true" ]]     && echo -e "  No traces:  ${YELLOW}Artifacts removed after finalization${NC}"
+    [[ -n "$FROM_STEP" ]]            && echo -e "  Resume:     from step ${BOLD}${FROM_STEP}${NC}"
     echo -e "  Artifacts:  ${DIM}${STORY_ARTIFACTS}/${NC}"
 
     run_pipeline
@@ -1848,16 +1850,11 @@ main() {
         echo -e "  ${DIM}Temp files cleaned: ${TMP_DIR}${NC}"
     fi
 
-    # --no-traces: remove all pipeline-generated artifacts, keep JSON + pipeline report
+    # --no-traces: remove all pipeline-generated artifacts, keep pipeline report
     if [[ "$NO_TRACES" == "true" ]]; then
-        local json_log="${STORY_ARTIFACTS}/review-log.json"
-        local json_backup="" report_backup=""
+        local report_backup=""
 
-        # Preserve the JSON log and pipeline report if they exist
-        if [[ -f "$json_log" ]]; then
-            json_backup="$(mktemp)"
-            cp "$json_log" "$json_backup"
-        fi
+        # Preserve pipeline report if it exists
         if [[ -f "$PIPELINE_REPORT" ]]; then
             report_backup="$(mktemp)"
             cp "$PIPELINE_REPORT" "$report_backup"
@@ -1870,14 +1867,9 @@ main() {
         fi
         rm -rf "$STORY_ARTIFACTS"
 
-        # Restore preserved files to impl artifacts root (not nested in removed dir)
-        mkdir -p "${IMPL_ARTIFACTS}/auto-bmad"
-        if [[ -n "$json_backup" ]]; then
-            local final_json="${IMPL_ARTIFACTS}/auto-bmad/review-log--${STORY_SHORT_ID}.json"
-            mv "$json_backup" "$final_json"
-            echo -e "  ${GREEN}✓${NC} Review log: ${final_json}"
-        fi
+        # Restore pipeline report to impl artifacts root (not nested in removed dir)
         if [[ -n "$report_backup" ]]; then
+            mkdir -p "${IMPL_ARTIFACTS}/auto-bmad"
             local final_report="${IMPL_ARTIFACTS}/auto-bmad/pipeline-report--${STORY_SHORT_ID}.md"
             mv "$report_backup" "$final_report"
             echo -e "  ${GREEN}✓${NC} Pipeline report: ${final_report}"
