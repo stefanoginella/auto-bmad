@@ -415,7 +415,7 @@ git_squash_pipeline() {
 extract_story_commit_msg() {
     local msg=""
     if [[ -n "$STORY_FILE_PATH" && -f "$STORY_FILE_PATH" ]]; then
-        msg="$(sed -n '/## Auto-bmad Completion/,/^## /{ /^```/,/^```/{ /^```/d; p; }; }' "$STORY_FILE_PATH" 2>/dev/null | head -5)"
+        msg="$(sed -n '/## Auto-bmad Completion/,/^## /{ /^```/,/^```/{ /^```/d; p; }; }' "$STORY_FILE_PATH" 2>/dev/null)"
     fi
     if [[ -z "$msg" ]]; then
         local slug="${STORY_ID#*-*-}"
@@ -1629,7 +1629,7 @@ Perform ALL of the following:
    Fix anything that is missing or incomplete.
 
 2. Add an '## Auto-bmad Pipeline Artifacts' section after the Dev Agent Record. This is a reference index ONLY — do not duplicate content already in the Dev Agent Record, Change Log, or the artifacts themselves. List each artifact with a one-line outcome (pass/fail/N findings). Skip any that don't exist:
-   - Pipeline report: ${STORY_ARTIFACTS}/pipeline-report.md
+   - Pipeline report: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-6.1-pipeline-report.md
    - Spec triage: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md
    - Code acceptance audit: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md
    - Code triage: ${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md
@@ -1687,8 +1687,7 @@ step_6_2_close() {
 run_pipeline() {
     local story_file_ref="${STORY_FILE_PATH:-the implementation-artifacts directory}"
 
-    # Record baseline commit for final squash
-    COMMIT_BASELINE="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null)"
+    # COMMIT_BASELINE is set in main() before log init (resume path needs it from log header)
 
     # --- Phase 0: Epic Start ---
     if is_epic_start && [[ "$SKIP_EPIC_PHASES" == "false" ]]; then
@@ -2029,23 +2028,48 @@ main() {
     STORY_ARTIFACTS="${IMPL_ARTIFACTS}/auto-bmad/${STORY_SHORT_ID}"
     TMP_DIR="${PROJECT_ROOT}/.tmp/auto-bmad/${STORY_SHORT_ID}"
     PIPELINE_LOG="${TMP_DIR}/pipeline.log"
-    PIPELINE_REPORT="${STORY_ARTIFACTS}/pipeline-report.md"
+    PIPELINE_REPORT="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-6.1-pipeline-report.md"
     mkdir -p "$STORY_ARTIFACTS" "$TMP_DIR"
+
+    # Record baseline commit for final squash (captured early so resume path can persist it)
+    COMMIT_BASELINE="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null)"
 
     # Initialize raw pipeline log in TMP_DIR — temporary, converted to report at finalization
     local branch_name
     branch_name="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'n/a')"
-    {
-        printf "# Pipeline — %s\n" "$STORY_ID"
-        printf "# Started: %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        printf "# Branch: %s\n" "$branch_name"
-        [[ -n "$FROM_STEP" ]] && printf "# Resumed from: %s\n" "$FROM_STEP"
-        printf "#\n"
-        printf "# %-6s  %-20s  %-22s  %-10s  %-8s  %s\n" \
-            "Step" "Timestamp" "CLI/Model" "Duration" "Status" "Name"
-    } > "$PIPELINE_LOG"
 
-    PIPELINE_START_TIME=$(date +%s)
+    if [[ -n "$FROM_STEP" && -f "$PIPELINE_LOG" ]]; then
+        # ── RESUME PATH: preserve existing log, restore original start time + baseline ──
+        local orig_started
+        orig_started="$(grep -m1 '^# Started:' "$PIPELINE_LOG" | sed 's/^# Started: //')"
+        if [[ -n "$orig_started" ]]; then
+            PIPELINE_START_TIME=$(date -jf "%Y-%m-%dT%H:%M:%SZ" "$orig_started" +%s 2>/dev/null \
+                               || date -d "$orig_started" +%s 2>/dev/null \
+                               || date +%s)
+        else
+            PIPELINE_START_TIME=$(date +%s)
+        fi
+
+        local orig_baseline
+        orig_baseline="$(grep -m1 '^# Baseline:' "$PIPELINE_LOG" | sed 's/^# Baseline: //')"
+        [[ -n "$orig_baseline" ]] && COMMIT_BASELINE="$orig_baseline"
+
+        # Strip prior failure/resume footer, append resume marker
+        sed -i '' '/^# FAILED at step/d; /^# Resume:/d' "$PIPELINE_LOG"
+        printf "# Resumed from: %s at %s\n" "$FROM_STEP" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$PIPELINE_LOG"
+    else
+        # ── FRESH PATH: new pipeline log ──
+        {
+            printf "# Pipeline — %s\n" "$STORY_ID"
+            printf "# Started: %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf "# Branch: %s\n" "$branch_name"
+            printf "# Baseline: %s\n" "${COMMIT_BASELINE:-n/a}"
+            printf "#\n"
+            printf "# %-6s  %-20s  %-22s  %-10s  %-8s  %s\n" \
+                "Step" "Timestamp" "CLI/Model" "Duration" "Status" "Name"
+        } > "$PIPELINE_LOG"
+        PIPELINE_START_TIME=$(date +%s)
+    fi
 
     echo ""
     echo -e "${BOLD}${MAGENTA}╔═════════════════════════════════════════════════════════╗${NC}"
