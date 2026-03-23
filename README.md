@@ -179,9 +179,9 @@ Options:
 | Phase | Steps | Name | What happens |
 |-------|-------|------|-------------|
 | 0 | 0.1 | Epic Start | TEA Test Design at epic level. *Only runs on the first story in an epic.* |
-| 1 | 1.1, 1.2a-f, 1.3, 1.4 | Story Preparation | Create story, 6 parallel spec reviews (3 AIs × validate + adversarial), triage, fix patch items |
+| 1 | 1.1, 1.2a-c, 1.3, 1.4 | Story Preparation | Create story, 3 parallel spec validations (GPT, MiMo, Claude), triage, resolve findings |
 | 2 | 2.1, 2.2 | TDD + Implementation | Generate failing acceptance tests (red phase), then implement (green phase) |
-| 3 | 3.1a-f, 3.2, 3.3, 3.4 | Code Review | 6 parallel code reviews (3 AIs × 2 types), acceptance audit, triage, dev fix |
+| 3 | 3.1a-f, 3.2, 3.3, 3.4, 3.5 | Code Review | 6 parallel code reviews (3 AIs × 2 types), acceptance audit, triage, dev fix, resolve spec findings |
 | 4 | 4.1, 4.2 | Traceability | Testarch trace + test automation expansion |
 | 5 | 5.1-5.3, 5.4, 5.5 | Epic End | Epic trace/NFR/test review, retrospective, project context. *Only runs on the last story in an epic.* |
 | 6 | 6.1, 6.2 | Finalization | Tech writer documents story, scrum master closes it |
@@ -213,14 +213,14 @@ The story script creates a `story/{STORY_ID}` branch from `main` at the start. D
 ### Artifacts
 
 Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bmad/{SHORT_ID}/`:
-- Spec triage (`*-1.3-spec-triage.md`) — classified spec findings with reviewer signal assessment and overlap matrix
+- Spec triage (`*-1.3-spec-triage.md`) — classified spec findings with resolution status
 - Code acceptance audit (`*-3.2-code-acceptance.md`) — AC compliance matrix (PASS / PARTIAL / FAIL per criterion)
 - Code triage (`*-3.3-code-triage.md`) — classified code findings with reviewer signal assessment and overlap matrix
 - Pipeline report (`pipeline-report.md`) — timestamps, CLI/model per step, wall/compute time, git diff stats
 
 ### Review Modes
 
-Both Phase 1 (spec) and Phase 3 (code) run 6 parallel reviews (3 AIs × 2 types) with structured triage and automated fix. Two flags control this:
+Phase 1 runs 3 parallel spec validations; Phase 3 runs 6 parallel code reviews (3 AIs × 2 types). Both use structured triage with automated resolution. Two flags control this:
 
 - **`--fast-reviews`** — Run only the first GPT reviewer per phase, skip triage+fix steps. Good for iteration.
 - **`--skip-reviews`** — Skip all review phases entirely. Pipeline becomes: create story → implement → document → close. Supersedes `--fast-reviews` if both are passed.
@@ -400,7 +400,7 @@ AI_MIMO="opencode|opencode/some-other-model|max"
 Edit `step_config()` in `auto-bmad-story.sh` to reassign steps to different AI profiles. Step IDs use a consistent scheme:
 
 - **Numeric** (N.M) — sequential steps, run one at a time
-- **Letter suffix** (N.Ma, N.Mb, ...) — parallel slots within a phase. Phases 1 and 3: a,b=GPT, c,d=MiMo, e,f=Claude.
+- **Letter suffix** (N.Ma, N.Mb, ...) — parallel slots within a phase. Phase 1: a=GPT, b=MiMo, c=Claude. Phase 3: a,b=GPT, c,d=MiMo, e,f=Claude.
 - **Sequential after parallel** (N.M+1) — synthesis step that runs after parallel slots complete (triage, fix)
 
 ### Git / CI Configuration
