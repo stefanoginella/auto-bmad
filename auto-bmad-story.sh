@@ -85,7 +85,7 @@ BMAD_MANIFEST="${PROJECT_ROOT}/_bmad/_config/manifest.yaml"
 
 # BMad versions this script was built/tested against
 BMAD_BUILD_VERSION="6.2.0"
-BMAD_BUILD_TEA_VERSION="1.7.1"
+BMAD_BUILD_TEA_VERSION="1.7.2"
 
 # ============================================================
 # CLI Tools

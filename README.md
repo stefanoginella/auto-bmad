@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 [![Language: Bash](https://img.shields.io/badge/Language-Bash-green.svg)]()
 [![BMad: 6.2.0](https://img.shields.io/badge/BMad-6.2.0-purple.svg)](https://github.com/bmad-code-org/BMAD-METHOD)
-[![TEA: 1.7.1](https://img.shields.io/badge/TEA-1.7.1-red.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise)
+[![TEA: 1.7.2](https://img.shields.io/badge/TEA-1.7.2-red.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise)
 
 Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with structured triage reviews — designed for unattended, sandboxed execution.
 
@@ -114,7 +114,7 @@ Triage evaluates on **argument quality**, not reviewer count. A single reviewer 
 
 - **Bash** 3.2+
 - **Git** repository with a `main` branch
-- **BMad framework** installed (`_bmad/` directory) — tested against BMad 6.2.0 / TEA 1.7.1
+- **BMad framework** installed (`_bmad/` directory) — tested against BMad 6.2.0 / TEA 1.7.2
 - **Sprint status** generated at `_bmad-output/implementation-artifacts/sprint-status.yaml`
 
 ### AI CLIs (all three needed for full parallel reviews)
