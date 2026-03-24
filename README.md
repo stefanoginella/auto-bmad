@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 [![Language: Bash](https://img.shields.io/badge/Language-Bash-green.svg)]()
-[![BMad: 6.2.0](https://img.shields.io/badge/BMad-6.2.0-purple.svg)](https://github.com/bmad-code-org/BMAD-METHOD)
+[![BMad: 6.2.1](https://img.shields.io/badge/BMad-6.2.1-purple.svg)](https://github.com/bmad-code-org/BMAD-METHOD)
 [![TEA: 1.7.2](https://img.shields.io/badge/TEA-1.7.2-red.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise)
 
 Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with structured triage reviews — designed for unattended, sandboxed execution.

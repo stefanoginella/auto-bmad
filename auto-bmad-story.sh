@@ -84,7 +84,7 @@ SPRINT_STATUS="${IMPL_ARTIFACTS}/sprint-status.yaml"
 BMAD_MANIFEST="${PROJECT_ROOT}/_bmad/_config/manifest.yaml"
 
 # BMad versions this script was built/tested against
-BMAD_BUILD_VERSION="6.2.0"
+BMAD_BUILD_VERSION="6.2.1"
 BMAD_BUILD_TEA_VERSION="1.7.2"
 
 # ============================================================
@@ -181,6 +181,7 @@ STORY_ARTIFACTS=""   # permanent artifacts (triage reports, pipeline report)
 TMP_DIR=""           # temp files (individual reviews, step logs) — cleaned on success
 PIPELINE_LOG=""      # raw step log in TMP_DIR (temporary)
 PIPELINE_REPORT=""   # structured markdown in STORY_ARTIFACTS (permanent)
+DEFERRED_WORK_FILE="" # persistent cross-story deferred work tracker
 CURRENT_STEP_LOG=""
 COMMIT_BASELINE=""   # SHA before pipeline — used for final squash
 DRY_RUN=false
@@ -1309,7 +1310,7 @@ step_1_4_resolve_spec_findings() {
     local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
     run_ai "1.4" "/bmad-analyst yolo - Read the spec triage report at ${triage_report}.
 
-Resolve ALL items classified as 'patch', 'bad_spec', or 'intent_gap' in the decision summary table. For each finding, follow the appropriate strategy:
+Resolve ALL items classified as 'patch', 'bad_spec', 'intent_gap', or 'defer' in the decision summary table. For each finding, follow the appropriate strategy:
 
 **patch** — Fix directly in the story file:
 1. Read the detailed rationale to understand what needs to change
@@ -1319,14 +1320,18 @@ Resolve ALL items classified as 'patch', 'bad_spec', or 'intent_gap' in the deci
 **bad_spec** — The upstream spec (epic, architecture, PRD) is wrong or ambiguous:
 1. Read the relevant upstream artifacts (epic, architecture, PRD) to understand the full context
 2. Amend the story to resolve the ambiguity, picking the interpretation most consistent with upstream intent
-3. Add a Change Log entry with: [bad_spec] tag, finding ID, what was ambiguous, which upstream artifact informed the decision, what was changed in the story, and the rationale
+3. Add a Change Log entry with: [bad_spec] tag, finding ID, what was ambiguous, which upstream artifact informed the decision, what was changed in the story, and the rationale. Also record:
+   - **Known-bad state**: what incorrect interpretation the original spec permitted
+   - **What the amendment avoids**: the specific failure mode now prevented
 
 **intent_gap** — The captured intent is incomplete:
 1. Search upstream artifacts (epic, architecture, PRD, project context) for information that fills the gap
-2. If fillable from existing artifacts: amend the story and add a Change Log entry with: [intent_gap] tag, finding ID, what was missing, which upstream artifact provided the answer, what was added to the story, and the reasoning
+2. If fillable from existing artifacts: amend the story and add a Change Log entry with: [intent_gap] tag, finding ID, what was missing, which upstream artifact provided the answer, what was added to the story, and the reasoning. Also record:
+   - **Known-bad state**: what behavior gap existed without this information
+   - **What the amendment avoids**: the specific failure mode now prevented
 3. If NOT fillable (the information simply does not exist in any upstream artifact): do NOT invent new requirements. Instead, append to the triage report a section '## Unresolvable Findings' listing each unfillable intent_gap with: finding ID, title, what is missing, and why it cannot be inferred. Then move on.
 
-**defer** — Skip (pre-existing, not this story's concern).
+**defer** — Pre-existing, not this story's concern. Append each defer item to the deferred work tracker at ${DEFERRED_WORK_FILE}. If the file does not exist, create it with a '# Deferred Work' heading. Add a '## Story ${STORY_ID} — Phase 1 Spec Triage' sub-heading (if not already present), then one bullet per defer finding: '- **[finding ID]** [title]: [one-line description]'.
 
 CONSTRAINT: When resolving bad_spec or intent_gap, you may ONLY use information already present in upstream artifacts. Do NOT invent new requirements, tasks, or acceptance criteria.
 
@@ -1437,40 +1442,55 @@ Where: Survived = not rejected, Unique = only this reviewer caught it, Dupes = a
 
 step_3_4_dev_fix() {
     local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
+    local acceptance_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md"
     run_ai "3.4" "/bmad-dev yolo - Read the triage report at ${triage_report}.
+
+Also read the acceptance audit at ${acceptance_report}. Before fixing anything, identify all acceptance criteria currently graded PASS — these are KEEP items. Any fix you apply MUST preserve the passing behavior of those criteria.
 
 Fix ALL items classified as 'patch' in the decision summary table. For each patch item:
 1. Read the detailed rationale to understand what needs to change
 2. Implement the fix
 3. Verify the fix doesn't break existing tests
+4. Verify the fix preserves all KEEP items (PASS criteria from the acceptance audit)
 
 Skip items classified as 'intent_gap', 'bad_spec', 'defer', or 'reject' — those require spec-level resolution, not code fixes.
 
-After all fixes, briefly note what you changed for each patch item."
+After all fixes, briefly note what you changed for each patch item and confirm no KEEP items were regressed."
 }
 
 step_3_5_resolve_code_spec_findings() {
     local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
+    local acceptance_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md"
     run_ai "3.5" "/bmad-analyst yolo - Read the code triage report at ${triage_report}.
 
-Resolve ALL items classified as 'bad_spec' or 'intent_gap' in the decision summary table. These are spec-level issues surfaced during code review — the dev has already fixed 'patch' items in step 3.4 and code is already implemented.
+Also read the acceptance audit at ${acceptance_report} to understand which acceptance criteria currently PASS. These are KEEP items — any spec amendment must preserve these passing behaviors.
+
+Resolve ALL items classified as 'bad_spec', 'intent_gap', or 'defer' in the decision summary table. These are spec-level issues surfaced during code review — the dev has already fixed 'patch' items in step 3.4 and code is already implemented.
 
 IMPORTANT: Since implementation is already complete, every story amendment must be thoroughly documented so reviewers can trace what changed, why, and whether the existing code still aligns.
 
 **bad_spec** — The spec led to incorrect or ambiguous implementation:
 1. Read the relevant upstream artifacts (epic, architecture, PRD) to understand the full context
 2. Amend the story file to clarify the spec, picking the interpretation most consistent with upstream intent
-3. Add a Change Log entry with: [bad_spec:post-impl] tag, finding ID, what was ambiguous in the original spec, which upstream artifact informed the decision, the exact story sections modified (quote old → new), and whether the current implementation (including any step 3.4 fixes) is consistent with the resolution — flag any inconsistency explicitly
+3. Add a Change Log entry with: [bad_spec:post-impl] tag, finding ID, what was ambiguous in the original spec, which upstream artifact informed the decision, the exact story sections modified (quote old → new), and whether the current implementation (including any step 3.4 fixes) is consistent with the resolution — flag any inconsistency explicitly. Also record:
+   - **Known-bad state**: what incorrect behavior or interpretation the original spec permitted
+   - **What the amendment avoids**: the specific failure mode now prevented
+   - **KEEP notes**: if code is re-derived from this spec in the future, list any KEEP items (PASS criteria from the acceptance audit) that must be preserved
 4. If the implementation diverges from the amended spec, note this clearly as a follow-up action item in the Change Log — do NOT modify code
 
 **intent_gap** — Code review found the captured intent is incomplete:
 1. Search upstream artifacts (epic, architecture, PRD, project context) for information that fills the gap
-2. If fillable from existing artifacts: amend the story and add a Change Log entry with: [intent_gap:post-impl] tag, finding ID, what was missing, which upstream artifact provided the answer, the exact story sections modified (quote old → new), and whether the current implementation covers this gap — flag if it does not
+2. If fillable from existing artifacts: amend the story and add a Change Log entry with: [intent_gap:post-impl] tag, finding ID, what was missing, which upstream artifact provided the answer, the exact story sections modified (quote old → new), and whether the current implementation covers this gap — flag if it does not. Also record:
+   - **Known-bad state**: what behavior gap existed without this information
+   - **What the amendment avoids**: the specific failure mode now prevented
+   - **KEEP notes**: if code is re-derived, list any KEEP items that must be preserved
 3. If NOT fillable: do NOT invent new requirements. Instead, append to the triage report a section '## Unresolvable Findings' listing each unfillable intent_gap with: finding ID, title, what is missing, and why it cannot be inferred. Then move on.
 
-Skip 'patch' (already fixed by dev), 'defer', and 'reject' items.
+**defer** — Pre-existing, not this story's concern. Append each defer item to the deferred work tracker at ${DEFERRED_WORK_FILE}. If the file does not exist, create it with a '# Deferred Work' heading. Add a '## Story ${STORY_ID} — Phase 3 Code Triage' sub-heading (if not already present), then one bullet per defer finding: '- **[finding ID]** [title]: [one-line description]'.
 
-CONSTRAINT: You may ONLY use information already present in upstream artifacts. Do NOT invent new requirements, tasks, or acceptance criteria. Do NOT modify any code — only amend the story file and document changes.
+Skip 'patch' (already fixed by dev) and 'reject' items.
+
+CONSTRAINT: You may ONLY use information already present in upstream artifacts. Do NOT invent new requirements, tasks, or acceptance criteria. Do NOT modify any code — only amend the story file and document changes. Any amended spec must be consistent with KEEP items (PASS criteria from the acceptance audit). If an amendment would invalidate a KEEP item, flag the conflict explicitly in the Change Log entry.
 
 After all resolutions, briefly note what you changed for each item and its category."
 }
@@ -1605,6 +1625,13 @@ generate_pipeline_report() {
         echo "|-------|---------------|----------|-------------|------------|"
         echo ""
 
+        # Placeholder for suggested review order (populated by tech-writer step 6.1)
+        echo "## Suggested Review Order"
+        echo ""
+        echo "<!-- Populated by the tech-writer step. Organize stops by concern, not by file. -->"
+        echo "<!-- For each stop: file:line reference and one-line framing of what to look for. -->"
+        echo ""
+
     } > "$PIPELINE_REPORT"
 }
 
@@ -1640,7 +1667,15 @@ Perform ALL of the following:
    - Fill in the aggregate table (Model | Total Findings | Accepted | Accept Rate | Avg Signal)
    - Remove the HTML comment placeholder
 
-4. Add an '## Auto-bmad Completion' section with ONLY information not already captured in the Dev Agent Record or Change Log:
+4. Populate the 'Suggested Review Order' section in the pipeline report. This is a navigable review trail for human reviewers:
+   - Read all code changes (commits ${COMMIT_BASELINE}..HEAD) and the triage reports to understand what changed and where findings concentrated
+   - Organize stops by CONCERN (e.g., 'state management', 'error handling', 'API contract'), not by file
+   - Each stop: file path with line number, one-line framing of what to look for at that stop
+   - Order stops so each builds on context from the previous one (data model before API, API before UI)
+   - Prioritize stops around areas where triage findings were concentrated
+   - Remove the HTML comment placeholder
+
+5. Add an '## Auto-bmad Completion' section with ONLY information not already captured in the Dev Agent Record or Change Log:
 
    ### Pipeline Summary
    - Duration, models used, result (steps passed, files changed), link to pipeline-report.md
@@ -2027,6 +2062,7 @@ main() {
     TMP_DIR="${PROJECT_ROOT}/.tmp/auto-bmad/${STORY_SHORT_ID}"
     PIPELINE_LOG="${TMP_DIR}/pipeline.log"
     PIPELINE_REPORT="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-6.1-pipeline-report.md"
+    DEFERRED_WORK_FILE="${IMPL_ARTIFACTS}/auto-bmad/deferred-work.md"
     mkdir -p "$STORY_ARTIFACTS" "$TMP_DIR"
 
     # Record baseline commit for final squash (captured early so resume path can persist it)
