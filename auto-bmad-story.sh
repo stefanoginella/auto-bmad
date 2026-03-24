@@ -578,6 +578,25 @@ extract_story_num() {
     echo "${remainder%%-*}"
 }
 
+# Find the story ID immediately preceding STORY_ID in sprint status.
+# Returns empty string if current story is the first in the sprint.
+_find_previous_story() {
+    local prev=""
+    while IFS=: read -r key _status; do
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        case "$key" in
+            \#*|""|epic-*|generated*|last_updated*|project*|tracking_system*|story_location*|development_status*) continue ;;
+        esac
+        [[ "$key" =~ ^[0-9]+-[0-9]+- ]] || continue
+        if [[ "$key" == "$STORY_ID" ]]; then
+            echo "$prev"
+            return 0
+        fi
+        prev="$key"
+    done < "$SPRINT_STATUS"
+    echo ""
+}
+
 is_epic_start() {
     local story_num
     story_num="$(extract_story_num)"
@@ -790,6 +809,104 @@ check_git_branch() {
     echo ""
     if ! _confirm "    Continue on ${current_branch} anyway? [y/N] "; then
         exit 1
+    fi
+}
+
+# ============================================================
+# Git Pre-flight Checks (run before branch selection)
+# ============================================================
+# Validates git state before check_git_branch() selects/creates branches.
+# All checks are soft-gated (_confirm) in interactive mode, hard gates in CI.
+
+preflight_git_checks() {
+    [[ "$SKIP_GIT" == "true" ]] && { log_skip "Git pre-flight — --skip-git"; return 0; }
+    [[ "$DRY_RUN" == "true" ]] && { log_skip "Git pre-flight — --dry-run"; return 0; }
+
+    # Verify we're in a git repo
+    git -C "$PROJECT_ROOT" rev-parse --git-dir &>/dev/null || {
+        log_warn "Not a git repository — skipping git pre-flight"
+        return 0
+    }
+
+    local current_branch
+    current_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+
+    # 1. Dirty working tree — prevent silent carry-over of uncommitted changes
+    if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
+       ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null || \
+       [[ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+        echo ""
+        log_warn "Working tree has uncommitted changes"
+        echo -e "    Uncommitted files may leak into the story branch."
+        echo ""
+        if ! _confirm "    Continue with dirty working tree? [y/N] "; then
+            echo -e "    ${DIM}Commit or stash your changes first.${NC}"
+            exit 1
+        fi
+    fi
+
+    # 2. Unmerged previous story branch — prevent building on incomplete work
+    local prev_story
+    prev_story="$(_find_previous_story)"
+    if [[ -n "$prev_story" ]]; then
+        local prev_branch="story/${prev_story}"
+        # Only flag if branch exists locally (deleted branch = assumed merged & cleaned up)
+        if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/${prev_branch}" 2>/dev/null; then
+            local main_ref="main"
+            git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/master" 2>/dev/null && \
+                ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/main" 2>/dev/null && \
+                main_ref="master"
+            if ! git -C "$PROJECT_ROOT" merge-base --is-ancestor "refs/heads/${prev_branch}" "refs/heads/${main_ref}" 2>/dev/null; then
+                echo ""
+                log_error "Previous story branch not merged!"
+                echo -e "    Branch ${BOLD}${prev_branch}${NC} exists but is not merged into ${BOLD}${main_ref}${NC}."
+                echo -e "    Story ${BOLD}${STORY_ID}${NC} may depend on work from ${BOLD}${prev_story}${NC}."
+                echo ""
+                echo -e "    Options:"
+                echo -e "      ${DIM}gh pr merge${NC}                                   # merge the open PR"
+                echo -e "      ${DIM}git checkout ${main_ref} && git merge ${prev_branch}${NC}"
+                echo -e "      ${DIM}./auto-bmad-story.sh --story ${prev_story}${NC}    # finish previous story"
+                echo ""
+                if ! _confirm "    Continue anyway (previous story may be independent)? [y/N] "; then
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+
+    # 3. Stale main — warn if local main is behind origin (network-dependent)
+    if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+        if git -C "$PROJECT_ROOT" ls-remote --exit-code origin HEAD &>/dev/null 2>&1; then
+            git -C "$PROJECT_ROOT" fetch origin "$current_branch" --quiet 2>/dev/null || true
+            local behind
+            behind="$(git -C "$PROJECT_ROOT" rev-list HEAD..origin/"$current_branch" --count 2>/dev/null || echo 0)"
+            if (( behind > 0 )); then
+                echo ""
+                log_warn "${current_branch} is ${behind} commit(s) behind origin/${current_branch}"
+                echo -e "    You may be branching from stale code."
+                echo ""
+                if ! _confirm "    Continue without pulling? [y/N] "; then
+                    echo -e "    ${DIM}git pull origin ${current_branch}${NC}"
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+
+    # 4. Story branch exists on remote but not locally — avoid shadowing remote work
+    local expected_branch="story/${STORY_ID}"
+    if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/${expected_branch}" 2>/dev/null; then
+        if git -C "$PROJECT_ROOT" ls-remote --exit-code origin "refs/heads/${expected_branch}" &>/dev/null 2>&1; then
+            echo ""
+            log_warn "Branch ${expected_branch} exists on remote but not locally"
+            echo -e "    Someone may have already started this story."
+            echo -e "    Options:"
+            echo -e "      ${DIM}git checkout ${expected_branch}${NC}   # track the remote branch"
+            echo ""
+            if ! _confirm "    Create a new local branch from ${current_branch} instead? [y/N] "; then
+                exit 1
+            fi
+        fi
     fi
 }
 
@@ -2056,6 +2173,7 @@ main() {
     extract_epic_id
     extract_short_id
 
+    preflight_git_checks
     check_git_branch
 
     STORY_ARTIFACTS="${IMPL_ARTIFACTS}/auto-bmad/${STORY_SHORT_ID}"
