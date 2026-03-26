@@ -7,10 +7,14 @@ set -euo pipefail
 # Dispatches subcommands to the underlying scripts.
 #
 # Usage: auto-bmad <command> [options]
-#   story    Run the story pipeline (auto-bmad-story)
-#   epic     Run the epic pipeline  (auto-bmad-epic)
-#   help     Show this help message
-#   version  Print version info
+#   story      Run the story pipeline (auto-bmad-story)
+#   epic       Run the epic pipeline  (auto-bmad-epic)
+#   status     Show current pipeline state at a glance
+#   quickstart First-run setup wizard — check tools and readiness
+#   validate   Validate sprint-status.yaml
+#   config     Show resolved configuration
+#   help       Show this help message
+#   version    Print version info
 # ============================================================
 
 # --- Resolve real script directory (symlink-safe, POSIX-portable) ---
@@ -38,10 +42,14 @@ auto-bmad — Unified CLI for the Auto-BMAD Pipeline
 Usage: auto-bmad <command> [options]
 
 Commands:
-  story    Run the story pipeline (one story at a time)
-  epic     Run the epic pipeline  (all stories in an epic)
-  help     Show this help message
-  version  Print version info
+  story      Run the story pipeline (one story at a time)
+  epic       Run the epic pipeline  (all stories in an epic)
+  status     Show current pipeline state at a glance
+  quickstart First-run setup wizard — check tools and readiness
+  validate   Validate sprint-status.yaml structure and content
+  config     Show resolved configuration (pipeline.conf + profiles)
+  help       Show this help message
+  version    Print version info
 
 Run 'auto-bmad <command> --help' for command-specific options.
 
@@ -50,7 +58,537 @@ Examples:
   auto-bmad story --dry-run                # Preview story pipeline
   auto-bmad epic --epic 2                  # Run epic 2
   auto-bmad epic --dry-run                 # Preview epic pipeline
+  auto-bmad status                         # Show current pipeline state
+  auto-bmad quickstart                     # Check tool readiness
 EOF
+}
+
+# --- Status Command ---
+_cmd_status() {
+    # Verify git repo
+    if ! git rev-parse --git-dir &>/dev/null 2>&1; then
+        log_error "Not a git repository"
+        echo "    Run this command from within a project directory."
+        return 1
+    fi
+
+    # Detect paths (safe — _detect_impl_artifacts uses PROJECT_ROOT)
+    local impl_artifacts sprint_status
+    impl_artifacts="$(_detect_impl_artifacts)"
+    sprint_status="${impl_artifacts}/sprint-status.yaml"
+
+    if [[ ! -f "$sprint_status" ]]; then
+        log_error "No sprint-status.yaml found"
+        echo "    Expected: ${sprint_status}"
+        echo "    Run 'auto-bmad quickstart' to check project setup."
+        return 1
+    fi
+
+    # Set globals needed by detection functions
+    IMPL_ARTIFACTS="$impl_artifacts"
+    SPRINT_STATUS="$sprint_status"
+
+    # --- Detect current story ---
+    # Use a softer approach: don't exit on failure, just report
+    local story_id="" story_status=""
+    local in_progress_found="" first_backlog=""
+
+    while IFS=: read -r key status; do
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        status="${status#"${status%%[![:space:]]*}"}"; status="${status%"${status##*[![:space:]]}"}"
+        case "$key" in
+            \#*|""|epic-*|generated*|last_updated*|project*|tracking_system*|story_location*|development_status*) continue ;;
+        esac
+        [[ "$key" =~ ^[0-9]+-[0-9]+- ]] || continue
+        if [[ "$status" == "in-progress" && -z "$in_progress_found" ]]; then
+            in_progress_found="$key"
+        fi
+        if [[ "$status" == "backlog" && -z "$first_backlog" ]]; then
+            first_backlog="$key"
+        fi
+    done < "$SPRINT_STATUS"
+
+    if [[ -n "$in_progress_found" ]]; then
+        story_id="$in_progress_found"
+        story_status="in-progress"
+    elif [[ -n "$first_backlog" ]]; then
+        story_id="$first_backlog"
+        story_status="backlog (next)"
+    fi
+
+    # --- Detect epic ---
+    local epic_id=""
+    if [[ -n "$story_id" ]]; then
+        epic_id="${story_id%%-*}"
+    else
+        # Try to find any active epic
+        while IFS=: read -r key status; do
+            key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+            status="${status#"${status%%[![:space:]]*}"}"; status="${status%"${status##*[![:space:]]}"}"
+            [[ "$key" =~ ^epic-([0-9]+)$ ]] || continue
+            if [[ "$status" == "in-progress" || "$status" == "backlog" ]]; then
+                epic_id="${key#epic-}"
+                break
+            fi
+        done < "$SPRINT_STATUS"
+    fi
+
+    # --- Branch info ---
+    local current_branch=""
+    current_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" || true
+    local on_story_branch=false
+    local branch_display=""
+    local last_checkpoint=""
+
+    if [[ -n "$story_id" ]]; then
+        load_pipeline_conf
+        local branch_tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
+        local expected_branch
+        STORY_ID="$story_id"
+        eval "expected_branch=\"${branch_tmpl}\""
+
+        if [[ "$current_branch" == "$expected_branch" ]]; then
+            on_story_branch=true
+            # Count commits ahead of main
+            local main_ref="main"
+            git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/main" 2>/dev/null || main_ref="master"
+            local ahead_count
+            ahead_count="$(git -C "$PROJECT_ROOT" rev-list "${main_ref}..HEAD" --count 2>/dev/null || echo 0)"
+            if (( ahead_count > 0 )); then
+                branch_display="${expected_branch} (${ahead_count} commit$([ "$ahead_count" != "1" ] && echo "s") ahead of ${main_ref})"
+            else
+                branch_display="${expected_branch} (even with ${main_ref})"
+            fi
+
+            # Last checkpoint commit
+            last_checkpoint="$(git -C "$PROJECT_ROOT" log --oneline -1 --format='%s' 2>/dev/null || echo "")"
+        else
+            branch_display="${current_branch} (expected: ${expected_branch})"
+        fi
+    else
+        branch_display="${current_branch}"
+    fi
+
+    # --- Previous story info ---
+    local prev_story="" prev_status_display=""
+    local prev_unresolved=0
+
+    if [[ -n "$story_id" && -n "$epic_id" ]]; then
+        STORY_ID="$story_id"
+        EPIC_ID="$epic_id"
+        prev_story="$(_find_previous_story)"
+
+        if [[ -n "$prev_story" ]]; then
+            # Check if previous story is same epic
+            local prev_epic="${prev_story%%-*}"
+            if [[ "$prev_epic" == "$epic_id" ]]; then
+                # Check previous story status in sprint-status
+                local prev_ss=""
+                while IFS=: read -r key status; do
+                    key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+                    status="${status#"${status%%[![:space:]]*}"}"; status="${status%"${status##*[![:space:]]}"}"
+                    if [[ "$key" == "$prev_story" ]]; then
+                        prev_ss="$status"
+                        break
+                    fi
+                done < "$SPRINT_STATUS"
+
+                case "$prev_ss" in
+                    done) prev_status_display="done" ;;
+                    in-progress) prev_status_display="in-progress" ;;
+                    backlog) prev_status_display="backlog" ;;
+                    *) prev_status_display="$prev_ss" ;;
+                esac
+
+                # Check for merged PR
+                if [[ "$prev_ss" == "done" ]]; then
+                    local prev_branch="story/${prev_story}"
+                    local main_ref="main"
+                    git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/main" 2>/dev/null || main_ref="master"
+                    local pr_merged=false
+                    local pr_number
+                    pr_number="$(gh pr list --head "$prev_branch" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")"
+                    if [[ -n "$pr_number" ]]; then
+                        pr_merged=true
+                    else
+                        # Fallback: check if branch is ancestor of main
+                        if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/${prev_branch}" 2>/dev/null; then
+                            git -C "$PROJECT_ROOT" merge-base --is-ancestor "refs/heads/${prev_branch}" "refs/heads/${main_ref}" 2>/dev/null && pr_merged=true
+                        else
+                            # Branch gone — check for squash commit
+                            local prev_remainder="${prev_story#*-}"
+                            local prev_num="${prev_remainder%%-*}"
+                            local short_id="${prev_epic}-${prev_num}"
+                            if git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="(${short_id})" -1 2>/dev/null | grep -q .; then
+                                pr_merged=true
+                            fi
+                        fi
+                    fi
+                    if [[ "$pr_merged" == true ]]; then
+                        prev_status_display="merged"
+                    fi
+                fi
+
+                # Count deferred items in previous story file
+                local prev_file
+                prev_file="$(_resolve_story_file_path "$prev_story")"
+                if [[ -n "$prev_file" && -f "$prev_file" ]]; then
+                    local in_human_review=false
+                    while IFS= read -r line; do
+                        if [[ "$line" =~ ^##[[:space:]]+(Human\ Review\ Required|Deferred) ]]; then
+                            in_human_review=true
+                            continue
+                        fi
+                        if [[ "$in_human_review" == true && "$line" =~ ^## ]]; then
+                            break
+                        fi
+                        if [[ "$in_human_review" == true && "$line" =~ ^\- ]]; then
+                            prev_unresolved=$((prev_unresolved + 1))
+                        fi
+                    done < "$prev_file"
+                fi
+            else
+                prev_story=""  # Different epic — not relevant
+            fi
+        fi
+    fi
+
+    # --- Collect epic stories ---
+    local -a story_ids=() story_statuses=()
+    if [[ -n "$epic_id" ]]; then
+        while IFS=: read -r key status; do
+            key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+            status="${status#"${status%%[![:space:]]*}"}"; status="${status%"${status##*[![:space:]]}"}"
+            [[ "$key" =~ ^${epic_id}-[0-9]+- ]] || continue
+            story_ids+=("$key")
+            story_statuses+=("$status")
+        done < "$SPRINT_STATUS"
+    fi
+
+    # --- Print output ---
+    echo ""
+    echo -e "  ${BOLD}auto-bmad status${NC}"
+    echo ""
+
+    if [[ -n "$epic_id" ]]; then
+        echo -e "  Epic:            ${BOLD}${epic_id}${NC}"
+    else
+        echo -e "  Epic:            ${DIM}(none detected)${NC}"
+    fi
+
+    if [[ -n "$story_id" ]]; then
+        echo -e "  Current story:   ${BOLD}${story_id}${NC} (${story_status})"
+    else
+        echo -e "  Current story:   ${DIM}(no pending stories)${NC}"
+    fi
+
+    echo -e "  Branch:          ${branch_display}"
+
+    if [[ "$on_story_branch" == true && -n "$last_checkpoint" ]]; then
+        echo -e "  Last checkpoint: ${DIM}${last_checkpoint}${NC}"
+    fi
+
+    if [[ -n "$prev_story" ]]; then
+        local prev_icon=""
+        case "$prev_status_display" in
+            merged)      prev_icon="${GREEN}merged ✓${NC}" ;;
+            done)        prev_icon="${GREEN}done${NC}" ;;
+            in-progress) prev_icon="${YELLOW}in-progress${NC}" ;;
+            *)           prev_icon="${DIM}${prev_status_display}${NC}" ;;
+        esac
+        echo -e "  Previous story:  ${prev_story} (${prev_icon})"
+        if (( prev_unresolved > 0 )); then
+            echo -e "  Unresolved:      ${YELLOW}${prev_unresolved} deferred item$( (( prev_unresolved != 1 )) && echo "s") from ${prev_story}${NC}"
+        fi
+    fi
+
+    # --- Story list ---
+    if [[ ${#story_ids[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "  ${BOLD}Stories in epic ${epic_id}:${NC}"
+        local i
+        for ((i=0; i<${#story_ids[@]}; i++)); do
+            local sid="${story_ids[$i]}"
+            local sst="${story_statuses[$i]}"
+            local num=$((i + 1))
+            local icon prefix
+            case "$sst" in
+                done)
+                    icon="${GREEN}✓${NC}"
+                    prefix="${GREEN}"
+                    ;;
+                in-progress)
+                    icon="${CYAN}►${NC}"
+                    prefix="${BOLD}"
+                    ;;
+                backlog)
+                    icon=" "
+                    prefix="${DIM}"
+                    ;;
+                *)
+                    icon="${DIM}?${NC}"
+                    prefix="${DIM}"
+                    ;;
+            esac
+            echo -e "    ${icon} ${num}. ${prefix}${sid}${NC} (${sst})"
+        done
+    fi
+
+    echo ""
+    return 0
+}
+
+# --- Quickstart Command ---
+_cmd_quickstart() {
+    echo ""
+    echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${CYAN}  auto-bmad quickstart${NC}"
+    echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    local errors=0 warnings=0
+
+    # --- Section 1: Git ---
+    echo -e "  ${BOLD}Git${NC}"
+
+    if ! command -v git &>/dev/null; then
+        log_error "git not found"
+        errors=$((errors + 1))
+    else
+        local git_version
+        git_version="$(git --version 2>/dev/null | sed 's/[^0-9.]//g')"
+        local git_major git_minor
+        git_major="${git_version%%.*}"
+        git_minor="${git_version#*.}"; git_minor="${git_minor%%.*}"
+        # Minimum 2.25
+        if (( git_major < 2 )) || { (( git_major == 2 )) && (( git_minor < 25 )); }; then
+            log_error "git ${git_version} — need >= 2.25"
+            errors=$((errors + 1))
+        else
+            log_ok "git ${git_version}"
+        fi
+    fi
+
+    if git rev-parse --git-dir &>/dev/null 2>&1; then
+        log_ok "In a git repository"
+    else
+        log_warn "Not in a git repository — run from a project directory"
+        warnings=$((warnings + 1))
+    fi
+
+    # --- Section 2: GitHub CLI ---
+    echo ""
+    echo -e "  ${BOLD}GitHub CLI${NC}"
+
+    if ! command -v gh &>/dev/null; then
+        log_error "gh not found"
+        echo -e "    ${DIM}Install: brew install gh${NC}"
+        errors=$((errors + 1))
+    else
+        local gh_version
+        gh_version="$(gh --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g')"
+        if gh auth status &>/dev/null 2>&1; then
+            log_ok "gh ${gh_version} (authenticated)"
+        else
+            log_error "gh ${gh_version} — not authenticated"
+            echo -e "    ${DIM}Run: gh auth login${NC}"
+            errors=$((errors + 1))
+        fi
+    fi
+
+    # --- Section 3: AI CLIs ---
+    echo ""
+    echo -e "  ${BOLD}AI CLIs${NC}"
+
+    local tool installed_tools=0
+    for tool in claude codex copilot opencode; do
+        if command -v "$tool" &>/dev/null; then
+            local tool_version
+            tool_version="$("$tool" --version 2>/dev/null | head -1 || echo "installed")"
+            # Trim to something short
+            case "$tool" in
+                claude)   tool_version="$(echo "$tool_version" | sed 's/.*[Cc]laude[[:space:]]*//' | head -1)" ;;
+                codex)    tool_version="$(echo "$tool_version" | sed 's/.*[Cc]odex[[:space:]]*//' | head -1)" ;;
+                copilot)  tool_version="$(echo "$tool_version" | sed 's/.*[Cc]opilot[[:space:]]*//' | head -1)" ;;
+                opencode) tool_version="$(echo "$tool_version" | sed 's/.*[Oo]pencode[[:space:]]*//' | head -1)" ;;
+            esac
+            # Cap version string length
+            [[ ${#tool_version} -gt 40 ]] && tool_version="${tool_version:0:37}..."
+            log_ok "${tool} (${tool_version})"
+            installed_tools=$((installed_tools + 1))
+        else
+            log_error "${tool} not found"
+            errors=$((errors + 1))
+        fi
+    done
+
+    if (( installed_tools == 0 )); then
+        echo ""
+        echo -e "    ${DIM}At least one AI CLI is required. Install one of:${NC}"
+        echo -e "    ${DIM}  claude: npm install -g @anthropic-ai/claude-code${NC}"
+        echo -e "    ${DIM}  codex:  npm install -g @openai/codex${NC}"
+    fi
+
+    # --- Section 4: Optional tools ---
+    echo ""
+    echo -e "  ${BOLD}Optional tools${NC}"
+
+    if command -v jq &>/dev/null; then
+        local jq_version
+        jq_version="$(jq --version 2>/dev/null | sed 's/[^0-9.]//g')"
+        log_ok "jq ${jq_version} (JSON mode + usage tracking enabled)"
+    else
+        log_warn "jq not found — JSON usage tracking will be disabled"
+        echo -e "    ${DIM}Install: brew install jq${NC}"
+        warnings=$((warnings + 1))
+    fi
+
+    # --- Section 5: BMAD Project ---
+    echo ""
+    echo -e "  ${BOLD}BMAD project${NC}"
+
+    local impl_artifacts sprint_status
+    impl_artifacts="$(_detect_impl_artifacts)"
+    sprint_status="${impl_artifacts}/sprint-status.yaml"
+
+    if [[ -f "$sprint_status" ]]; then
+        log_ok "sprint-status.yaml found"
+
+        # Quick count of epics and stories
+        IMPL_ARTIFACTS="$impl_artifacts"
+        SPRINT_STATUS="$sprint_status"
+        local epic_count=0 story_count=0 in_progress=0
+        while IFS=: read -r key status; do
+            key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+            status="${status#"${status%%[![:space:]]*}"}"; status="${status%"${status##*[![:space:]]}"}"
+            if [[ "$key" =~ ^epic-[0-9]+$ ]]; then
+                epic_count=$((epic_count + 1))
+            fi
+            if [[ "$key" =~ ^[0-9]+-[0-9]+- ]]; then
+                story_count=$((story_count + 1))
+                [[ "$status" == "in-progress" ]] && in_progress=$((in_progress + 1))
+            fi
+        done < "$SPRINT_STATUS"
+        echo -e "    ${DIM}${epic_count} epic(s), ${story_count} story/stories, ${in_progress} in-progress${NC}"
+    else
+        log_warn "sprint-status.yaml not found at ${sprint_status}"
+        echo -e "    ${DIM}The BMAD project must have a sprint-status.yaml in implementation_artifacts.${NC}"
+        warnings=$((warnings + 1))
+    fi
+
+    # Check BMAD install
+    local manifest="${PROJECT_ROOT}/_bmad/_config/manifest.yaml"
+    if [[ -f "$manifest" ]]; then
+        # Extract version from manifest (first version: line)
+        local installed_version=""
+        while IFS= read -r line; do
+            line="${line%$'\r'}"
+            local stripped="${line#"${line%%[![:space:]]*}"}"
+            local key="${stripped%%:*}"
+            local value="${stripped#*:}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            if [[ "$key" == "version" && -z "$installed_version" ]]; then
+                installed_version="$value"
+                break
+            fi
+        done < "$manifest"
+        if [[ -n "$installed_version" ]]; then
+            if [[ "$installed_version" == "$BMAD_BUILD_VERSION" ]]; then
+                log_ok "BMad ${installed_version}"
+            else
+                log_warn "BMad ${installed_version} (expected ${BMAD_BUILD_VERSION})"
+                warnings=$((warnings + 1))
+            fi
+        else
+            log_warn "Could not read BMad version from manifest"
+            warnings=$((warnings + 1))
+        fi
+    else
+        log_warn "BMad manifest not found — is BMAD installed in this project?"
+        echo -e "    ${DIM}Expected: ${manifest}${NC}"
+        warnings=$((warnings + 1))
+    fi
+
+    # --- Section 6: Profile configuration ---
+    echo ""
+    echo -e "  ${BOLD}Profile configuration${NC}"
+
+    local profiles_conf="${SCRIPT_DIR}/conf/profiles.conf"
+    if [[ -f "$profiles_conf" ]]; then
+        # Count profiles and step mappings
+        local profile_count=0 mapping_count=0
+        while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line// /}" ]] && continue
+            if [[ "$line" == @* ]]; then
+                profile_count=$((profile_count + 1))
+            elif [[ "$line" =~ ^[0-9] ]]; then
+                mapping_count=$((mapping_count + 1))
+            fi
+        done < "$profiles_conf"
+        log_ok "profiles.conf: ${profile_count} profile(s), ${mapping_count} step mapping(s)"
+
+        # Collect unique CLIs used in profiles
+        local used_clis=""
+        _PROFILES_CONF="$profiles_conf"
+        _PROFILES_LOADED=false
+        _PROFILE_NAMES=()
+        _PROFILE_CLIS=()
+        _PROFILE_MODELS=()
+        _PROFILE_EFFORTS=()
+        _PROFILE_FALLBACKS=()
+        _load_profiles
+        local i
+        for ((i=0; i<${#_PROFILE_CLIS[@]}; i++)); do
+            local cli="${_PROFILE_CLIS[$i]}"
+            case " $used_clis " in
+                *" $cli "*) ;;
+                *) used_clis="${used_clis} ${cli}" ;;
+            esac
+        done
+
+        # Check if any used CLI is missing
+        local missing_for_profiles=0
+        for cli in $used_clis; do
+            if ! command -v "$cli" &>/dev/null; then
+                log_warn "Profile references '${cli}' but it is not installed"
+                missing_for_profiles=$((missing_for_profiles + 1))
+            fi
+        done
+        if (( missing_for_profiles > 0 )); then
+            echo -e "    ${DIM}Fallback profiles will be used for steps assigned to missing CLIs.${NC}"
+            warnings=$((warnings + missing_for_profiles))
+        fi
+    else
+        log_warn "profiles.conf not found at ${profiles_conf}"
+        warnings=$((warnings + 1))
+    fi
+
+    # --- Summary ---
+    echo ""
+    echo -e "${BOLD}${CYAN}───────────────────────────────────────────────────────────${NC}"
+    echo ""
+
+    if (( errors == 0 && warnings == 0 )); then
+        echo -e "  ${GREEN}${BOLD}All checks passed.${NC} Ready to run the pipeline."
+        echo ""
+        if [[ "$INTERACTIVE" == true ]]; then
+            echo -en "  Run a dry-run now? [y/N] "
+            local answer
+            read -r answer
+            if [[ "$answer" =~ ^[Yy]$ ]]; then
+                echo ""
+                exec "$SCRIPT_DIR/auto-bmad-story" --dry-run
+            fi
+        fi
+    elif (( errors == 0 )); then
+        echo -e "  ${YELLOW}${BOLD}${warnings} warning(s), no errors.${NC} Pipeline should work but check warnings above."
+    else
+        echo -e "  ${RED}${BOLD}${errors} error(s), ${warnings} warning(s).${NC} Fix errors before running the pipeline."
+    fi
+
+    echo ""
+    return "$errors"
 }
 
 # --- Dispatch ---
@@ -68,6 +606,104 @@ case "$COMMAND" in
         ;;
     epic)
         exec "$SCRIPT_DIR/auto-bmad-epic" "$@"
+        ;;
+    validate)
+        source "$SCRIPT_DIR/lib/core.sh"
+        source "$SCRIPT_DIR/lib/tracking.sh"
+        source "$SCRIPT_DIR/lib/config.sh"
+        source "$SCRIPT_DIR/lib/detection.sh"
+        IMPL_ARTIFACTS="$(_detect_impl_artifacts)"
+        SPRINT_STATUS="${IMPL_ARTIFACTS}/sprint-status.yaml"
+        validate_sprint_status "${1:-$SPRINT_STATUS}"
+        exit $?
+        ;;
+    status)
+        PROJECT_ROOT="$(pwd)"
+        source "$SCRIPT_DIR/lib/core.sh"
+        source "$SCRIPT_DIR/lib/tracking.sh"
+        source "$SCRIPT_DIR/lib/config.sh"
+        source "$SCRIPT_DIR/lib/detection.sh"
+        _cmd_status
+        exit $?
+        ;;
+    quickstart)
+        PROJECT_ROOT="$(pwd)"
+        source "$SCRIPT_DIR/lib/core.sh"
+        source "$SCRIPT_DIR/lib/tracking.sh"
+        source "$SCRIPT_DIR/lib/config.sh"
+        source "$SCRIPT_DIR/lib/detection.sh"
+        _cmd_quickstart
+        exit $?
+        ;;
+    config)
+        PROJECT_ROOT="$SCRIPT_DIR"
+        source "$SCRIPT_DIR/lib/core.sh"
+        source "$SCRIPT_DIR/lib/tracking.sh"
+        source "$SCRIPT_DIR/lib/config.sh"
+        load_pipeline_conf
+        _load_profiles
+
+        echo -e "${BOLD}auto-bmad config${NC} (v${VERSION})"
+        echo ""
+
+        # Paths
+        impl="$(_detect_impl_artifacts)"
+        echo -e "${BOLD}Paths:${NC}"
+        echo "  PROJECT_ROOT           = ${PROJECT_ROOT}"
+        echo "  IMPL_ARTIFACTS         = ${impl}"
+        echo "  profiles.conf          = ${_PROFILES_CONF}"
+        echo ""
+
+        # Pipeline config
+        echo -e "${BOLD}Pipeline (conf/pipeline.conf):${NC}"
+        echo "  [timeouts]"
+        echo "    pr_safety            = ${cfg_pip_pr_safety}s"
+        echo "    pr_poll_interval     = ${cfg_pip_pr_poll_interval}s"
+        echo "    pr_grace_polls       = ${cfg_pip_pr_grace_polls}"
+        echo "  [thresholds]"
+        echo "    min_step_duration    = ${cfg_pip_min_step_duration}s"
+        echo "    min_log_bytes        = ${cfg_pip_min_log_bytes}"
+        echo "  [cache]"
+        echo "    preflight_max_age    = ${cfg_pip_preflight_max_age}s"
+        echo "  [monitor]"
+        echo "    spinner_quiet        = ${cfg_pip_spinner_quiet}s"
+        echo "  [git]"
+        echo "    branch_pattern       = ${cfg_pip_branch_pattern}"
+        echo "    min_git_version      = ${cfg_pip_min_git_version}"
+        echo "    default_review_mode  = ${cfg_pip_default_review_mode}"
+        echo ""
+
+        # Overrides active
+        has_local=false; has_env=false
+        [[ -f "${PROJECT_ROOT}/conf/pipeline.local.conf" ]] && has_local=true
+        env | grep -q '^AUTO_BMAD_' 2>/dev/null && has_env=true
+        echo -e "${BOLD}Overrides:${NC}"
+        echo "  pipeline.local.conf    = ${has_local}"
+        echo "  AUTO_BMAD_* env vars   = ${has_env}"
+        echo ""
+
+        # Profiles
+        echo -e "${BOLD}Profiles (${#_PROFILE_NAMES[@]} defined):${NC}"
+        printf "  %-25s %-10s %-25s %-8s %s\n" "NAME" "CLI" "MODEL" "EFFORT" "FALLBACK"
+        printf "  %-25s %-10s %-25s %-8s %s\n" "-------------------------" "----------" "-------------------------" "--------" "--------"
+        for ((i=0; i<${#_PROFILE_NAMES[@]}; i++)); do
+            printf "  %-25s %-10s %-25s %-8s %s\n" \
+                "${_PROFILE_NAMES[$i]}" "${_PROFILE_CLIS[$i]}" "${_PROFILE_MODELS[$i]}" \
+                "${_PROFILE_EFFORTS[$i]}" "${_PROFILE_FALLBACKS[$i]}"
+        done
+        echo ""
+
+        # Tools
+        echo -e "${BOLD}Tools:${NC}"
+        echo "  jq                     = ${HAS_JQ}"
+        for t in claude codex copilot opencode gh git; do
+            if command -v "$t" &>/dev/null; then
+                echo "  ${t}$(printf '%*s' $((25 - ${#t})) '')= $(command -v "$t")"
+            else
+                echo "  ${t}$(printf '%*s' $((25 - ${#t})) '')= ${RED}not found${NC}"
+            fi
+        done
+        exit 0
         ;;
     help|--help|-h)
         show_help

@@ -42,6 +42,7 @@ source "${PROJECT_ROOT}/lib/core.sh"
 source "${PROJECT_ROOT}/lib/tracking.sh"
 source "${PROJECT_ROOT}/lib/config.sh"
 source "${PROJECT_ROOT}/lib/pr.sh"
+source "${PROJECT_ROOT}/lib/usage.sh"
 source "${PROJECT_ROOT}/lib/detection.sh"
 
 IMPL_ARTIFACTS="$(_detect_impl_artifacts)"
@@ -589,11 +590,12 @@ main() {
 
     run_epic
 
-    # Generate metrics
+    # Generate metrics and usage report
     if [[ "$DRY_RUN" != "true" ]]; then
         local metrics_file
         metrics_file="$(generate_epic_metrics)"
         log_ok "Epic metrics: ${metrics_file}"
+        generate_epic_usage_report
     fi
 
     print_epic_summary

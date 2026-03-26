@@ -1,14 +1,15 @@
 # bash completion for auto-bmad
 # Source this in ~/.bashrc:  source /path/to/completions/auto-bmad.bash
+# NOTE: Keep in sync with auto-bmad, auto-bmad-story, auto-bmad-epic parsers
 
 _auto_bmad() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="story epic help version"
+    local commands="story epic status quickstart validate config help version"
 
     # Subcommand-specific flags
-    local story_flags="--story --from-step --dry-run --skip-cache --skip-tea --reviews --skip-git --no-traces --help"
+    local story_flags="--story --from-step --dry-run --skip-cache --skip-tea --reviews --skip-git --no-traces --acknowledge-previous --help"
     local epic_flags="--epic --from-story --to-story --dry-run --no-merge --skip-cache --skip-tea --reviews --skip-git --no-traces --help"
     local reviews_values="full fast none"
 
@@ -27,7 +28,12 @@ _auto_bmad() {
             COMPREPLY=( $(compgen -W "$reviews_values" -- "$cur") )
             return
             ;;
-        --story|--from-step|--epic|--from-story|--to-story)
+        --from-step)
+            # Complete with known step IDs
+            COMPREPLY=( $(compgen -W "0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.1 6.2" -- "$cur") )
+            return
+            ;;
+        --story|--epic|--from-story|--to-story)
             # These take user-specific values — no completion
             return
             ;;

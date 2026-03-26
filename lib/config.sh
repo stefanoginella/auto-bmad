@@ -18,11 +18,17 @@
 _CONFIG_SH_LOADED=1
 
 # --- BMad Version Constants ---
-BMAD_BUILD_VERSION="6.2.1"
+BMAD_BUILD_VERSION="6.2.2"
 BMAD_BUILD_TEA_VERSION="1.7.2"
 
 # --- CLI Tools ---
 TOOL_NAMES=(claude codex copilot opencode)
+
+# --- jq availability (enables JSON usage tracking) ---
+HAS_JQ=false
+if command -v jq &>/dev/null; then
+    HAS_JQ=true
+fi
 
 # --- Pipeline Configuration (conf/pipeline.conf) ---
 # Defaults — overridden by _load_pipeline_conf

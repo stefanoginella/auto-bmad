@@ -1,18 +1,26 @@
 #compdef auto-bmad
 # zsh completion for auto-bmad
 # Install: copy to a directory in $fpath, or source directly
+# NOTE: Keep in sync with auto-bmad, auto-bmad-story, auto-bmad-epic parsers
 
 _auto-bmad() {
     local -a commands
     commands=(
         'story:Run the story pipeline (one story at a time)'
         'epic:Run the epic pipeline (all stories in an epic)'
+        'status:Show current pipeline state at a glance'
+        'quickstart:First-run setup wizard — check tools and readiness'
+        'validate:Validate sprint-status.yaml structure and content'
+        'config:Show resolved configuration (pipeline.conf + profiles)'
         'help:Show help message'
         'version:Print version info'
     )
 
     local -a reviews_values
     reviews_values=(full fast none)
+
+    local -a step_ids
+    step_ids=(0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.1 6.2)
 
     _arguments -C \
         '1:command:->command' \
@@ -27,13 +35,14 @@ _auto-bmad() {
                 story)
                     _arguments \
                         '--story[Override auto-detection]:story_id:' \
-                        '--from-step[Resume from step ID]:step_id:' \
+                        '--from-step[Resume from step ID]:step_id:(${step_ids})' \
                         '--dry-run[Preview all steps without executing]' \
                         '--skip-cache[Bypass pre-flight cache]' \
                         '--skip-tea[Skip TEA phases]' \
                         '--reviews[Review mode]:mode:(full fast none)' \
                         '--skip-git[Skip git write operations]' \
                         '--no-traces[Remove pipeline artifacts after finalization]' \
+                        '--acknowledge-previous[Skip carry-forward warning]' \
                         '--help[Show help]'
                     ;;
                 epic)
