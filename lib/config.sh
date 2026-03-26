@@ -2,7 +2,7 @@
 # lib/config.sh — Path detection, version checks, and AI profile lookup
 # Sourced by auto-bmad-story and auto-bmad-epic
 #
-# Requires: lib/core.sh sourced, PROJECT_ROOT set
+# Requires: lib/core.sh sourced, INSTALL_DIR and PROJECT_ROOT set
 #
 # Exports:
 #   _detect_impl_artifacts   — resolve IMPL_ARTIFACTS path from BMAD config
@@ -50,8 +50,8 @@ _PIPELINE_CONF_LOADED=false
 load_pipeline_conf() {
     [[ "$_PIPELINE_CONF_LOADED" == true ]] && return 0
 
-    local base="${PROJECT_ROOT}/conf/pipeline.conf"
-    local local_conf="${PROJECT_ROOT}/conf/pipeline.local.conf"
+    local base="${INSTALL_DIR}/conf/pipeline.conf"
+    local local_conf="${INSTALL_DIR}/conf/pipeline.local.conf"
 
     _parse_pipeline_file "$base"
     _parse_pipeline_file "$local_conf"
@@ -212,7 +212,7 @@ check_bmad_version() {
 # --- AI Profile Lookup ---
 
 # Profile config file path
-_PROFILES_CONF="${PROJECT_ROOT}/conf/profiles.conf"
+_PROFILES_CONF="${INSTALL_DIR}/conf/profiles.conf"
 
 # Profile storage — parallel arrays keyed by @name (bash 3.2 compatible)
 # Populated by _load_profiles, read by _resolve_profile.

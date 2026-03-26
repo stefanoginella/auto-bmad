@@ -20,20 +20,33 @@ set -euo pipefail
 #   --help               Show usage
 # ============================================================
 
-# --- Project Paths ---
-PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# --- Paths ---
+# INSTALL_DIR = where auto-bmad itself lives (libs, conf, prompts)
+# PROJECT_ROOT = target project where the user runs the pipeline (pwd)
+_resolve_install_dir() {
+    local src="$1"
+    while [ -L "$src" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$src")" && pwd)"
+        src="$(readlink "$src")"
+        [[ "$src" != /* ]] && src="$dir/$src"
+    done
+    cd -P "$(dirname "$src")" && pwd
+}
+INSTALL_DIR="$(_resolve_install_dir "$0")"
+PROJECT_ROOT="$(pwd)"
 
 # --- Shared Libraries ---
-source "${PROJECT_ROOT}/lib/core.sh"
-source "${PROJECT_ROOT}/lib/tracking.sh"
-source "${PROJECT_ROOT}/lib/config.sh"
-source "${PROJECT_ROOT}/lib/git.sh"
-source "${PROJECT_ROOT}/lib/monitor.sh"
-source "${PROJECT_ROOT}/lib/cli.sh"
-source "${PROJECT_ROOT}/lib/runner.sh"
-source "${PROJECT_ROOT}/lib/usage.sh"
-source "${PROJECT_ROOT}/lib/detection.sh"
-source "${PROJECT_ROOT}/lib/steps.sh"
+source "${INSTALL_DIR}/lib/core.sh"
+source "${INSTALL_DIR}/lib/tracking.sh"
+source "${INSTALL_DIR}/lib/config.sh"
+source "${INSTALL_DIR}/lib/git.sh"
+source "${INSTALL_DIR}/lib/monitor.sh"
+source "${INSTALL_DIR}/lib/cli.sh"
+source "${INSTALL_DIR}/lib/runner.sh"
+source "${INSTALL_DIR}/lib/usage.sh"
+source "${INSTALL_DIR}/lib/detection.sh"
+source "${INSTALL_DIR}/lib/steps.sh"
 
 # --- Abort Handling (CTRL+C kills the entire pipeline) ---
 _ABORT=false

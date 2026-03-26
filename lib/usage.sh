@@ -33,7 +33,7 @@ _COPILOT_COST_PER_REQUEST=""
 # Handles [tokens] and [copilot] sections.
 _load_pricing() {
     [[ "$_PRICING_LOADED" == true ]] && return 0
-    local conf="${PROJECT_ROOT}/conf/pricing.conf"
+    local conf="${INSTALL_DIR}/conf/pricing.conf"
     [[ ! -f "$conf" ]] && return 1
 
     local section="" copilot_plan="" copilot_cost="" copilot_requests=""

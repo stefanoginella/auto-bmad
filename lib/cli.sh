@@ -19,7 +19,7 @@ _CLI_SH_LOADED=1
 # Usage: load_prompt "1.3-spec-triage.md" KEY1 "value1" KEY2 "value2"
 # Replaces all {{KEY}} placeholders with corresponding values.
 load_prompt() {
-    local template="${PROJECT_ROOT}/prompts/$1"
+    local template="${INSTALL_DIR}/prompts/$1"
     if [[ ! -f "$template" ]]; then
         log_error "Prompt template not found: ${template}"
         return 1
