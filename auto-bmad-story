@@ -378,10 +378,6 @@ run_pipeline() {
         log_ok "Pipeline report: ${PIPELINE_REPORT}"
         generate_story_usage_report
 
-        # Copy events log to permanent artifacts
-        if [[ -f "${TMP_DIR}/events.jsonl" ]]; then
-            cp "${TMP_DIR}/events.jsonl" "${STORY_ARTIFACTS}/events.jsonl"
-        fi
     fi
 
     run_step "6.1" "Document Story (tech-writer)" step_6_1_document
@@ -692,11 +688,6 @@ main() {
     _emit_event "pipeline_end" "-" "story_id" "$STORY_ID" "status" "ok"
 
     print_summary
-
-    # Copy events log to permanent artifacts before temp cleanup
-    if [[ -f "${TMP_DIR}/events.jsonl" ]]; then
-        cp "${TMP_DIR}/events.jsonl" "${STORY_ARTIFACTS}/events.jsonl"
-    fi
 
     # Clean up temp directory on success (individual reviews, step logs, raw pipeline log)
     if [[ -d "$TMP_DIR" && "$TMP_DIR" == *"/.tmp/auto-bmad/"* ]]; then

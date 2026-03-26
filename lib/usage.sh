@@ -9,7 +9,7 @@
 # Exports:
 #   extract_and_record_usage <step_id> <cli> <model> <raw_json_file> <duration> <status>
 #   extract_ai_output <cli> <raw_json_file>  — stdout: text output from AI
-#   generate_story_usage_report              — write usage-report.json
+#   generate_story_usage_report              — write usage-report.md
 #   generate_epic_usage_report               — aggregate all story reports
 
 [[ -n "${_USAGE_SH_LOADED:-}" ]] && return 0
@@ -365,15 +365,15 @@ extract_and_record_usage() {
 
 # --- Report Generation ---
 
-# Generate per-story usage report JSON.
-# Reads: TMP_DIR/usage.jsonl → STORY_ARTIFACTS/usage-report.json
-generate_story_usage_report() {
+# Generate per-story usage report JSON (intermediate, in TMP_DIR).
+# Also writes a hidden .usage-data.json to STORY_ARTIFACTS for epic aggregation.
+# Reads: TMP_DIR/usage.jsonl
+_generate_story_usage_json() {
     [[ "$HAS_JQ" != true ]] && return 0
     local usage_file="${TMP_DIR}/usage.jsonl"
     [[ ! -f "$usage_file" ]] && return 0
 
-    local report="${STORY_ARTIFACTS}/usage-report.json"
-    mkdir -p "$(dirname "$report")"
+    local report="${TMP_DIR}/usage-report.json"
 
     jq -s --arg sid "${STORY_ID:-unknown}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --argjson wall "$(( $(date +%s) - PIPELINE_START_TIME ))" '
@@ -415,27 +415,137 @@ generate_story_usage_report() {
         }
     }' "$usage_file" > "$report" 2>/dev/null
 
+    # Keep a hidden copy in artifacts for epic aggregation
+    mkdir -p "$STORY_ARTIFACTS"
+    cp "$report" "${STORY_ARTIFACTS}/.usage-data.json"
+}
+
+# Generate human-readable markdown usage report in STORY_ARTIFACTS.
+# Reads: TMP_DIR/usage-report.json (produced by _generate_story_usage_json)
+generate_story_usage_report() {
+    [[ "$HAS_JQ" != true ]] && return 0
+
+    _generate_story_usage_json
+
+    local json="${TMP_DIR}/usage-report.json"
+    [[ ! -f "$json" ]] && return 0
+
+    local report="${STORY_ARTIFACTS}/usage-report.md"
+    mkdir -p "$(dirname "$report")"
+
+    {
+        echo "# Usage Report — $(jq -r '.story_id' "$json")"
+        echo ""
+        echo "Generated: $(jq -r '.timestamp' "$json")"
+        echo ""
+
+        # --- Totals summary ---
+        echo "## Summary"
+        echo ""
+        echo "| Metric | Value |"
+        echo "|--------|-------|"
+        local wall_time compute_time total_cost steps_run
+        wall_time=$(jq -r '.wall_time_sec' "$json")
+        compute_time=$(jq -r '.totals.compute_time_sec' "$json")
+        steps_run=$(jq -r '.totals.steps_run' "$json")
+        total_cost=$(jq -r '.totals.total_cost_usd' "$json")
+        echo "| Wall Time | $(format_duration "$wall_time") |"
+        echo "| Compute Time | $(format_duration "$compute_time") |"
+        echo "| Steps | ${steps_run} |"
+        printf "| Total Cost | \$%.4f |\n" "$total_cost"
+
+        local reported inferred
+        reported=$(jq -r '.totals.cost_by_source.reported' "$json")
+        inferred=$(jq -r '.totals.cost_by_source.inferred' "$json")
+        printf "| ↳ Reported | \$%.4f |\n" "$reported"
+        printf "| ↳ Inferred | \$%.4f |\n" "$inferred"
+
+        # Token totals
+        local in_tok out_tok cache_rd cache_wr reason_tok prem_req
+        in_tok=$(jq -r '.totals.input_tokens' "$json")
+        out_tok=$(jq -r '.totals.output_tokens' "$json")
+        cache_rd=$(jq -r '.totals.cache_read_tokens' "$json")
+        cache_wr=$(jq -r '.totals.cache_write_tokens' "$json")
+        reason_tok=$(jq -r '.totals.reasoning_tokens' "$json")
+        prem_req=$(jq -r '.totals.premium_requests' "$json")
+        echo "| Input Tokens | $(printf "%'d" "$in_tok") |"
+        echo "| Output Tokens | $(printf "%'d" "$out_tok") |"
+        (( cache_rd > 0 )) && echo "| Cache Read | $(printf "%'d" "$cache_rd") |"
+        (( cache_wr > 0 )) && echo "| Cache Write | $(printf "%'d" "$cache_wr") |"
+        (( reason_tok > 0 )) && echo "| Reasoning | $(printf "%'d" "$reason_tok") |"
+        (( prem_req > 0 )) && echo "| Premium Requests | ${prem_req} |"
+        echo ""
+
+        # --- By CLI ---
+        echo "## By CLI"
+        echo ""
+        echo "| CLI | Steps | Input | Output | Cost |"
+        echo "|-----|-------|-------|--------|------|"
+        jq -r '.totals.by_cli[] | "| \(.cli) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$json" | \
+            while IFS='|' read -r _ cli steps inp outp cost _; do
+                printf "| %s | %s | %s | %s | \$%.4f |\n" \
+                    "$(echo "$cli" | xargs)" "$(echo "$steps" | xargs)" \
+                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
+                    "$(echo "$cost" | xargs)"
+            done
+        echo ""
+
+        # --- By Model ---
+        echo "## By Model"
+        echo ""
+        echo "| Model | Steps | Input | Output | Cost |"
+        echo "|-------|-------|-------|--------|------|"
+        jq -r '.totals.by_model[] | "| \(.model) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$json" | \
+            while IFS='|' read -r _ model steps inp outp cost _; do
+                printf "| %s | %s | %s | %s | \$%.4f |\n" \
+                    "$(echo "$model" | xargs)" "$(echo "$steps" | xargs)" \
+                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
+                    "$(echo "$cost" | xargs)"
+            done
+        echo ""
+
+        # --- Per-step detail ---
+        echo "## Per Step"
+        echo ""
+        echo "| Step | CLI | Model | Duration | Cost | Status |"
+        echo "|------|-----|-------|----------|------|--------|"
+        jq -r '.steps[] | "\(.step_id)|\(.cli)|\(.model)|\(.duration_sec)|\(.cost.usd)|\(.cost.source)|\(.status)"' "$json" | \
+            while IFS='|' read -r sid cli model dur cost source status; do
+                local dur_fmt
+                dur_fmt="$(format_duration "$dur")"
+                local cost_mark=""
+                [[ "$source" == "inferred" ]] && cost_mark="~"
+                [[ "$source" == "unavailable" ]] && cost_mark="?"
+                printf "| %s | %s | %s | %s | %s\$%.4f | %s |\n" \
+                    "$sid" "$cli" "$model" "$dur_fmt" "$cost_mark" "$cost" "$status"
+            done
+        echo ""
+        echo "_Cost prefix: ~ = inferred from tokens, ? = unavailable_"
+
+    } > "$report"
+
     log_ok "Usage report: ${report}"
 }
 
-# Generate epic-level aggregate usage report.
-# Scans STORY_ARTIFACTS dirs for usage-report.json files.
-# Writes: EPIC_ARTIFACTS/epic-usage-report.json
+# Generate epic-level aggregate usage report (markdown).
+# Scans STORY_ARTIFACTS dirs for .usage-data.json files.
+# Writes: EPIC_ARTIFACTS/epic-usage-report.md
 generate_epic_usage_report() {
     [[ "$HAS_JQ" != true ]] && return 0
     local epic_artifacts="${EPIC_ARTIFACTS:-${IMPL_ARTIFACTS}/auto-bmad/epic-${EPIC_ID}}"
     local auto_bmad_dir="${IMPL_ARTIFACTS}/auto-bmad"
     local -a reports=()
 
-    # Find all story usage reports under the auto-bmad directory
+    # Find all story usage data files under the auto-bmad directory
     while IFS= read -r f; do
         [[ -f "$f" ]] && reports+=("$f")
-    done < <(find "$auto_bmad_dir" -name "usage-report.json" -maxdepth 2 2>/dev/null | sort)
+    done < <(find "$auto_bmad_dir" -name ".usage-data.json" -maxdepth 2 2>/dev/null | sort)
 
     [[ ${#reports[@]} -eq 0 ]] && return 0
 
-    local report="${epic_artifacts}/epic-usage-report.json"
-    mkdir -p "$(dirname "$report")"
+    # Aggregate into a temporary JSON for rendering
+    local tmp_json="${epic_artifacts}/.epic-usage-data.json"
+    mkdir -p "$epic_artifacts"
 
     jq -s --arg eid "${EPIC_ID:-unknown}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
     {
@@ -480,7 +590,97 @@ generate_epic_usage_report() {
                 })
             )
         }
-    }' "${reports[@]}" > "$report" 2>/dev/null
+    }' "${reports[@]}" > "$tmp_json" 2>/dev/null
+
+    local report="${epic_artifacts}/epic-usage-report.md"
+
+    {
+        echo "# Epic Usage Report — $(jq -r '.epic_id' "$tmp_json")"
+        echo ""
+        echo "Generated: $(jq -r '.timestamp' "$tmp_json")"
+        echo ""
+
+        # --- Totals ---
+        echo "## Summary"
+        echo ""
+        echo "| Metric | Value |"
+        echo "|--------|-------|"
+        local stories_run total_steps wall_sec compute_sec total_cost reported inferred
+        stories_run=$(jq -r '.totals.stories_run' "$tmp_json")
+        total_steps=$(jq -r '.totals.total_steps' "$tmp_json")
+        wall_sec=$(jq -r '.totals.total_wall_sec' "$tmp_json")
+        compute_sec=$(jq -r '.totals.total_compute_sec' "$tmp_json")
+        total_cost=$(jq -r '.totals.total_cost_usd' "$tmp_json")
+        reported=$(jq -r '.totals.cost_by_source.reported' "$tmp_json")
+        inferred=$(jq -r '.totals.cost_by_source.inferred' "$tmp_json")
+        echo "| Stories | ${stories_run} |"
+        echo "| Total Steps | ${total_steps} |"
+        echo "| Wall Time | $(format_duration "$wall_sec") |"
+        echo "| Compute Time | $(format_duration "$compute_sec") |"
+        printf "| Total Cost | \$%.4f |\n" "$total_cost"
+        printf "| ↳ Reported | \$%.4f |\n" "$reported"
+        printf "| ↳ Inferred | \$%.4f |\n" "$inferred"
+
+        local in_tok out_tok cache_rd cache_wr reason_tok prem_req
+        in_tok=$(jq -r '.totals.total_input_tokens' "$tmp_json")
+        out_tok=$(jq -r '.totals.total_output_tokens' "$tmp_json")
+        cache_rd=$(jq -r '.totals.total_cache_read_tokens' "$tmp_json")
+        cache_wr=$(jq -r '.totals.total_cache_write_tokens' "$tmp_json")
+        reason_tok=$(jq -r '.totals.total_reasoning_tokens' "$tmp_json")
+        prem_req=$(jq -r '.totals.total_premium_requests' "$tmp_json")
+        echo "| Input Tokens | $(printf "%'d" "$in_tok") |"
+        echo "| Output Tokens | $(printf "%'d" "$out_tok") |"
+        (( cache_rd > 0 )) && echo "| Cache Read | $(printf "%'d" "$cache_rd") |"
+        (( cache_wr > 0 )) && echo "| Cache Write | $(printf "%'d" "$cache_wr") |"
+        (( reason_tok > 0 )) && echo "| Reasoning | $(printf "%'d" "$reason_tok") |"
+        (( prem_req > 0 )) && echo "| Premium Requests | ${prem_req} |"
+        echo ""
+
+        # --- By CLI ---
+        echo "## By CLI"
+        echo ""
+        echo "| CLI | Steps | Input | Output | Cost |"
+        echo "|-----|-------|-------|--------|------|"
+        jq -r '.totals.by_cli[] | "| \(.cli) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$tmp_json" | \
+            while IFS='|' read -r _ cli steps inp outp cost _; do
+                printf "| %s | %s | %s | %s | \$%.4f |\n" \
+                    "$(echo "$cli" | xargs)" "$(echo "$steps" | xargs)" \
+                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
+                    "$(echo "$cost" | xargs)"
+            done
+        echo ""
+
+        # --- By Model ---
+        echo "## By Model"
+        echo ""
+        echo "| Model | Steps | Input | Output | Cost |"
+        echo "|-------|-------|-------|--------|------|"
+        jq -r '.totals.by_model[] | "| \(.model) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$tmp_json" | \
+            while IFS='|' read -r _ model steps inp outp cost _; do
+                printf "| %s | %s | %s | %s | \$%.4f |\n" \
+                    "$(echo "$model" | xargs)" "$(echo "$steps" | xargs)" \
+                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
+                    "$(echo "$cost" | xargs)"
+            done
+        echo ""
+
+        # --- Per-story breakdown ---
+        echo "## Per Story"
+        echo ""
+        echo "| Story | Steps | Wall Time | Compute | Cost |"
+        echo "|-------|-------|-----------|---------|------|"
+        jq -r '.story_reports[] | "\(.story_id)|\(.totals.steps_run)|\(.wall_time_sec)|\(.totals.compute_time_sec)|\(.totals.total_cost_usd)"' "$tmp_json" | \
+            while IFS='|' read -r sid steps wall compute cost; do
+                printf "| %s | %s | %s | %s | \$%.4f |\n" \
+                    "$sid" "$steps" "$(format_duration "$wall")" "$(format_duration "$compute")" "$cost"
+            done
+        echo ""
+        echo "_Cost prefix: ~ = inferred from tokens, ? = unavailable_"
+
+    } > "$report"
+
+    # Clean up temporary JSON
+    rm -f "$tmp_json"
 
     log_ok "Epic usage report: ${report}"
 }

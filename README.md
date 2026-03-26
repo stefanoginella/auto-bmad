@@ -285,8 +285,7 @@ Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bma
 - Code acceptance audit (`*-3.2-code-acceptance.md`) — AC compliance matrix (PASS / PARTIAL / FAIL per criterion)
 - Code triage (`*-3.3-code-triage.md`) — classified code findings with reviewer signal assessment and overlap matrix
 - Pipeline report (`*-6.1-pipeline-report.md`) — timestamps, CLI/model per step, wall/compute time, git diff stats
-- Usage report (`usage-report.json`) — per-step token counts, cost (reported/inferred), premium requests, with totals by CLI and model. Requires `jq`.
-- Event log (`events.jsonl`) — structured JSONL events for each step start/end/retry/fallback, consumable by external tools. Requires `jq`.
+- Usage report (`usage-report.md`) — per-step token counts, cost (reported/inferred), premium requests, with totals by CLI and model. Requires `jq`.
 
 ### Review Modes
 
@@ -421,7 +420,7 @@ This is informational — no blocking gate. Review before starting the next epic
 
 Epic-level artifacts go to `_bmad-output/implementation-artifacts/auto-bmad/epic-{N}/`:
 - `epic-{N}-metrics.md` — per-story timing table and totals
-- `epic-usage-report.json` — aggregated token/cost data across all stories, with breakdowns by CLI and model. Requires `jq`.
+- `epic-usage-report.md` — aggregated token/cost data across all stories, with breakdowns by CLI and model. Requires `jq`.
 - `epic-pipeline.log` — full log (deleted on success)
 
 ## Sprint Status Format
