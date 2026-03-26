@@ -86,7 +86,7 @@ auto-bmad-epic
   │     │     ├── Dev fix (Opus) — patch items only
   │     │     └── Resolve spec findings (Opus/analyst) — bad_spec + intent_gap
   │     ├─ Phase 4: Traceability
-  │     ├─ Phase 5: Epic end (retro, NFR, context)
+  │     ├─ Phase 5: Epic end (retro, NFR, exit report, context)
   │     └─ Phase 6: Finalization (docs + close)
   │
   ├── git: commit → push → PR → squash-merge → CI ✓
@@ -238,7 +238,7 @@ Options:
 | 2 | 2.1, 2.2 | TDD + Implementation | Generate failing acceptance tests (red phase), then implement (green phase) |
 | 3 | 3.1a-f, 3.2, 3.3, 3.4, 3.5 | Code Review | 6 parallel code reviews (3 AIs × 2 types), acceptance audit, triage, dev fix, resolve spec findings |
 | 4 | 4.1, 4.2 | Traceability | Testarch trace + test automation expansion |
-| 5 | 5.1-5.3, 5.4, 5.5 | Epic End | Epic trace/NFR/test review, retrospective, project context. *Only runs on the last story in an epic.* |
+| 5 | 5.1-5.3, 5.4, 5.5, 5.6 | Epic End | Epic trace/NFR/test review, retrospective, epic exit report, project context. *Only runs on the last story in an epic.* |
 | 6 | 6.1, 6.2 | Finalization | Tech writer documents story, scrum master closes it |
 
 ### AI Profiles
@@ -408,6 +408,8 @@ Epic 1 — STORY FAILED
     auto-bmad epic --epic 1 --from-story 1-3-ci-pipeline
 ```
 
+A GitHub Issue is automatically created (labeled `ci-failure` or `ci-timeout`) so the failure is trackable and assignable. This is fire-and-forget — if `gh` auth is unavailable, the pipeline continues as normal.
+
 ### Retrospective Summary
 
 After the last story completes (which triggers the retrospective via Phase 5), the epic script parses the retrospective file and prints:
@@ -518,7 +520,7 @@ auto-bmad story --story 1-2-database-schemas --from-step 3.1
 
 ### CI failure or stuck checks
 
-If CI fails, the epic script stops immediately with a link to the PR. If CI appears stuck (runners hung, orphaned checks), the 2-hour safety timeout will eventually fire. Fix CI manually, merge the PR, then resume:
+If CI fails, the epic script stops immediately with a link to the PR and creates a GitHub Issue labeled `ci-failure` for tracking. If CI appears stuck (runners hung, orphaned checks), the 2-hour safety timeout will eventually fire and create a `ci-timeout` issue. Fix CI manually, merge the PR, then resume:
 
 ```bash
 auto-bmad epic --epic 1 --from-story 1-3-ci-pipeline
