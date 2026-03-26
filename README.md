@@ -8,6 +8,8 @@
 
 Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with structured triage reviews — designed for unattended, sandboxed execution.
 
+> **Note:** This is a personal tool, built to fit a specific workflow. It is highly opinionated, under constant development, and may be unstable. Use at your own risk.
+
 - **4 AI providers** (Claude, GPT/Codex, OpenCode/MiMo, Copilot) running review steps in parallel
 - **14+ pipeline steps** across 7 phases per story — from story creation to documentation
 - **3-way spec validation + 6-way code reviews** with structured triage and automated resolution
