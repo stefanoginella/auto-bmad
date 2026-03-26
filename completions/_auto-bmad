@@ -1,0 +1,58 @@
+#compdef auto-bmad
+# zsh completion for auto-bmad
+# Install: copy to a directory in $fpath, or source directly
+
+_auto-bmad() {
+    local -a commands
+    commands=(
+        'story:Run the story pipeline (one story at a time)'
+        'epic:Run the epic pipeline (all stories in an epic)'
+        'help:Show help message'
+        'version:Print version info'
+    )
+
+    local -a reviews_values
+    reviews_values=(full fast none)
+
+    _arguments -C \
+        '1:command:->command' \
+        '*::arg:->args'
+
+    case $state in
+        command)
+            _describe -t commands 'auto-bmad command' commands
+            ;;
+        args)
+            case ${words[1]} in
+                story)
+                    _arguments \
+                        '--story[Override auto-detection]:story_id:' \
+                        '--from-step[Resume from step ID]:step_id:' \
+                        '--dry-run[Preview all steps without executing]' \
+                        '--skip-cache[Bypass pre-flight cache]' \
+                        '--skip-tea[Skip TEA phases]' \
+                        '--reviews[Review mode]:mode:(full fast none)' \
+                        '--skip-git[Skip git write operations]' \
+                        '--no-traces[Remove pipeline artifacts after finalization]' \
+                        '--help[Show help]'
+                    ;;
+                epic)
+                    _arguments \
+                        '--epic[Target epic number]:epic_id:' \
+                        '--from-story[Resume from story]:story_id:' \
+                        '--to-story[Stop after story]:story_id:' \
+                        '--dry-run[Preview the full epic plan]' \
+                        '--no-merge[Skip auto-PR/merge between stories]' \
+                        '--skip-cache[Bypass pre-flight cache]' \
+                        '--skip-tea[Skip TEA phases]' \
+                        '--reviews[Review mode]:mode:(full fast none)' \
+                        '--skip-git[Skip git write operations]' \
+                        '--no-traces[Remove pipeline artifacts after finalization]' \
+                        '--help[Show help]'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_auto-bmad "$@"
