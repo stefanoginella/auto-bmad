@@ -48,13 +48,14 @@ MIN_LOG_BYTES="${cfg_pip_min_log_bytes:-200}"
 # Detect soft or hard failure after a step command returns.
 # Returns 0 (= failure detected) when:
 #   - exit_code != 0 (hard fail), OR
-#   - duration < MIN_STEP_DURATION AND log output < MIN_LOG_BYTES (soft fail)
+#   - duration < MIN_STEP_DURATION (too fast — CLI likely rejected the request), OR
+#   - log output < MIN_LOG_BYTES (too little output for meaningful work)
 _detect_soft_fail() {
     local exit_code="$1" duration="$2"
     (( exit_code != 0 )) && return 0
     local log_size=0
     [[ -f "$CURRENT_STEP_LOG" ]] && log_size=$(wc -c < "$CURRENT_STEP_LOG" | tr -d ' ')
-    (( duration < MIN_STEP_DURATION && log_size < MIN_LOG_BYTES ))
+    (( duration < MIN_STEP_DURATION || log_size < MIN_LOG_BYTES ))
 }
 
 # Run a step command with retry + fallback.
