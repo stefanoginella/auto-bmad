@@ -29,56 +29,75 @@ _PRICING_LOADED=false
 # Copilot premium request pricing (loaded from [copilot] section)
 _COPILOT_COST_PER_REQUEST=""
 
-# Load conf/pricing.conf into parallel arrays + copilot config.
-# Handles [tokens] and [copilot] sections.
+# Load pricing.conf from cascade into parallel arrays + copilot config.
+# Handles [tokens] and [copilot] sections. Later files override by model name.
 _load_pricing() {
     [[ "$_PRICING_LOADED" == true ]] && return 0
-    local conf="${INSTALL_DIR}/conf/pricing.conf"
-    [[ ! -f "$conf" ]] && return 1
 
-    local section="" copilot_plan="" copilot_cost="" copilot_requests=""
+    local copilot_plan="" copilot_cost="" copilot_requests=""
     local pro_cost="" pro_requests="" pro_plus_cost="" pro_plus_requests=""
 
-    while IFS= read -r line; do
-        # Strip comments and whitespace
-        line="${line%%#*}"
-        line="${line#"${line%%[![:space:]]*}"}"
-        line="${line%"${line##*[![:space:]]}"}"
-        [[ -z "$line" ]] && continue
+    local conf_file
+    while IFS= read -r conf_file; do
+        local section=""
+        while IFS= read -r line; do
+            # Strip comments and whitespace
+            line="${line%%#*}"
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -z "$line" ]] && continue
 
-        # Section headers
-        if [[ "$line" == "["*"]" ]]; then
-            section="${line#[}"
-            section="${section%]}"
-            continue
-        fi
+            # Section headers
+            if [[ "$line" == "["*"]" ]]; then
+                section="${line#[}"
+                section="${section%]}"
+                continue
+            fi
 
-        case "$section" in
-            tokens|"")
-                # Token pricing: model  input  output  cache_read  cache_write
-                local model input output cache_read cache_write
-                read -r model input output cache_read cache_write <<< "$line"
-                _PRICING_MODELS+=("$model")
-                _PRICING_INPUT+=("$input")
-                _PRICING_OUTPUT+=("$output")
-                _PRICING_CACHE_READ+=("$cache_read")
-                _PRICING_CACHE_WRITE+=("$cache_write")
-                ;;
-            copilot)
-                # Copilot config: key = value
-                local key="${line%%=*}" val="${line#*=}"
-                key="${key%"${key##*[![:space:]]}"}"
-                val="${val#"${val%%[![:space:]]*}"}"
-                case "$key" in
-                    plan)              copilot_plan="$val" ;;
-                    pro_cost)          pro_cost="$val" ;;
-                    pro_requests)      pro_requests="$val" ;;
-                    pro_plus_cost)     pro_plus_cost="$val" ;;
-                    pro_plus_requests) pro_plus_requests="$val" ;;
-                esac
-                ;;
-        esac
-    done < "$conf"
+            case "$section" in
+                tokens|"")
+                    # Token pricing: model  input  output  cache_read  cache_write
+                    local model input output cache_read cache_write
+                    read -r model input output cache_read cache_write <<< "$line"
+                    # Override existing model entry
+                    local i found=false
+                    for ((i=0; i<${#_PRICING_MODELS[@]}; i++)); do
+                        if [[ "${_PRICING_MODELS[$i]}" == "$model" ]]; then
+                            _PRICING_INPUT[$i]="$input"
+                            _PRICING_OUTPUT[$i]="$output"
+                            _PRICING_CACHE_READ[$i]="$cache_read"
+                            _PRICING_CACHE_WRITE[$i]="$cache_write"
+                            found=true
+                            break
+                        fi
+                    done
+                    if [[ "$found" == false ]]; then
+                        _PRICING_MODELS+=("$model")
+                        _PRICING_INPUT+=("$input")
+                        _PRICING_OUTPUT+=("$output")
+                        _PRICING_CACHE_READ+=("$cache_read")
+                        _PRICING_CACHE_WRITE+=("$cache_write")
+                    fi
+                    ;;
+                copilot)
+                    # Copilot config: key = value
+                    local key="${line%%=*}" val="${line#*=}"
+                    key="${key%"${key##*[![:space:]]}"}"
+                    val="${val#"${val%%[![:space:]]*}"}"
+                    case "$key" in
+                        plan)              copilot_plan="$val" ;;
+                        pro_cost)          pro_cost="$val" ;;
+                        pro_requests)      pro_requests="$val" ;;
+                        pro_plus_cost)     pro_plus_cost="$val" ;;
+                        pro_plus_requests) pro_plus_requests="$val" ;;
+                    esac
+                    ;;
+            esac
+        done < "$conf_file"
+    done < <(_conf_files "pricing.conf")
+
+    # Bail if nothing was loaded at all
+    [[ ${#_PRICING_MODELS[@]} -eq 0 && -z "$copilot_plan" ]] && return 1
 
     # Compute copilot cost per premium request from plan
     case "${copilot_plan:-pro}" in

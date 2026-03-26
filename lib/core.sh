@@ -6,6 +6,7 @@
 #   INTERACTIVE           — true when stdin is a terminal
 #   Colors: RED GREEN YELLOW BLUE MAGENTA CYAN BOLD DIM NC
 #   _confirm <prompt>     — y/N prompt; returns 1 in non-interactive mode
+#   _hide_cursor          — suppress cursor during pipeline output
 #   _restore_cursor       — re-enable cursor visibility
 #   log_phase <title>     — decorated section header (+ PIPELINE_LOG if set)
 #   log_ok <msg>          — green checkmark
@@ -26,8 +27,10 @@ INTERACTIVE=false
 _confirm() {
     local prompt="$1"
     if [[ "$INTERACTIVE" == "true" ]]; then
+        _restore_cursor
         echo -en "$prompt"
         read -r answer
+        _hide_cursor
         [[ "$answer" =~ ^[Yy]$ ]]
     else
         echo -e "${prompt}N (non-interactive)"
@@ -35,7 +38,8 @@ _confirm() {
     fi
 }
 
-_restore_cursor() { tput cnorm 2>/dev/null || true; }
+_hide_cursor()    { printf '\033[?25l'; }
+_restore_cursor() { printf '\033[?25h'; }
 
 # Three-option prompt: [c]ontinue / [f]ix / [a]bort
 # Usage: _confirm_cfa "message" "fix command to display" "fix command to run"
@@ -57,8 +61,10 @@ _confirm_cfa() {
         exit 1
     fi
     local choice
+    _restore_cursor
     echo -en "    > "
     read -r choice
+    _hide_cursor
     case "$choice" in
         [cC]) return 0 ;;
         [fF])
@@ -97,8 +103,10 @@ _confirm_fa() {
         exit 1
     fi
     local choice
+    _restore_cursor
     echo -en "    > "
     read -r choice
+    _hide_cursor
     case "$choice" in
         [fF])
             if [[ -z "$fix_cmd" ]]; then

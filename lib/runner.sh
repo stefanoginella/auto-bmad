@@ -329,7 +329,7 @@ run_parallel_reviews() {
     trap '_restore_cursor' INT TERM
 
     # Print placeholder lines for the board
-    printf '\033[?25l'  # hide cursor
+    _hide_cursor
     for ((i=0; i<count; i++)); do echo ""; done
 
     # Status tracking
@@ -405,7 +405,7 @@ run_parallel_reviews() {
         spinner_idx=$((spinner_idx + 1))
     done
 
-    printf '\033[?25h'  # restore cursor
+    _restore_cursor
     trap - INT TERM     # clean up cursor-restore trap
     return 0
 }

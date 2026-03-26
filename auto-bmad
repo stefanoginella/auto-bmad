@@ -206,8 +206,14 @@ _cmd_status() {
                     local main_ref="main"
                     git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/main" 2>/dev/null || main_ref="master"
                     local pr_merged=false
-                    local pr_number
-                    pr_number="$(gh pr list --head "$prev_branch" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")"
+
+                    # Resolve repo slug for gh commands (gh has no -C flag like git)
+                    local _gh_repo
+                    _gh_repo="$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null | sed -E 's#(.*github\.com[:/])##; s#\.git$##')"
+
+                    local pr_number _gh_repo_flag=""
+                    [[ -n "$_gh_repo" ]] && _gh_repo_flag="--repo $_gh_repo"
+                    pr_number="$(gh pr list ${_gh_repo_flag} --head "$prev_branch" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")"
                     if [[ -n "$pr_number" ]]; then
                         pr_merged=true
                     else
@@ -215,11 +221,13 @@ _cmd_status() {
                         if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/${prev_branch}" 2>/dev/null; then
                             git -C "$PROJECT_ROOT" merge-base --is-ancestor "refs/heads/${prev_branch}" "refs/heads/${main_ref}" 2>/dev/null && pr_merged=true
                         else
-                            # Branch gone — check for squash commit
+                            # Branch gone — check for merge/squash commit
                             local prev_remainder="${prev_story#*-}"
                             local prev_num="${prev_remainder%%-*}"
                             local short_id="${prev_epic}-${prev_num}"
-                            if git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="(${short_id})" -1 2>/dev/null | grep -q .; then
+                            if git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="(${short_id})" -1 2>/dev/null | grep -q . \
+                            || git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="${prev_branch}" -1 2>/dev/null | grep -q . \
+                            || git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="[Ss]tory ${short_id}" -1 2>/dev/null | grep -q .; then
                                 pr_merged=true
                             fi
                         fi
@@ -513,10 +521,11 @@ _cmd_quickstart() {
     echo ""
     echo -e "  ${BOLD}Profile configuration${NC}"
 
-    local profiles_conf="${SCRIPT_DIR}/conf/profiles.conf"
-    if [[ -f "$profiles_conf" ]]; then
-        # Count profiles and step mappings
-        local profile_count=0 mapping_count=0
+    # Count profiles and step mappings across cascade
+    local profile_count=0 mapping_count=0 profiles_found=false
+    local pf
+    while IFS= read -r pf; do
+        profiles_found=true
         while IFS= read -r line; do
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             [[ -z "${line// /}" ]] && continue
@@ -525,12 +534,13 @@ _cmd_quickstart() {
             elif [[ "$line" =~ ^[0-9] ]]; then
                 mapping_count=$((mapping_count + 1))
             fi
-        done < "$profiles_conf"
+        done < "$pf"
+    done < <(_conf_files "profiles.conf")
+    if [[ "$profiles_found" == true ]]; then
         log_ok "profiles.conf: ${profile_count} profile(s), ${mapping_count} step mapping(s)"
 
         # Collect unique CLIs used in profiles
         local used_clis=""
-        _PROFILES_CONF="$profiles_conf"
         _PROFILES_LOADED=false
         _PROFILE_NAMES=()
         _PROFILE_CLIS=()
@@ -560,7 +570,7 @@ _cmd_quickstart() {
             warnings=$((warnings + missing_for_profiles))
         fi
     else
-        log_warn "profiles.conf not found at ${profiles_conf}"
+        log_warn "profiles.conf not found in any conf directory"
         warnings=$((warnings + 1))
     fi
 
@@ -657,7 +667,7 @@ case "$COMMAND" in
         echo "  INSTALL_DIR            = ${INSTALL_DIR}"
         echo "  PROJECT_ROOT           = ${PROJECT_ROOT}"
         echo "  IMPL_ARTIFACTS         = ${impl}"
-        echo "  profiles.conf          = ${_PROFILES_CONF}"
+        echo "  USER_CONF_DIR          = ${_USER_CONF_DIR}"
         echo ""
 
         # Pipeline config
@@ -680,12 +690,27 @@ case "$COMMAND" in
         echo ""
 
         # Overrides active
-        has_local=false; has_env=false
-        [[ -f "${INSTALL_DIR}/conf/pipeline.local.conf" ]] && has_local=true
+        local has_user=false has_project=false has_env=false
+        [[ -d "${_USER_CONF_DIR}" ]] && has_user=true
+        if [[ "$PROJECT_ROOT" != "$INSTALL_DIR" ]]; then
+            [[ -d "${PROJECT_ROOT}/conf" ]] && has_project=true
+        fi
         env | grep -q '^AUTO_BMAD_' 2>/dev/null && has_env=true
         echo -e "${BOLD}Overrides:${NC}"
-        echo "  pipeline.local.conf    = ${has_local}"
+        echo "  ~/.config/auto-bmad/   = ${has_user}"
+        echo "  PROJECT_ROOT/conf/     = ${has_project}"
         echo "  AUTO_BMAD_* env vars   = ${has_env}"
+        # Show which conf files are active in the cascade
+        echo ""
+        echo -e "${BOLD}Config cascade:${NC}"
+        local _cf
+        for _cf_name in pipeline.conf profiles.conf pricing.conf; do
+            local _cascade=""
+            while IFS= read -r _cf; do
+                _cascade="${_cascade:+${_cascade} → }${_cf}"
+            done < <(_conf_files "$_cf_name")
+            echo "  ${_cf_name}: ${_cascade:-<not found>}"
+        done
         echo ""
 
         # Profiles
