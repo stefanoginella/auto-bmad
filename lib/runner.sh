@@ -16,8 +16,9 @@ _RUNNER_SH_LOADED=1
 
 # --- Soft-fail Detection & Retry ---
 
-MIN_STEP_DURATION=5    # seconds — steps completing faster are suspect
-MIN_LOG_BYTES=200      # bytes — minimal output indicates empty/error response
+# Soft-fail thresholds — loaded from conf/pipeline.conf via cfg_pip_* globals
+MIN_STEP_DURATION="${cfg_pip_min_step_duration:-5}"
+MIN_LOG_BYTES="${cfg_pip_min_log_bytes:-200}"
 
 # Detect soft or hard failure after a step command returns.
 # Returns 0 (= failure detected) when:

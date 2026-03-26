@@ -50,10 +50,11 @@ STORY_SCRIPT="${PROJECT_ROOT}/auto-bmad-story"
 EPIC_ARTIFACTS=""
 EPIC_LOG=""
 
-# --- Configuration ---
-PR_SAFETY_TIMEOUT=7200  # 2 hours — backstop for stuck runners, not normal control flow
-PR_POLL_INTERVAL=30     # seconds between CI state checks
-PR_EMPTY_CHECKS_GRACE_POLLS=10  # allow time for checks to appear before assuming none exist
+# --- Configuration (loaded from conf/pipeline.conf) ---
+load_pipeline_conf
+PR_SAFETY_TIMEOUT="$cfg_pip_pr_safety"
+PR_POLL_INTERVAL="$cfg_pip_pr_poll_interval"
+PR_EMPTY_CHECKS_GRACE_POLLS="$cfg_pip_pr_grace_polls"
 
 # --- Pipeline State ---
 EPIC_ID=""

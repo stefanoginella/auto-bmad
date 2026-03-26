@@ -71,7 +71,7 @@ DRY_RUN=false
 FROM_STEP=""
 SKIP_CACHE=false
 SKIP_TEA=false
-REVIEWS_MODE=full
+REVIEWS_MODE="$cfg_pip_default_review_mode"
 SKIP_GIT=false
 NO_TRACES=false
 PIPELINE_START_TIME=""
@@ -138,7 +138,8 @@ log_dry() {
 # ============================================================
 
 PREFLIGHT_CACHE="${PROJECT_ROOT}/.tmp/auto-bmad/preflight-cache"
-PREFLIGHT_CACHE_MAX_AGE=86400   # 24 hours
+load_pipeline_conf
+PREFLIGHT_CACHE_MAX_AGE="$cfg_pip_preflight_max_age"
 
 _preflight_cache_valid() {
     [[ -f "$PREFLIGHT_CACHE" ]] || return 1

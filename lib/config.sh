@@ -12,6 +12,7 @@
 #   TOOL_NAMES               — array of AI CLI tool names
 #   step_config <step_id>    — echo "cli|model|effort" for a step
 #   parse_step_config <id>   — set cfg_cli, cfg_model, cfg_effort globals
+#   load_pipeline_conf       — populate cfg_pip_* from conf/pipeline.conf
 
 [[ -n "${_CONFIG_SH_LOADED:-}" ]] && return 0
 _CONFIG_SH_LOADED=1
@@ -22,6 +23,89 @@ BMAD_BUILD_TEA_VERSION="1.7.2"
 
 # --- CLI Tools ---
 TOOL_NAMES=(claude codex copilot opencode)
+
+# --- Pipeline Configuration (conf/pipeline.conf) ---
+# Defaults — overridden by _load_pipeline_conf
+cfg_pip_pr_safety=7200
+cfg_pip_pr_poll_interval=30
+cfg_pip_pr_grace_polls=10
+cfg_pip_min_step_duration=5
+cfg_pip_min_log_bytes=200
+cfg_pip_preflight_max_age=86400
+cfg_pip_spinner_quiet=2
+cfg_pip_branch_pattern='story/${STORY_ID}'
+cfg_pip_min_git_version="2.25"
+cfg_pip_default_review_mode=full
+
+_PIPELINE_CONF_LOADED=false
+
+# Load conf/pipeline.conf (and .local overlay) into cfg_pip_* globals.
+# Idempotent — safe to call multiple times.
+load_pipeline_conf() {
+    [[ "$_PIPELINE_CONF_LOADED" == true ]] && return 0
+
+    local base="${PROJECT_ROOT}/conf/pipeline.conf"
+    local local_conf="${PROJECT_ROOT}/conf/pipeline.local.conf"
+
+    _parse_pipeline_file "$base"
+    _parse_pipeline_file "$local_conf"
+
+    # Environment variable overrides: AUTO_BMAD_<SECTION>_<KEY>
+    # e.g. AUTO_BMAD_TIMEOUTS_PR_SAFETY overrides [timeouts] pr_safety
+    cfg_pip_pr_safety="${AUTO_BMAD_TIMEOUTS_PR_SAFETY:-$cfg_pip_pr_safety}"
+    cfg_pip_pr_poll_interval="${AUTO_BMAD_TIMEOUTS_PR_POLL_INTERVAL:-$cfg_pip_pr_poll_interval}"
+    cfg_pip_pr_grace_polls="${AUTO_BMAD_TIMEOUTS_PR_GRACE_POLLS:-$cfg_pip_pr_grace_polls}"
+    cfg_pip_min_step_duration="${AUTO_BMAD_THRESHOLDS_MIN_STEP_DURATION:-$cfg_pip_min_step_duration}"
+    cfg_pip_min_log_bytes="${AUTO_BMAD_THRESHOLDS_MIN_LOG_BYTES:-$cfg_pip_min_log_bytes}"
+    cfg_pip_preflight_max_age="${AUTO_BMAD_CACHE_PREFLIGHT_MAX_AGE:-$cfg_pip_preflight_max_age}"
+    cfg_pip_spinner_quiet="${AUTO_BMAD_MONITOR_SPINNER_QUIET:-$cfg_pip_spinner_quiet}"
+    cfg_pip_branch_pattern="${AUTO_BMAD_GIT_BRANCH_PATTERN:-$cfg_pip_branch_pattern}"
+    cfg_pip_min_git_version="${AUTO_BMAD_GIT_MIN_GIT_VERSION:-$cfg_pip_min_git_version}"
+    cfg_pip_default_review_mode="${AUTO_BMAD_GIT_DEFAULT_REVIEW_MODE:-$cfg_pip_default_review_mode}"
+
+    _PIPELINE_CONF_LOADED=true
+}
+
+# Parse a single pipeline.conf file into cfg_pip_* globals.
+_parse_pipeline_file() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+
+    local section=""
+    while IFS= read -r line; do
+        # Strip comments and leading/trailing whitespace
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" ]] && continue
+
+        # Section header
+        if [[ "$line" == "["*"]" ]]; then
+            section="${line#[}"
+            section="${section%]}"
+            continue
+        fi
+
+        # key = value
+        local key="${line%%=*}"
+        local val="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"   # trim trailing space
+        val="${val#"${val%%[![:space:]]*}"}"    # trim leading space
+
+        case "${section}_${key}" in
+            timeouts_pr_safety)          cfg_pip_pr_safety="$val" ;;
+            timeouts_pr_poll_interval)   cfg_pip_pr_poll_interval="$val" ;;
+            timeouts_pr_grace_polls)     cfg_pip_pr_grace_polls="$val" ;;
+            thresholds_min_step_duration) cfg_pip_min_step_duration="$val" ;;
+            thresholds_min_log_bytes)    cfg_pip_min_log_bytes="$val" ;;
+            cache_preflight_max_age)     cfg_pip_preflight_max_age="$val" ;;
+            monitor_spinner_quiet)       cfg_pip_spinner_quiet="$val" ;;
+            git_branch_pattern)          cfg_pip_branch_pattern="$val" ;;
+            git_min_git_version)         cfg_pip_min_git_version="$val" ;;
+            git_default_review_mode)     cfg_pip_default_review_mode="$val" ;;
+        esac
+    done < "$file"
+}
 
 # --- Path Detection ---
 

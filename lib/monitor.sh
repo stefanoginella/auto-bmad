@@ -67,7 +67,7 @@ start_activity_monitor() {
 
             local quiet_seconds=$((now - last_change_time))
 
-            if (( quiet_seconds >= 2 )); then
+            if (( quiet_seconds >= ${cfg_pip_spinner_quiet:-2} )); then
                 # No output for 2+ seconds — show spinner
                 printf '\r  %s %s [%s]' "$frame" "$label" "$(format_duration $elapsed)" >&2
                 spinner_active=true
