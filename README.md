@@ -27,6 +27,7 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 - [Sprint Status Format](#sprint-status-format)
 - [Diagnostic Commands](#diagnostic-commands)
 - [Customization](#customization)
+  - [Configuration Cascade](#configuration-cascade)
 - [Troubleshooting](#troubleshooting)
 - [Examples](#examples)
 - [Lineage](#lineage)
@@ -42,23 +43,19 @@ make install                    # symlinks to /usr/local/bin, installs shell com
 # — or for user-local install —
 PREFIX=~/.local make install
 
-# 2. Copy supporting files into your BMAD project root
-cp -rp lib conf prompts /path/to/your/project/
-
-# 3. Edit AI profiles and step assignments in conf/profiles.conf
-
-# 4. Run a single story
-auto-bmad story
-
-# 5. Run an entire epic
-auto-bmad epic
+# 2. Run from any BMAD project directory
+cd /path/to/your/project
+auto-bmad story                 # run next story
+auto-bmad epic                  # run full epic
 ```
+
+No files need to be copied into your project. The scripts resolve their own install directory (even through symlinks) and load `lib/`, `conf/`, and `prompts/` from there. Project-specific overrides can be placed in `conf/` within the project root — see [Configuration Cascade](#configuration-cascade).
 
 The story script auto-detects the next story from `sprint-status.yaml`. The epic script loops through all stories in an epic, handling PR + CI + merge between them. See [How It Works](#how-it-works) for the full picture.
 
 ## How It Works
 
-This project is opinionated — it assumes a specific git workflow (branch-per-story, squash-merge PRs, CI gates) and uses multiple AI CLIs simultaneously. The pipeline is modular: two entry-point scripts source shared libraries from `lib/`, read AI profile assignments from `conf/profiles.conf`, and load prompt templates from `prompts/`.
+This project is opinionated — it assumes a specific git workflow (branch-per-story, squash-merge PRs, CI gates) and uses multiple AI CLIs simultaneously. The pipeline is modular: two entry-point scripts source shared libraries from `lib/`, read AI profile assignments from `conf/profiles.conf`, and load prompt templates from `prompts/`. All internal assets are resolved from the install directory (via symlink), so scripts can run from any project directory without copying files.
 
 A unified `auto-bmad` CLI dispatches to pipeline scripts and diagnostic commands:
 
@@ -69,7 +66,7 @@ A unified `auto-bmad` CLI dispatches to pipeline scripts and diagnostic commands
 | `auto-bmad status` | Diagnostic | Shows current story, branch, epic progress at a glance |
 | `auto-bmad quickstart` | Setup | First-run wizard — checks tools, profiles, and project readiness |
 | `auto-bmad validate` | Diagnostic | Validates sprint-status.yaml structure and content |
-| `auto-bmad config` | Diagnostic | Shows all resolved configuration (pipeline.conf + profiles + tools) |
+| `auto-bmad config` | Diagnostic | Shows resolved configuration cascade, pipeline.conf, profiles, and tools |
 
 ### Architecture
 
@@ -175,19 +172,10 @@ make uninstall                  # or: PREFIX=~/.local make uninstall
 
 ### Manual install
 
-The scripts and their supporting directories (`lib/`, `conf/`, `prompts/`) must live in the root of your BMAD project (they derive `PROJECT_ROOT` from their own location).
+Symlink the `auto-bmad` dispatcher somewhere in your PATH. The scripts resolve their own install directory through symlinks, so `lib/`, `conf/`, and `prompts/` are loaded from where the repo lives — nothing needs to be copied into your project.
 
 ```bash
-# Copy scripts and supporting directories into your project root
-cp -p auto-bmad-story auto-bmad-epic /path/to/your/project/
-cp -rp lib conf prompts /path/to/your/project/
-
-# — or symlink to stay in sync with upstream —
-ln -s "$(pwd)/auto-bmad-story" /path/to/your/project/auto-bmad-story
-ln -s "$(pwd)/auto-bmad-epic" /path/to/your/project/auto-bmad-epic
-ln -s "$(pwd)/lib" /path/to/your/project/lib
-ln -s "$(pwd)/conf" /path/to/your/project/conf
-ln -s "$(pwd)/prompts" /path/to/your/project/prompts
+ln -s "$(pwd)/auto-bmad" /usr/local/bin/auto-bmad
 ```
 
 ### Verify
@@ -490,7 +478,7 @@ auto-bmad validate /path/to/file.yaml  # custom path
 
 ### `auto-bmad config`
 
-Dumps all resolved configuration: pipeline.conf values (with local/env overrides), profile definitions, tool paths.
+Dumps all resolved configuration: cascade paths, pipeline.conf values (with override sources), profile definitions, tool paths.
 
 ```bash
 auto-bmad config
@@ -531,9 +519,42 @@ Step IDs use a consistent scheme:
 
 All step prompts live in `prompts/*.md` as plain text with `{{PLACEHOLDER}}` variables. Edit these to change what instructions the AI receives for each step — no shell code to touch.
 
+### Configuration Cascade
+
+All three `conf/` files (`pipeline.conf`, `profiles.conf`, `pricing.conf`) support a 3-tier override cascade. Later tiers override values from earlier tiers:
+
+| Tier | Location | Purpose |
+|------|----------|---------|
+| 1. Install defaults | `INSTALL_DIR/conf/` | Shipped with auto-bmad |
+| 2. User overrides | `~/.config/auto-bmad/` | Per-user preferences (respects `$XDG_CONFIG_HOME`) |
+| 3. Project overrides | `PROJECT_ROOT/conf/` | Per-project tuning (check into repo or gitignore) |
+
+For example, to use a different Copilot plan for a specific project:
+
+```bash
+# In your project root
+mkdir -p conf
+cat > conf/pricing.conf << 'EOF'
+[copilot]
+plan = pro_plus
+EOF
+```
+
+Or to override a profile for all your projects:
+
+```bash
+mkdir -p ~/.config/auto-bmad
+cat > ~/.config/auto-bmad/profiles.conf << 'EOF'
+# Override @claude-opus-max to use sonnet instead
+@claude-opus-max  claude  sonnet  max  @copilot-sonnet-high
+EOF
+```
+
+Run `auto-bmad config` to see the resolved cascade and final values.
+
 ### Pipeline Configuration
 
-Edit `conf/pipeline.conf` to tune operator-facing defaults. Override per-machine in `conf/pipeline.local.conf` (gitignored) or via environment variables (`AUTO_BMAD_<SECTION>_<KEY>`):
+Edit `conf/pipeline.conf` to tune operator-facing defaults. Override via the cascade above, or via environment variables (`AUTO_BMAD_<SECTION>_<KEY>`):
 
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
@@ -546,7 +567,7 @@ Edit `conf/pipeline.conf` to tune operator-facing defaults. Override per-machine
 | `[git]` | `branch_pattern` | `story/${STORY_ID}` | Branch naming template |
 | `[git]` | `default_review_mode` | `full` | Default when `--reviews` not specified |
 
-Run `auto-bmad config` to see all resolved values. Use `--no-merge` to skip git operations between stories for non-GitHub workflows.
+Environment variables take highest precedence, above all cascade tiers.
 
 ## Troubleshooting
 

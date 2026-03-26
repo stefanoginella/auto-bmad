@@ -299,9 +299,14 @@ preflight_git_checks() {
         prev_branch="$(_resolve_branch_name "$prev_story")"
         local prev_merged=false
 
+        # Resolve repo slug for gh commands (gh has no -C flag like git)
+        local _gh_repo
+        _gh_repo="$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null | sed -E 's#(.*github\.com[:/])##; s#\.git$##')"
+
         # Primary: check GitHub for a merged PR
-        local pr_number
-        pr_number="$(gh pr list --head "$prev_branch" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")"
+        local pr_number _gh_repo_flag=""
+        [[ -n "$_gh_repo" ]] && _gh_repo_flag="--repo $_gh_repo"
+        pr_number="$(gh pr list ${_gh_repo_flag} --head "$prev_branch" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")"
         if [[ -n "$pr_number" ]]; then
             prev_merged=true
         fi
@@ -313,12 +318,15 @@ preflight_git_checks() {
                     prev_merged=true
                 fi
             else
-                # Branch doesn't exist locally — check for squash commit on main
+                # Branch doesn't exist locally — check for merge/squash commit on main
+                # Match auto-bmad squash commits "(1-4)", merge commits "story/1-4-...", or "Story 1-4" refs
                 local prev_epic="${prev_story%%-*}"
                 local prev_remainder="${prev_story#*-}"
                 local prev_num="${prev_remainder%%-*}"
                 local short_id="${prev_epic}-${prev_num}"
-                if git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="(${short_id})" -1 2>/dev/null | grep -q .; then
+                if git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="(${short_id})" -1 2>/dev/null | grep -q . \
+                || git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="${prev_branch}" -1 2>/dev/null | grep -q . \
+                || git -C "$PROJECT_ROOT" log "$main_ref" --oneline --grep="[Ss]tory ${short_id}" -1 2>/dev/null | grep -q .; then
                     prev_merged=true
                 fi
             fi

@@ -30,8 +30,23 @@ if command -v jq &>/dev/null; then
     HAS_JQ=true
 fi
 
+# --- Configuration Cascade ---
+# Order: INSTALL_DIR/conf/ → ~/.config/auto-bmad/ → PROJECT_ROOT/conf/
+# Later files override earlier ones. Env vars override all.
+_USER_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/auto-bmad"
+
+# Echo cascade of existing conf file paths for a given filename.
+_conf_files() {
+    local name="$1" f
+    f="${INSTALL_DIR}/conf/${name}";    [[ -f "$f" ]] && echo "$f"
+    f="${_USER_CONF_DIR}/${name}";      [[ -f "$f" ]] && echo "$f"
+    if [[ "$PROJECT_ROOT" != "$INSTALL_DIR" ]]; then
+        f="${PROJECT_ROOT}/conf/${name}"; [[ -f "$f" ]] && echo "$f"
+    fi
+}
+
 # --- Pipeline Configuration (conf/pipeline.conf) ---
-# Defaults — overridden by _load_pipeline_conf
+# Defaults — overridden by cascade + env vars
 cfg_pip_pr_safety=7200
 cfg_pip_pr_poll_interval=30
 cfg_pip_pr_grace_polls=10
@@ -45,16 +60,15 @@ cfg_pip_default_review_mode=full
 
 _PIPELINE_CONF_LOADED=false
 
-# Load conf/pipeline.conf (and .local overlay) into cfg_pip_* globals.
+# Load pipeline.conf from cascade into cfg_pip_* globals.
 # Idempotent — safe to call multiple times.
 load_pipeline_conf() {
     [[ "$_PIPELINE_CONF_LOADED" == true ]] && return 0
 
-    local base="${INSTALL_DIR}/conf/pipeline.conf"
-    local local_conf="${INSTALL_DIR}/conf/pipeline.local.conf"
-
-    _parse_pipeline_file "$base"
-    _parse_pipeline_file "$local_conf"
+    local f
+    while IFS= read -r f; do
+        _parse_pipeline_file "$f"
+    done < <(_conf_files "pipeline.conf")
 
     # Environment variable overrides: AUTO_BMAD_<SECTION>_<KEY>
     # e.g. AUTO_BMAD_TIMEOUTS_PR_SAFETY overrides [timeouts] pr_safety
@@ -211,9 +225,6 @@ check_bmad_version() {
 
 # --- AI Profile Lookup ---
 
-# Profile config file path
-_PROFILES_CONF="${INSTALL_DIR}/conf/profiles.conf"
-
 # Profile storage — parallel arrays keyed by @name (bash 3.2 compatible)
 # Populated by _load_profiles, read by _resolve_profile.
 _PROFILE_NAMES=()
@@ -223,24 +234,40 @@ _PROFILE_EFFORTS=()
 _PROFILE_FALLBACKS=()
 _PROFILES_LOADED=false
 
-# Load @-prefixed profile definitions from conf/profiles.conf.
-# Call once after sourcing; idempotent.
+# Load @-prefixed profile definitions from profiles.conf cascade.
+# Later files override earlier ones by @name. Idempotent.
 _load_profiles() {
     [[ "$_PROFILES_LOADED" == true ]] && return 0
-    [[ ! -f "$_PROFILES_CONF" ]] && return 1
 
-    while IFS= read -r line; do
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// /}" ]] && continue
-        [[ "$line" != @* ]] && continue
-        local name cli model effort fallback
-        read -r name cli model effort fallback <<< "$line"
-        _PROFILE_NAMES+=("$name")
-        _PROFILE_CLIS+=("$cli")
-        _PROFILE_MODELS+=("$model")
-        _PROFILE_EFFORTS+=("$effort")
-        _PROFILE_FALLBACKS+=("${fallback:--}")
-    done < "$_PROFILES_CONF"
+    local f
+    while IFS= read -r f; do
+        while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line// /}" ]] && continue
+            [[ "$line" != @* ]] && continue
+            local name cli model effort fallback
+            read -r name cli model effort fallback <<< "$line"
+            # Override existing profile if already loaded
+            local i found=false
+            for ((i=0; i<${#_PROFILE_NAMES[@]}; i++)); do
+                if [[ "${_PROFILE_NAMES[$i]}" == "$name" ]]; then
+                    _PROFILE_CLIS[$i]="$cli"
+                    _PROFILE_MODELS[$i]="$model"
+                    _PROFILE_EFFORTS[$i]="$effort"
+                    _PROFILE_FALLBACKS[$i]="${fallback:--}"
+                    found=true
+                    break
+                fi
+            done
+            if [[ "$found" == false ]]; then
+                _PROFILE_NAMES+=("$name")
+                _PROFILE_CLIS+=("$cli")
+                _PROFILE_MODELS+=("$model")
+                _PROFILE_EFFORTS+=("$effort")
+                _PROFILE_FALLBACKS+=("${fallback:--}")
+            fi
+        done < "$f"
+    done < <(_conf_files "profiles.conf")
 
     _PROFILES_LOADED=true
 }
@@ -259,12 +286,14 @@ _resolve_profile() {
     echo "|||"
 }
 
-# Look up the AI profile for a step from conf/profiles.conf.
+# Look up the AI profile for a step from profiles.conf cascade.
 # Returns "cli|model|effort|fallback". Falls back to "|||" if step not found.
+# Last match wins across cascade files.
 step_config() {
     local step="$1"
     _load_profiles
-    if [[ -f "$_PROFILES_CONF" ]]; then
+    local result="" f
+    while IFS= read -r f; do
         local line
         while IFS= read -r line; do
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -274,17 +303,14 @@ step_config() {
             read -r sid profile_or_cli field3 field4 <<< "$line"
             if [[ "$sid" == "$step" ]]; then
                 if [[ "$profile_or_cli" == @* ]]; then
-                    # Resolve @profile reference
-                    _resolve_profile "$profile_or_cli"
+                    result="$(_resolve_profile "$profile_or_cli")"
                 else
-                    # Legacy format: step_id cli model effort (no fallback)
-                    echo "${profile_or_cli}|${field3}|${field4}|-"
+                    result="${profile_or_cli}|${field3}|${field4}|-"
                 fi
-                return
             fi
-        done < "$_PROFILES_CONF"
-    fi
-    echo "|||"
+        done < "$f"
+    done < <(_conf_files "profiles.conf")
+    echo "${result:-|||}"
 }
 
 # Parse step config once into cfg_cli, cfg_model, cfg_effort, cfg_fallback globals.
