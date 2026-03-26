@@ -7,7 +7,7 @@
 
 Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with structured triage reviews — designed for unattended, sandboxed execution.
 
-- **3 AI providers** (Claude, GPT, Opencode/MiMo) running review steps in parallel
+- **4 AI providers** (Claude, GPT/Codex, OpenCode/MiMo, Copilot) running review steps in parallel
 - **14+ pipeline steps** across 7 phases per story — from story creation to documentation
 - **3-way spec validation + 6-way code reviews** with structured triage and automated resolution
 - **Full epic orchestration** with automatic PR, CI gating, and squash-merge between stories
@@ -24,6 +24,7 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 - [Story Pipeline](#story-pipeline-auto-bmad-storysh)
 - [Epic Pipeline](#epic-pipeline-auto-bmad-epicsh)
 - [Sprint Status Format](#sprint-status-format)
+- [Diagnostic Commands](#diagnostic-commands)
 - [Customization](#customization)
 - [Troubleshooting](#troubleshooting)
 - [Examples](#examples)
@@ -58,12 +59,16 @@ The story script auto-detects the next story from `sprint-status.yaml`. The epic
 
 This project is opinionated — it assumes a specific git workflow (branch-per-story, squash-merge PRs, CI gates) and uses multiple AI CLIs simultaneously. The pipeline is modular: two entry-point scripts source shared libraries from `lib/`, read AI profile assignments from `conf/profiles.conf`, and load prompt templates from `prompts/`.
 
-A unified `auto-bmad` CLI dispatches to two underlying scripts:
+A unified `auto-bmad` CLI dispatches to pipeline scripts and diagnostic commands:
 
-| Command | Script | Scope | What it does |
-|---------|--------|-------|-------------|
-| `auto-bmad story` | `auto-bmad-story` | One story | Runs a single story through the full BMAD pipeline (14+ steps, 7 phases) using multiple AI CLIs in parallel |
-| `auto-bmad epic` | `auto-bmad-epic` | One epic | Loops through all stories in an epic, delegating each to the story script, with PR + CI between stories |
+| Command | Scope | What it does |
+|---------|-------|-------------|
+| `auto-bmad story` | One story | Runs a single story through the full BMAD pipeline (14+ steps, 7 phases) |
+| `auto-bmad epic` | One epic | Loops through all stories, with PR + CI between them |
+| `auto-bmad status` | Diagnostic | Shows current story, branch, epic progress at a glance |
+| `auto-bmad quickstart` | Setup | First-run wizard — checks tools, profiles, and project readiness |
+| `auto-bmad validate` | Diagnostic | Validates sprint-status.yaml structure and content |
+| `auto-bmad config` | Diagnostic | Shows all resolved configuration (pipeline.conf + profiles + tools) |
 
 ### Architecture
 
@@ -126,17 +131,22 @@ Triage evaluates on **argument quality**, not reviewer count. A single reviewer 
 - **BMad framework** installed (`_bmad/` directory) — tested against BMad 6.2.0 / TEA 1.7.2
 - **Sprint status** generated at `_bmad-output/implementation-artifacts/sprint-status.yaml`
 
-### AI CLIs (all three needed for full parallel reviews)
+### AI CLIs (all four needed for full parallel reviews)
 
 - [`claude`](https://docs.anthropic.com/en/docs/claude-code) — Claude Code CLI
 - [`codex`](https://github.com/openai/codex) — OpenAI Codex CLI
+- [`copilot`](https://docs.github.com/copilot/how-tos/copilot-cli) — GitHub Copilot CLI (fallback provider)
 - [`opencode`](https://github.com/opencode-ai/opencode) — OpenCode CLI (MiMo)
 
 ### For auto-merge between stories
 
 - [`gh`](https://cli.github.com/) — GitHub CLI, authenticated
 
-> **Note:** Each story runs 14+ AI invocations across 3 providers. This is extremely token-hungry — budget accordingly.
+### Optional
+
+- [`jq`](https://jqlang.github.io/jq/) — enables JSON usage tracking and cost reporting per step/story/epic
+
+> **Note:** Each story runs 14+ AI invocations across 4 providers. This is extremely token-hungry — budget accordingly. When `jq` is installed, each step outputs JSON for automatic token and cost tracking (see [Artifacts](#artifacts)).
 
 ## Installation
 
@@ -183,6 +193,7 @@ ln -s "$(pwd)/prompts" /path/to/your/project/prompts
 
 ```bash
 auto-bmad help                  # if installed via make
+auto-bmad quickstart            # check tool readiness
 auto-bmad story --help
 auto-bmad epic --help
 ```
@@ -200,9 +211,10 @@ autoload -Uz compinit && compinit
 ```
 
 Completions cover:
-- Subcommands: `auto-bmad <TAB>` → `story`, `epic`, `help`, `version`
+- Subcommands: `auto-bmad <TAB>` → `story`, `epic`, `status`, `quickstart`, `validate`, `config`, ...
 - Per-command flags: `auto-bmad story <TAB>` → `--story`, `--from-step`, `--dry-run`, ...
 - Flag values: `auto-bmad story --reviews <TAB>` → `full`, `fast`, `none`
+- Step IDs: `auto-bmad story --from-step <TAB>` → `0.1`, `1.1`, `1.2`, ...
 
 ## Story Pipeline (`auto-bmad-story`)
 
@@ -218,14 +230,13 @@ Options:
   --story STORY_ID       Override auto-detection (e.g., 1-2-database-schemas)
   --from-step STEP_ID    Resume from a specific step (e.g., 3.1, 6.1)
   --dry-run              Preview all steps without executing
-  --skip-epic-phases     Skip phases 0 and 5 even at epic boundaries
+  --skip-cache           Bypass pre-flight cache and force full checks
   --skip-tea             Skip TEA phases even if installed (0, 2.1, 4.x, 5.1-5.3)
-  --skip-reviews         Skip all review phases (1.2-1.4, 3.x)
-  --fast-reviews         Run only 1 GPT reviewer per phase, skip triage+fix
+  --reviews MODE         Review mode: full (default), fast (1 GPT only), none
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
                          (pipeline report is kept)
-  --safe-mode            Disable permission-bypass flags (AI tools prompt for approval)
+  --acknowledge-previous Skip warning about unresolved items from previous story
   --help                 Show usage
 ```
 
@@ -247,12 +258,13 @@ Six named profiles are defined in `conf/profiles.conf` and referenced by steps v
 
 | Profile | CLI / Model | Effort | Fallback | Used for |
 |---------|-------------|--------|----------|----------|
-| `@claude-opus-max` | Claude Opus | max | `@claude-sonnet-high` | Critical path: triage, fix, implementation |
-| `@claude-opus-high` | Claude Opus | high | `@claude-sonnet-high` | Structured: spec reviews, retro, docs |
-| `@claude-sonnet-high` | Claude Sonnet | high | none | Lightweight: traceability, closing |
-| `@codex-gpt54-xhigh` | Codex GPT 5.4 | xhigh | `@claude-opus-max` | Code reviews, edge cases |
-| `@codex-gpt54-high` | Codex GPT 5.4 | high | `@claude-opus-high` | Spec-level reviews |
-| `@opencode-mimo-max` | OpenCode MiMo V2 Pro | max | `@claude-opus-high` | Parallel reviews |
+| `@claude-opus-max` | Claude Opus | max | `@copilot-opus-max` | Critical path: triage, fix, implementation |
+| `@claude-opus-high` | Claude Opus | high | `@copilot-opus-high` | Structured: spec reviews, retro, docs |
+| `@claude-sonnet-high` | Claude Sonnet | high | `@copilot-sonnet-high` | Lightweight: traceability, closing |
+| `@codex-gpt54-high` | Codex GPT 5.4 | high | `@copilot-gpt54-high` | Spec-level reviews |
+| `@codex-gpt54-xhigh` | Codex GPT 5.4 | xhigh | `@copilot-gpt54-xhigh` | Code reviews, edge cases |
+| `@opencode-mimo-max` | OpenCode MiMo V2 Pro | max | `@copilot-opus-max` | Parallel reviews |
+| `@copilot-*` | Copilot (various models) | varies | cross-provider | Fallback provider for all primary profiles |
 
 ### Retry & Fallback
 
@@ -282,22 +294,18 @@ Per-story artifacts are saved to `_bmad-output/implementation-artifacts/auto-bma
 - Code acceptance audit (`*-3.2-code-acceptance.md`) — AC compliance matrix (PASS / PARTIAL / FAIL per criterion)
 - Code triage (`*-3.3-code-triage.md`) — classified code findings with reviewer signal assessment and overlap matrix
 - Pipeline report (`*-6.1-pipeline-report.md`) — timestamps, CLI/model per step, wall/compute time, git diff stats
+- Usage report (`usage-report.json`) — per-step token counts, cost (reported/inferred), premium requests, with totals by CLI and model. Requires `jq`.
+- Event log (`events.jsonl`) — structured JSONL events for each step start/end/retry/fallback, consumable by external tools. Requires `jq`.
 
 ### Review Modes
 
-Phase 1 runs 3 parallel spec validations; Phase 3 runs 6 parallel code reviews (3 AIs × 2 types). Both use structured triage with automated resolution. Two flags control this:
+Phase 1 runs 3 parallel spec validations; Phase 3 runs 6 parallel code reviews (3 AIs × 2 types). Both use structured triage with automated resolution. The `--reviews` flag controls this:
 
-- **`--fast-reviews`** — Run only the first GPT reviewer per phase, skip triage+fix steps. Good for iteration.
-- **`--skip-reviews`** — Skip all review phases entirely. Pipeline becomes: create story → implement → document → close. Supersedes `--fast-reviews` if both are passed.
-
-### Safe Mode (`--safe-mode`)
-
-Disables the permission-bypass flags (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`) so each AI CLI uses its native permission prompting. The pipeline will pause at each step for user approval instead of running unattended.
-
-Useful for:
-- **First run on a new codebase** — review what each AI step does before trusting it
-- **After model updates** — verify behavior hasn't shifted
-- **Combined with `--skip-git`** — the most conservative possible run (`--safe-mode --skip-git`)
+| Mode | Behavior |
+|------|----------|
+| `--reviews full` (default) | 3 spec validators + 6 code reviewers, full triage + automated fix |
+| `--reviews fast` | 1 GPT reviewer per phase, triage + fix skipped. Good for iteration. |
+| `--reviews none` | Skip all review phases. Pipeline: create → implement → document → close. |
 
 ### No Traces Mode (`--no-traces`)
 
@@ -328,18 +336,17 @@ auto-bmad epic [options]       # via wrapper
 Options:
   --epic EPIC_ID         Target epic number (e.g., 1). Auto-detects if omitted.
   --from-story ID        Resume from a specific story (e.g., 1-3-some-slug)
+  --to-story ID          Stop after this story (e.g., 1-5-deploy)
   --dry-run              Preview the full epic plan without executing
   --no-merge             Skip auto-PR/merge between stories (manual git)
   --help                 Show usage
 
 Story pass-through flags (forwarded to auto-bmad-story):
-  --skip-epic-phases     Skip phases 0 (epic start) and 5 (epic end)
+  --skip-cache           Bypass story-script pre-flight cache
   --skip-tea             Skip TEA phases even if installed
-  --skip-reviews         Skip all review phases (1.2-1.4, 3.x)
-  --fast-reviews         Run only 1 GPT reviewer per phase, skip triage+fix
+  --reviews MODE         Review mode: full (default), fast (1 GPT only), none
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
-  --safe-mode            Disable permission-bypass flags (AI tools prompt for approval)
 ```
 
 ### What It Does
@@ -423,6 +430,7 @@ This is informational — no blocking gate. Review before starting the next epic
 
 Epic-level artifacts go to `_bmad-output/implementation-artifacts/auto-bmad/epic-{N}/`:
 - `epic-{N}-metrics.md` — per-story timing table and totals
+- `epic-usage-report.json` — aggregated token/cost data across all stories, with breakdowns by CLI and model. Requires `jq`.
 - `epic-pipeline.log` — full log (deleted on success)
 
 ## Sprint Status Format
@@ -449,6 +457,43 @@ epic-2-retrospective: optional
 | Epic | `backlog` → `in-progress` → `done` |
 | Story | `backlog` → `ready-for-dev` → `in-progress` → `review` → `done` |
 | Retrospective | `optional` ↔ `done` |
+
+## Diagnostic Commands
+
+Four commands help with setup, debugging, and pipeline monitoring — none modify files or run pipelines.
+
+### `auto-bmad status`
+
+One-screen overview of current pipeline state: active story, branch, epic progress, previous story merge status, and unresolved deferred items.
+
+```bash
+auto-bmad status
+```
+
+### `auto-bmad quickstart`
+
+Interactive first-run setup wizard. Checks all AI CLIs, git version, GitHub auth, jq availability, BMAD project structure, and profile configuration. Offers to run a dry-run if everything looks good.
+
+```bash
+auto-bmad quickstart
+```
+
+### `auto-bmad validate`
+
+Validates `sprint-status.yaml` for structural issues: invalid statuses, duplicate IDs, undeclared epics, malformed entries.
+
+```bash
+auto-bmad validate                     # default location
+auto-bmad validate /path/to/file.yaml  # custom path
+```
+
+### `auto-bmad config`
+
+Dumps all resolved configuration: pipeline.conf values (with local/env overrides), profile definitions, tool paths.
+
+```bash
+auto-bmad config
+```
 
 ## Customization
 
@@ -485,25 +530,31 @@ Step IDs use a consistent scheme:
 
 All step prompts live in `prompts/*.md` as plain text with `{{PLACEHOLDER}}` variables. Edit these to change what instructions the AI receives for each step — no shell code to touch.
 
-### Git / CI Configuration
+### Pipeline Configuration
 
-Edit these variables near the top of `auto-bmad-epic`:
+Edit `conf/pipeline.conf` to tune operator-facing defaults. Override per-machine in `conf/pipeline.local.conf` (gitignored) or via environment variables (`AUTO_BMAD_<SECTION>_<KEY>`):
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PR_SAFETY_TIMEOUT` | `7200` (2 hours) | Backstop for stuck CI runners — not the normal control flow |
-| `PR_POLL_INTERVAL` | `30` | Seconds between CI status checks |
+| Section | Key | Default | Description |
+|---------|-----|---------|-------------|
+| `[timeouts]` | `pr_safety` | `7200` (2h) | Backstop for stuck CI runners |
+| `[timeouts]` | `pr_poll_interval` | `30` | Seconds between CI status checks |
+| `[timeouts]` | `pr_grace_polls` | `10` | Polls to wait for CI checks to appear |
+| `[thresholds]` | `min_step_duration` | `5` | Soft-fail: steps faster than this are suspect |
+| `[thresholds]` | `min_log_bytes` | `200` | Soft-fail: steps with less output are suspect |
+| `[cache]` | `preflight_max_age` | `86400` | Seconds before pre-flight results are re-checked |
+| `[git]` | `branch_pattern` | `story/${STORY_ID}` | Branch naming template |
+| `[git]` | `default_review_mode` | `full` | Default when `--reviews` not specified |
 
-Use `--no-merge` to skip all git operations between stories for non-GitHub or manual workflows.
+Run `auto-bmad config` to see all resolved values. Use `--no-merge` to skip git operations between stories for non-GitHub workflows.
 
 ## Troubleshooting
 
 ### AI CLI not found
 
-The scripts check for `claude`, `codex`, and `opencode` in PATH at startup. Verify each is installed:
+The scripts check for `claude`, `codex`, `copilot`, and `opencode` in PATH at startup. Verify each is installed:
 
 ```bash
-for cli in claude codex opencode; do command -v "$cli" >/dev/null && echo "$cli ✓" || echo "$cli ✗"; done
+for cli in claude codex copilot opencode; do command -v "$cli" >/dev/null && echo "$cli ✓" || echo "$cli ✗"; done
 ```
 
 ### BMAD version mismatch
@@ -533,11 +584,26 @@ Both scripts expect this file at `_bmad-output/implementation-artifacts/sprint-s
 ## Examples
 
 ```bash
+# Check readiness before first run
+auto-bmad quickstart
+
+# Show current pipeline state
+auto-bmad status
+
+# Validate sprint-status.yaml
+auto-bmad validate
+
+# Show resolved configuration
+auto-bmad config
+
 # Preview what the next epic would do
 auto-bmad epic --dry-run
 
 # Run epic 1 end-to-end
 auto-bmad epic --epic 1
+
+# Run a range of stories within an epic
+auto-bmad epic --epic 1 --from-story 1-3-ci --to-story 1-5-deploy
 
 # Resume epic after a story failure
 auto-bmad epic --epic 1 --from-story 1-3-ci-pipeline
@@ -555,22 +621,16 @@ auto-bmad story --story 1-2-database-schemas --from-step 3.1
 auto-bmad story --story 1-2-database-schemas --dry-run
 
 # Quick run — single GPT reviewer, triage+fix skipped
-auto-bmad story --fast-reviews
+auto-bmad story --reviews fast
 
 # Minimal pipeline — create, implement, close (no reviews or TEA)
-auto-bmad story --skip-reviews --skip-tea
+auto-bmad story --reviews none --skip-tea
 
 # Run clean — no pipeline artifacts left behind
 auto-bmad story --no-traces
 
 # Epic with fast reviews for all stories
-auto-bmad epic --epic 1 --fast-reviews
-
-# Safe mode — AI tools prompt for permissions instead of auto-approving
-auto-bmad story --safe-mode
-
-# Cautious first run — safe mode + no git writes
-auto-bmad story --safe-mode --skip-git
+auto-bmad epic --epic 1 --reviews fast
 ```
 
 ## Lineage

@@ -31,6 +31,12 @@ load_prompt() {
         content="${content//\{\{$1\}\}/$2}"
         shift 2
     done
+    # Safety check: warn about any remaining unreplaced placeholders
+    local leftover
+    leftover=$(echo "$content" | grep -oE '\{\{[A-Z_]+\}\}' | sort -u | head -5) || true
+    if [[ -n "$leftover" ]]; then
+        log_warn "Unreplaced placeholders in ${template##*/}: $(echo "$leftover" | tr '\n' ' ')"
+    fi
     echo "$content"
 }
 
@@ -49,7 +55,7 @@ run_ai() {
     local prompt="$2"
     [[ "$_RETRY_PROFILE_ACTIVE" != true ]] && parse_step_config "$step_id"
 
-    # Write step header and raw output to per-step log (not the summary)
+    # Write step header to per-step log
     {
         echo ""
         echo "═══ Step ${step_id} ═══════════════════════════════════════════"
@@ -60,43 +66,88 @@ run_ai() {
         echo "───────────────────────────────────────────────────────────────"
     } >> "$CURRENT_STEP_LOG"
 
+    # Raw JSON output file (used when HAS_JQ=true for usage tracking)
+    local raw_json="${TMP_DIR}/step-${step_id}-raw.json"
+
     local exit_code=0
-    case "$cfg_cli" in
-        claude)
-            local cmd=(claude -p "$prompt" --model "$cfg_model" --dangerously-skip-permissions)
-            [[ -n "$cfg_effort" ]] && cmd+=(--effort "$cfg_effort")
-            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-            exit_code=${PIPESTATUS[0]}
-            ;;
-        codex)
-            local cprompt; cprompt="$(codex_prompt "$prompt")"
-            local cmd=(codex exec "$cprompt" -m "$cfg_model" --full-auto)
-            [[ -n "$cfg_effort" ]] && cmd+=(-c "model_reasoning_effort=${cfg_effort}")
-            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-            exit_code=${PIPESTATUS[0]}
-            ;;
-        copilot)
-            local cmd=(copilot -p "$prompt" --model "$cfg_model" --yolo)
-            if [[ -n "$cfg_effort" ]]; then
-                # copilot supports low/medium/high/xhigh; map "max" → "xhigh"
-                local eff="$cfg_effort"
-                [[ "$eff" == "max" ]] && eff="xhigh"
-                cmd+=(--effort "$eff")
-            fi
-            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-            exit_code=${PIPESTATUS[0]}
-            ;;
-        opencode)
-            local cmd=(opencode run "$prompt" -m "$cfg_model")
-            [[ -n "$cfg_effort" ]] && cmd+=(--variant "$cfg_effort")
-            "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-            exit_code=${PIPESTATUS[0]}
-            ;;
-        *)
-            log_error "Unknown CLI: ${cfg_cli}"
-            return 1
-            ;;
-    esac
+    if [[ "$HAS_JQ" == true ]]; then
+        # --- JSON mode: capture structured output for usage extraction ---
+        case "$cfg_cli" in
+            claude)
+                local cmd=(claude -p "$prompt" --model "$cfg_model" --dangerously-skip-permissions --output-format json)
+                [[ -n "$cfg_effort" ]] && cmd+=(--effort "$cfg_effort")
+                "${cmd[@]}" > "$raw_json" 2>&1 || true
+                exit_code=${PIPESTATUS[0]:-$?}
+                ;;
+            codex)
+                local cprompt; cprompt="$(codex_prompt "$prompt")"
+                local cmd=(codex exec "$cprompt" -m "$cfg_model" --full-auto --json)
+                [[ -n "$cfg_effort" ]] && cmd+=(-c "model_reasoning_effort=${cfg_effort}")
+                "${cmd[@]}" > "$raw_json" 2>&1 || true
+                exit_code=${PIPESTATUS[0]:-$?}
+                ;;
+            copilot)
+                local cmd=(copilot -p "$prompt" --model "$cfg_model" --yolo --output-format json)
+                if [[ -n "$cfg_effort" ]]; then
+                    local eff="$cfg_effort"
+                    [[ "$eff" == "max" ]] && eff="xhigh"
+                    cmd+=(--effort "$eff")
+                fi
+                "${cmd[@]}" > "$raw_json" 2>&1 || true
+                exit_code=${PIPESTATUS[0]:-$?}
+                ;;
+            opencode)
+                local cmd=(opencode run "$prompt" -m "$cfg_model" --format json)
+                [[ -n "$cfg_effort" ]] && cmd+=(--variant "$cfg_effort")
+                "${cmd[@]}" > "$raw_json" 2>&1 || true
+                exit_code=${PIPESTATUS[0]:-$?}
+                ;;
+            *)
+                log_error "Unknown CLI: ${cfg_cli}"
+                return 1
+                ;;
+        esac
+
+        # Extract text output from JSON and append to step log
+        extract_ai_output "$cfg_cli" "$raw_json" >> "$CURRENT_STEP_LOG"
+    else
+        # --- Text mode (no jq): original pipe-through behavior ---
+        case "$cfg_cli" in
+            claude)
+                local cmd=(claude -p "$prompt" --model "$cfg_model" --dangerously-skip-permissions)
+                [[ -n "$cfg_effort" ]] && cmd+=(--effort "$cfg_effort")
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
+                exit_code=${PIPESTATUS[0]}
+                ;;
+            codex)
+                local cprompt; cprompt="$(codex_prompt "$prompt")"
+                local cmd=(codex exec "$cprompt" -m "$cfg_model" --full-auto)
+                [[ -n "$cfg_effort" ]] && cmd+=(-c "model_reasoning_effort=${cfg_effort}")
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
+                exit_code=${PIPESTATUS[0]}
+                ;;
+            copilot)
+                local cmd=(copilot -p "$prompt" --model "$cfg_model" --yolo)
+                if [[ -n "$cfg_effort" ]]; then
+                    local eff="$cfg_effort"
+                    [[ "$eff" == "max" ]] && eff="xhigh"
+                    cmd+=(--effort "$eff")
+                fi
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
+                exit_code=${PIPESTATUS[0]}
+                ;;
+            opencode)
+                local cmd=(opencode run "$prompt" -m "$cfg_model")
+                [[ -n "$cfg_effort" ]] && cmd+=(--variant "$cfg_effort")
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
+                exit_code=${PIPESTATUS[0]}
+                ;;
+            *)
+                log_error "Unknown CLI: ${cfg_cli}"
+                return 1
+                ;;
+        esac
+    fi
 
     return "$exit_code"
 }

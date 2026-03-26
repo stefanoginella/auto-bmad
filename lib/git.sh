@@ -3,19 +3,20 @@
 # Sourced by auto-bmad-story (and indirectly by epic via story)
 #
 # Requires: lib/core.sh sourced, PROJECT_ROOT set
-# Reads globals: DRY_RUN SKIP_GIT STORY_ID STORY_SHORT_ID COMMIT_BASELINE FROM_STEP
+# Reads globals: DRY_RUN SKIP_GIT STORY_ID STORY_SHORT_ID COMMIT_BASELINE FROM_STEP EPIC_ID
 #
 # Exports:
 #   git_checkpoint <label>        — WIP commit if changes exist
 #   git_squash_pipeline           — soft-reset to COMMIT_BASELINE
 #   extract_story_commit_msg      — extract commit msg from story file
 #   check_git_branch              — ensure correct branch + post-checkout gates
-#   preflight_git_checks          — 5-gate pre-flight (tools, tree, merge, freshness, shadow)
+#   preflight_git_checks          — 7-gate pre-flight (tools, tree, merge, freshness, shadow, divergence, conflict)
+#   _resolve_branch_name <sid>    — expand cfg_pip_branch_pattern for a story ID
 #
 # Gate architecture (preflight_git_checks + check_git_branch):
 #   Gate 0: Required tools       — hard gate, checks gh auth + git version
 #   Gate 1: Dirty working tree   — soft [c/f/a], fix: git stash
-#   Gate 2: Previous story merged— hard [f/a], fix: gh pr merge --squash
+#   Gate 2: Previous story merged — soft [c/a], advisory only (no auto-merge)
 #   Gate 3: Main freshness       — soft [c/f/a], fix: git pull --ff-only
 #   Gate 4: Remote branch shadow — soft [c/f/a], fix: git checkout --track
 #   Gate 5: Branch divergence    — soft [c/f/a], fix: git rebase main (post-checkout)
@@ -83,9 +84,8 @@ check_git_branch() {
     [[ "$SKIP_GIT" == "true" ]] && { log_skip "Git branch check — --skip-git"; return 0; }
     [[ "$DRY_RUN" == "true" ]] && { log_skip "Git branch check — --dry-run"; return 0; }
 
-    local branch_tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
     local current_branch expected_branch
-    eval "expected_branch=\"${branch_tmpl}\""
+    expected_branch="$(_resolve_branch_name "$STORY_ID")"
     current_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" || {
         log_warn "Not a git repository — skipping branch check"
         return 0
@@ -205,12 +205,21 @@ _resolve_main_ref() {
     fi
 }
 
+# Resolve branch name for a given story ID using cfg_pip_branch_pattern.
+# Usage: _resolve_branch_name <story_id>
+_resolve_branch_name() {
+    local _sid="$1"
+    local _tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
+    local STORY_ID="$_sid"
+    eval "echo \"${_tmpl}\""
+}
+
 # Validates git state before check_git_branch() selects/creates branches.
 # Gates are ordered by dependency — earliest failures abort cheapest.
 #
 # Gate 0: Required tools      (hard — no fix)
 # Gate 1: Dirty working tree  (soft — fix: git stash)
-# Gate 2: Previous story PR   (hard — fix: gh pr merge)
+# Gate 2: Previous story PR   (soft — advisory only, no auto-merge)
 # Gate 3: Main freshness      (soft — fix: git pull --ff-only)
 # Gate 4: Remote branch shadow(soft — fix: git checkout --track)
 preflight_git_checks() {
@@ -277,11 +286,17 @@ preflight_git_checks() {
             "git -C '$PROJECT_ROOT' stash push -m 'auto-bmad: pre-pipeline stash'"
     fi
 
-    # ── Gate 2: Previous story merged (hard gate) ───────────────
+    # ── Gate 2: Previous story merged (soft gate) ───────────────
     local prev_story
     prev_story="$(_find_previous_story)"
+    # Skip cross-epic check — previous epic's merge status is irrelevant
     if [[ -n "$prev_story" ]]; then
-        local prev_branch="story/${prev_story}"
+        local _prev_epic="${prev_story%%-*}"
+        [[ "$_prev_epic" != "$EPIC_ID" ]] && prev_story=""
+    fi
+    if [[ -n "$prev_story" ]]; then
+        local prev_branch
+        prev_branch="$(_resolve_branch_name "$prev_story")"
         local prev_merged=false
 
         # Primary: check GitHub for a merged PR
@@ -311,12 +326,15 @@ preflight_git_checks() {
 
         if [[ "$prev_merged" == "false" ]]; then
             echo ""
-            log_error "Previous story not merged: ${prev_story}"
+            log_warn "Previous story not merged: ${prev_story}"
             echo -e "    Story ${BOLD}${STORY_ID}${NC} may depend on work from ${BOLD}${prev_story}${NC}."
             echo -e "    No merged PR found and branch is not an ancestor of ${BOLD}${main_ref}${NC}."
-            _confirm_fa \
-                "gh pr merge --squash \$(gh pr list --head ${prev_branch} --json number --jq '.[0].number')" \
-                "local _pr; _pr=\"\$(gh pr list --head '${prev_branch}' --json number --jq '.[0].number' 2>/dev/null)\"; [[ -n \"\$_pr\" ]] && gh pr merge \"\$_pr\" --squash || { log_error 'No open PR found for ${prev_branch}'; false; }"
+            echo ""
+            echo -e "    ${DIM}To merge manually:${NC}"
+            echo -e "    ${DIM}  gh pr merge --squash \$(gh pr list --head ${prev_branch} --json number --jq '.[0].number')${NC}"
+            _confirm_cfa \
+                "Previous story not merged" \
+                "" ""
         fi
     fi
 
@@ -337,9 +355,8 @@ preflight_git_checks() {
     fi
 
     # ── Gate 4: Remote branch shadow (soft gate) ────────────────
-    local branch_tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
     local expected_branch
-    eval "expected_branch=\"${branch_tmpl}\""
+    expected_branch="$(_resolve_branch_name "$STORY_ID")"
     if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/${expected_branch}" 2>/dev/null; then
         if git -C "$PROJECT_ROOT" ls-remote --exit-code origin "refs/heads/${expected_branch}" &>/dev/null 2>&1; then
             echo ""

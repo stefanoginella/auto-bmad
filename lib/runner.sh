@@ -14,6 +14,31 @@
 [[ -n "${_RUNNER_SH_LOADED:-}" ]] && return 0
 _RUNNER_SH_LOADED=1
 
+# --- Structured JSONL Event Logging ---
+
+# Emit a structured JSONL event. No-op if jq is unavailable.
+_emit_event() {
+    [[ "$HAS_JQ" != true ]] && return 0
+    local event_type="$1" step_id="$2"
+    shift 2
+    local ts; ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local event="{\"type\":\"${event_type}\",\"step_id\":\"${step_id}\",\"timestamp\":\"${ts}\",\"story_id\":\"${STORY_ID}\""
+    while [[ $# -ge 2 ]]; do
+        local key="$1" val="$2"
+        # Numeric values don't get quotes
+        if [[ "$val" =~ ^[0-9]+$ ]]; then
+            event="${event},\"${key}\":${val}"
+        else
+            # Escape quotes in string values
+            val="${val//\"/\\\"}"
+            event="${event},\"${key}\":\"${val}\""
+        fi
+        shift 2
+    done
+    event="${event}}"
+    echo "$event" >> "${TMP_DIR}/events.jsonl"
+}
+
 # --- Soft-fail Detection & Retry ---
 
 # Soft-fail thresholds — loaded from conf/pipeline.conf via cfg_pip_* globals
@@ -75,6 +100,7 @@ _run_with_retry() {
 
             if (( attempt <= max_retries )); then
                 log_warn "Step ${step_id} ${fail_type}-failed (${duration}s) — retry ${attempt}/${max_retries}"
+                _emit_event "step_retry" "$step_id" "attempt" "$attempt" "fail_type" "$fail_type"
                 continue
             fi
 
@@ -82,6 +108,7 @@ _run_with_retry() {
             if [[ "$original_fallback" != "-" && -n "$original_fallback" ]]; then
                 log_warn "Retries exhausted for ${step_id} — falling back to ${original_fallback}"
                 apply_profile "$original_fallback"
+                _emit_event "step_fallback" "$step_id" "from" "$original_cli/$original_model" "to" "$cfg_cli/$cfg_model"
                 final_profile="${cfg_cli}/${cfg_model}"
                 using_fallback=true
                 attempt=0
@@ -160,6 +187,7 @@ run_step() {
 
     parse_step_config "$step_id"
     local model_info; model_info="$(_format_model_info)"
+    _emit_event "step_start" "$step_id" "name" "$step_name" "cli" "$cfg_cli" "model" "$cfg_model"
 
     local start_time; start_time=$(date +%s)
 
@@ -176,6 +204,10 @@ run_step() {
         local attempts; attempts="$(get_step_attempts "$step_id")"
         (( attempts > 1 )) && model_info="${model_info}(x${attempts})"
         _log_pipeline_entry "$step_id" "$model_info" "$duration" "ok" "$step_name"
+        # Record token usage from raw JSON output
+        extract_and_record_usage "$step_id" "$cfg_cli" "$cfg_model" \
+            "${TMP_DIR}/step-${step_id}-raw.json" "$duration" "ok"
+        _emit_event "step_end" "$step_id" "status" "ok" "duration" "$duration"
         log_ok "Completed in $(format_duration $duration)"
     else
         stop_activity_monitor
@@ -188,6 +220,10 @@ run_step() {
         local attempts; attempts="$(get_step_attempts "$step_id")"
         (( attempts > 1 )) && model_info="${model_info}(x${attempts})"
         _log_pipeline_entry "$step_id" "$model_info" "$duration" "FAILED" "$step_name"
+        # Record token usage even on failure (failed attempts still cost money)
+        extract_and_record_usage "$step_id" "$cfg_cli" "$cfg_model" \
+            "${TMP_DIR}/step-${step_id}-raw.json" "$duration" "FAILED"
+        _emit_event "step_end" "$step_id" "status" "FAILED" "duration" "$duration"
         echo "# FAILED at step ${step_id} after $(format_duration $((end_time - PIPELINE_START_TIME))) wall time" >> "$PIPELINE_LOG"
         echo "# Resume: auto-bmad story --from-step ${step_id} --story ${STORY_ID}" >> "$PIPELINE_LOG"
         log_error "Step ${step_id} (${step_name}) FAILED after $(format_duration $duration)"
@@ -289,6 +325,9 @@ run_parallel_reviews() {
 
     # --- Live status board: poll PIDs and redraw in-place ---
 
+    # Ensure cursor is restored if interrupted mid-draw (SIGINT/SIGTERM)
+    trap '_restore_cursor' INT TERM
+
     # Print placeholder lines for the board
     printf '\033[?25l'  # hide cursor
     for ((i=0; i<count; i++)); do echo ""; done
@@ -325,10 +364,18 @@ run_parallel_reviews() {
                     statuses[$i]="ok"
                     set_step_status "${sids[$i]}" "ok"
                     _log_pipeline_entry "${sids[$i]}" "${model_infos[$i]}" "$dur" "ok" "${snames[$i]}"
+                    parse_step_config "${sids[$i]}"
+                    extract_and_record_usage "${sids[$i]}" "$cfg_cli" "$cfg_model" \
+                        "${TMP_DIR}/step-${sids[$i]}-raw.json" "$dur" "ok"
+                    _emit_event "step_end" "${sids[$i]}" "status" "ok" "duration" "$dur"
                 else
                     statuses[$i]="FAILED"
                     set_step_status "${sids[$i]}" "FAILED"
                     _log_pipeline_entry "${sids[$i]}" "${model_infos[$i]}" "$dur" "FAILED" "${snames[$i]}"
+                    parse_step_config "${sids[$i]}"
+                    extract_and_record_usage "${sids[$i]}" "$cfg_cli" "$cfg_model" \
+                        "${TMP_DIR}/step-${sids[$i]}-raw.json" "$dur" "FAILED"
+                    _emit_event "step_end" "${sids[$i]}" "status" "FAILED" "duration" "$dur"
                 fi
                 running=$((running - 1))
             fi
@@ -359,5 +406,6 @@ run_parallel_reviews() {
     done
 
     printf '\033[?25h'  # restore cursor
+    trap - INT TERM     # clean up cursor-restore trap
     return 0
 }

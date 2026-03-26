@@ -199,6 +199,138 @@ collect_epic_story_paths() {
     echo "$paths"
 }
 
+# --- Sprint Status Validation ---
+
+# Validate sprint-status.yaml structure and content.
+# Returns 0 if valid, 1 if errors found. Prints issues to stdout.
+validate_sprint_status() {
+    local status_file="${1:-$SPRINT_STATUS}"
+    local errors=0 warnings=0 line_num=0
+    local -a seen_stories=() seen_epics=()
+    local valid_statuses="backlog in-progress done"
+
+    if [[ ! -f "$status_file" ]]; then
+        log_error "Sprint status file not found: ${status_file}"
+        return 1
+    fi
+
+    echo -e "${BOLD}Validating:${NC} ${status_file}"
+    echo ""
+
+    while IFS= read -r raw_line; do
+        line_num=$((line_num + 1))
+
+        # Strip comments and blank lines
+        local line="${raw_line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" ]] && continue
+
+        # Must contain a colon
+        if [[ "$line" != *:* ]]; then
+            log_warn "Line ${line_num}: missing colon separator: ${raw_line}"
+            warnings=$((warnings + 1))
+            continue
+        fi
+
+        local key status
+        key="${line%%:*}"
+        status="${line#*:}"
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        status="${status#"${status%%[![:space:]]*}"}"; status="${status%"${status##*[![:space:]]}"}"
+
+        # Skip metadata keys
+        case "$key" in
+            generated*|last_updated*|project*|tracking_system*|story_location*|development_status*) continue ;;
+        esac
+
+        # Epic header (epic-N)
+        if [[ "$key" =~ ^epic-[0-9]+$ ]]; then
+            local eid="${key#epic-}"
+            # Check for duplicate
+            local _dup
+            for _dup in "${seen_epics[@]+"${seen_epics[@]}"}"; do
+                if [[ "$_dup" == "$eid" ]]; then
+                    log_error "Line ${line_num}: duplicate epic: ${key}"
+                    errors=$((errors + 1))
+                fi
+            done
+            seen_epics+=("$eid")
+
+            # Validate status
+            if [[ " $valid_statuses " != *" $status "* ]]; then
+                log_error "Line ${line_num}: invalid status '${status}' for ${key} (expected: ${valid_statuses})"
+                errors=$((errors + 1))
+            fi
+            continue
+        fi
+
+        # Retrospective entry (epic-N-retrospective)
+        if [[ "$key" =~ ^epic-[0-9]+-retrospective$ ]]; then
+            if [[ " $valid_statuses " != *" $status "* ]]; then
+                log_error "Line ${line_num}: invalid status '${status}' for ${key} (expected: ${valid_statuses})"
+                errors=$((errors + 1))
+            fi
+            continue
+        fi
+
+        # Story entry (N-N-slug)
+        if [[ "$key" =~ ^[0-9]+-[0-9]+- ]]; then
+            # Check format: must have at least 3 segments
+            if [[ ! "$key" =~ ^[0-9]+-[0-9]+-[a-zA-Z0-9] ]]; then
+                log_warn "Line ${line_num}: story ID '${key}' has unusual format (expected: N-N-slug)"
+                warnings=$((warnings + 1))
+            fi
+
+            # Check for duplicate
+            local _dup
+            for _dup in "${seen_stories[@]+"${seen_stories[@]}"}"; do
+                if [[ "$_dup" == "$key" ]]; then
+                    log_error "Line ${line_num}: duplicate story: ${key}"
+                    errors=$((errors + 1))
+                fi
+            done
+            seen_stories+=("$key")
+
+            # Validate status
+            if [[ " $valid_statuses " != *" $status "* ]]; then
+                log_error "Line ${line_num}: invalid status '${status}' for ${key} (expected: ${valid_statuses})"
+                errors=$((errors + 1))
+            fi
+
+            # Check epic exists
+            local story_epic="${key%%-*}"
+            local _found=false
+            local _e
+            for _e in "${seen_epics[@]+"${seen_epics[@]}"}"; do
+                [[ "$_e" == "$story_epic" ]] && { _found=true; break; }
+            done
+            if [[ "$_found" == "false" ]]; then
+                log_warn "Line ${line_num}: story ${key} references epic ${story_epic} which hasn't been declared yet"
+                warnings=$((warnings + 1))
+            fi
+            continue
+        fi
+
+        # Unknown entry
+        log_warn "Line ${line_num}: unrecognized entry: ${key}"
+        warnings=$((warnings + 1))
+    done < "$status_file"
+
+    # Summary
+    echo ""
+    echo -e "  ${BOLD}Summary:${NC} ${#seen_epics[@]} epic(s), ${#seen_stories[@]} story/stories"
+    if (( errors == 0 && warnings == 0 )); then
+        log_ok "Sprint status is valid"
+        return 0
+    fi
+    (( warnings > 0 )) && log_warn "${warnings} warning(s)"
+    if (( errors > 0 )); then
+        log_error "${errors} error(s) — fix before running pipeline"
+        return 1
+    fi
+    return 0
+}
+
 # --- Epic Detection ---
 
 detect_next_epic() {
