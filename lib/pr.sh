@@ -4,6 +4,7 @@
 #
 # Requires: lib/core.sh sourced, PROJECT_ROOT set
 # Reads globals: IMPL_ARTIFACTS EPIC_ID PR_SAFETY_TIMEOUT PR_POLL_INTERVAL PR_EMPTY_CHECKS_GRACE_POLLS
+#   (PR_* values populated from conf/pipeline.conf by auto-bmad-epic)
 #
 # Exports:
 #   ensure_on_main                              — switch to main branch

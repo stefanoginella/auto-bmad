@@ -83,7 +83,9 @@ check_git_branch() {
     [[ "$SKIP_GIT" == "true" ]] && { log_skip "Git branch check — --skip-git"; return 0; }
     [[ "$DRY_RUN" == "true" ]] && { log_skip "Git branch check — --dry-run"; return 0; }
 
-    local current_branch expected_branch="story/${STORY_ID}"
+    local branch_tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
+    local current_branch expected_branch
+    eval "expected_branch=\"${branch_tmpl}\""
     current_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" || {
         log_warn "Not a git repository — skipping branch check"
         return 0
@@ -241,8 +243,11 @@ preflight_git_checks() {
     local git_major git_minor
     git_major="${git_version%%.*}"
     git_minor="${git_version#*.}"; git_minor="${git_minor%%.*}"
-    if (( git_major < 2 )) || { (( git_major == 2 )) && (( git_minor < 25 )); }; then
-        log_error "git version ${git_version} too old (need >= 2.25)"
+    local req_version="${cfg_pip_min_git_version:-2.25}"
+    local req_major="${req_version%%.*}" req_minor="${req_version#*.}"
+    req_minor="${req_minor%%.*}"
+    if (( git_major < req_major )) || { (( git_major == req_major )) && (( git_minor < req_minor )); }; then
+        log_error "git version ${git_version} too old (need >= ${req_version})"
         gate0_errors=$((gate0_errors + 1))
     else
         log_ok "git ${git_version}"
@@ -332,7 +337,9 @@ preflight_git_checks() {
     fi
 
     # ── Gate 4: Remote branch shadow (soft gate) ────────────────
-    local expected_branch="story/${STORY_ID}"
+    local branch_tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
+    local expected_branch
+    eval "expected_branch=\"${branch_tmpl}\""
     if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/${expected_branch}" 2>/dev/null; then
         if git -C "$PROJECT_ROOT" ls-remote --exit-code origin "refs/heads/${expected_branch}" &>/dev/null 2>&1; then
             echo ""

@@ -5,6 +5,10 @@ design-artifacts/
 
 # AI
 .claude/
+CLAUDE.md
+
+# Local config overrides
+conf/pipeline.local.conf
 
 # Temporary
 tmp.md
