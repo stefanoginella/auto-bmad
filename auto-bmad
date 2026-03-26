@@ -608,6 +608,8 @@ case "$COMMAND" in
         exec "$SCRIPT_DIR/auto-bmad-epic" "$@"
         ;;
     validate)
+        INSTALL_DIR="$SCRIPT_DIR"
+        PROJECT_ROOT="$(pwd)"
         source "$SCRIPT_DIR/lib/core.sh"
         source "$SCRIPT_DIR/lib/tracking.sh"
         source "$SCRIPT_DIR/lib/config.sh"
@@ -618,6 +620,7 @@ case "$COMMAND" in
         exit $?
         ;;
     status)
+        INSTALL_DIR="$SCRIPT_DIR"
         PROJECT_ROOT="$(pwd)"
         source "$SCRIPT_DIR/lib/core.sh"
         source "$SCRIPT_DIR/lib/tracking.sh"
@@ -627,6 +630,7 @@ case "$COMMAND" in
         exit $?
         ;;
     quickstart)
+        INSTALL_DIR="$SCRIPT_DIR"
         PROJECT_ROOT="$(pwd)"
         source "$SCRIPT_DIR/lib/core.sh"
         source "$SCRIPT_DIR/lib/tracking.sh"
@@ -636,7 +640,8 @@ case "$COMMAND" in
         exit $?
         ;;
     config)
-        PROJECT_ROOT="$SCRIPT_DIR"
+        INSTALL_DIR="$SCRIPT_DIR"
+        PROJECT_ROOT="$(pwd)"
         source "$SCRIPT_DIR/lib/core.sh"
         source "$SCRIPT_DIR/lib/tracking.sh"
         source "$SCRIPT_DIR/lib/config.sh"
@@ -649,6 +654,7 @@ case "$COMMAND" in
         # Paths
         impl="$(_detect_impl_artifacts)"
         echo -e "${BOLD}Paths:${NC}"
+        echo "  INSTALL_DIR            = ${INSTALL_DIR}"
         echo "  PROJECT_ROOT           = ${PROJECT_ROOT}"
         echo "  IMPL_ARTIFACTS         = ${impl}"
         echo "  profiles.conf          = ${_PROFILES_CONF}"
@@ -675,7 +681,7 @@ case "$COMMAND" in
 
         # Overrides active
         has_local=false; has_env=false
-        [[ -f "${PROJECT_ROOT}/conf/pipeline.local.conf" ]] && has_local=true
+        [[ -f "${INSTALL_DIR}/conf/pipeline.local.conf" ]] && has_local=true
         env | grep -q '^AUTO_BMAD_' 2>/dev/null && has_env=true
         echo -e "${BOLD}Overrides:${NC}"
         echo "  pipeline.local.conf    = ${has_local}"

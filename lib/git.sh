@@ -331,7 +331,7 @@ preflight_git_checks() {
             echo -e "    No merged PR found and branch is not an ancestor of ${BOLD}${main_ref}${NC}."
             echo ""
             echo -e "    ${DIM}To merge manually:${NC}"
-            echo -e "    ${DIM}  gh pr merge --squash \$(gh pr list --head ${prev_branch} --json number --jq '.[0].number')${NC}"
+            echo -e "    ${DIM}  gh pr merge --squash ${prev_branch}${NC}"
             _confirm_cfa \
                 "Previous story not merged" \
                 "" ""

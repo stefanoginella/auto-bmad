@@ -45,8 +45,8 @@ _restore_cursor() { tput cnorm 2>/dev/null || true; }
 _confirm_cfa() {
     local msg="$1" fix_display="${2:-}" fix_cmd="${3:-$2}"
     echo ""
-    echo -e "    ${DIM}→ ${fix_display}${NC}"
     if [[ -n "$fix_display" ]]; then
+        echo -e "    ${DIM}→ ${fix_display}${NC}"
         echo -e "    ${BOLD}[c]${NC}ontinue  ${BOLD}[f]${NC}ix  ${BOLD}[a]${NC}bort"
     else
         echo -e "    ${BOLD}[c]${NC}ontinue  ${BOLD}[a]${NC}bort"

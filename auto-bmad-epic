@@ -34,20 +34,33 @@ _handle_abort() {
 
 trap '_handle_abort' INT
 
-# --- Project Paths ---
-PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# --- Paths ---
+# INSTALL_DIR = where auto-bmad itself lives (libs, conf, prompts)
+# PROJECT_ROOT = target project where the user runs the pipeline (pwd)
+_resolve_install_dir() {
+    local src="$1"
+    while [ -L "$src" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$src")" && pwd)"
+        src="$(readlink "$src")"
+        [[ "$src" != /* ]] && src="$dir/$src"
+    done
+    cd -P "$(dirname "$src")" && pwd
+}
+INSTALL_DIR="$(_resolve_install_dir "$0")"
+PROJECT_ROOT="$(pwd)"
 
 # --- Shared Libraries ---
-source "${PROJECT_ROOT}/lib/core.sh"
-source "${PROJECT_ROOT}/lib/tracking.sh"
-source "${PROJECT_ROOT}/lib/config.sh"
-source "${PROJECT_ROOT}/lib/pr.sh"
-source "${PROJECT_ROOT}/lib/usage.sh"
-source "${PROJECT_ROOT}/lib/detection.sh"
+source "${INSTALL_DIR}/lib/core.sh"
+source "${INSTALL_DIR}/lib/tracking.sh"
+source "${INSTALL_DIR}/lib/config.sh"
+source "${INSTALL_DIR}/lib/pr.sh"
+source "${INSTALL_DIR}/lib/usage.sh"
+source "${INSTALL_DIR}/lib/detection.sh"
 
 IMPL_ARTIFACTS="$(_detect_impl_artifacts)"
 SPRINT_STATUS="${IMPL_ARTIFACTS}/sprint-status.yaml"
-STORY_SCRIPT="${PROJECT_ROOT}/auto-bmad-story"
+STORY_SCRIPT="${INSTALL_DIR}/auto-bmad-story"
 EPIC_ARTIFACTS=""
 EPIC_LOG=""
 
