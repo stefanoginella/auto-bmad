@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================
+# auto-bmad — Unified CLI for the Auto-BMAD Pipeline
+#
+# Dispatches subcommands to the underlying scripts.
+#
+# Usage: auto-bmad <command> [options]
+#   story    Run the story pipeline (auto-bmad-story)
+#   epic     Run the epic pipeline  (auto-bmad-epic)
+#   help     Show this help message
+#   version  Print version info
+# ============================================================
+
+# --- Resolve real script directory (symlink-safe, POSIX-portable) ---
+_resolve_dir() {
+    local src="$1"
+    while [ -L "$src" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$src")" && pwd)"
+        src="$(readlink "$src")"
+        [[ "$src" != /* ]] && src="$dir/$src"
+    done
+    cd -P "$(dirname "$src")" && pwd
+}
+
+SCRIPT_DIR="$(_resolve_dir "$0")"
+
+# --- Version ---
+VERSION="0.1.0"
+
+# --- Help ---
+show_help() {
+    cat <<'EOF'
+auto-bmad — Unified CLI for the Auto-BMAD Pipeline
+
+Usage: auto-bmad <command> [options]
+
+Commands:
+  story    Run the story pipeline (one story at a time)
+  epic     Run the epic pipeline  (all stories in an epic)
+  help     Show this help message
+  version  Print version info
+
+Run 'auto-bmad <command> --help' for command-specific options.
+
+Examples:
+  auto-bmad story                          # Run next story
+  auto-bmad story --dry-run                # Preview story pipeline
+  auto-bmad epic --epic 2                  # Run epic 2
+  auto-bmad epic --dry-run                 # Preview epic pipeline
+EOF
+}
+
+# --- Dispatch ---
+if [[ $# -eq 0 ]]; then
+    show_help
+    exit 1
+fi
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+    story)
+        exec "$SCRIPT_DIR/auto-bmad-story" "$@"
+        ;;
+    epic)
+        exec "$SCRIPT_DIR/auto-bmad-epic" "$@"
+        ;;
+    help|--help|-h)
+        show_help
+        exit 0
+        ;;
+    version|--version|-v)
+        echo "auto-bmad ${VERSION}"
+        exit 0
+        ;;
+    *)
+        echo "auto-bmad: unknown command '${COMMAND}'" >&2
+        echo "" >&2
+        echo "Run 'auto-bmad help' for available commands." >&2
+        exit 1
+        ;;
+esac

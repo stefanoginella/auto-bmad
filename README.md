@@ -20,6 +20,7 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 - [How It Works](#how-it-works)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
+- [Shell Completion](#shell-completion)
 - [Story Pipeline](#story-pipeline-auto-bmad-storysh)
 - [Epic Pipeline](#epic-pipeline-auto-bmad-epicsh)
 - [Sprint Status Format](#sprint-status-format)
@@ -32,38 +33,46 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 ## Quick Start
 
 ```bash
-# 1. Clone and copy (or symlink) scripts into your BMAD project root
+# 1. Clone and install
 git clone https://github.com/user/auto-bmad.git
-cp -p auto-bmad/auto-bmad-story.sh auto-bmad/auto-bmad-epic.sh /path/to/your/project/
+cd auto-bmad
+make install                    # symlinks to /usr/local/bin, installs shell completions
+# — or for user-local install —
+PREFIX=~/.local make install
 
-# 2. Edit the AI profiles and step assignments at the top of auto-bmad-story.sh
+# 2. Copy supporting files into your BMAD project root
+cp -rp lib conf prompts /path/to/your/project/
 
-# 3. Run a single story
-./auto-bmad-story.sh
+# 3. Edit AI profiles and step assignments in conf/profiles.conf
 
-# 4. Run an entire epic
-./auto-bmad-epic.sh
+# 4. Run a single story
+auto-bmad story
+
+# 5. Run an entire epic
+auto-bmad epic
 ```
 
 The story script auto-detects the next story from `sprint-status.yaml`. The epic script loops through all stories in an epic, handling PR + CI + merge between them. See [How It Works](#how-it-works) for the full picture.
 
 ## How It Works
 
-This project is opinionated — it assumes a specific git workflow (branch-per-story, squash-merge PRs, CI gates) and uses multiple AI CLIs simultaneously. The entire pipeline is defined in two shell scripts with plain configuration at the top — edit the AI profiles, step assignments, or git workflow to fit your setup.
+This project is opinionated — it assumes a specific git workflow (branch-per-story, squash-merge PRs, CI gates) and uses multiple AI CLIs simultaneously. The pipeline is modular: two entry-point scripts source shared libraries from `lib/`, read AI profile assignments from `conf/profiles.conf`, and load prompt templates from `prompts/`.
 
-Two scripts work together:
+A unified `auto-bmad` CLI dispatches to two underlying scripts:
 
-| Script | Scope | What it does |
-|--------|-------|-------------|
-| `auto-bmad-story.sh` | One story | Runs a single story through the full BMAD pipeline (14+ steps, 7 phases) using multiple AI CLIs in parallel |
-| `auto-bmad-epic.sh` | One epic | Loops through all stories in an epic, delegating each to the story script, with PR + CI between stories |
+| Command | Script | Scope | What it does |
+|---------|--------|-------|-------------|
+| `auto-bmad story` | `auto-bmad-story` | One story | Runs a single story through the full BMAD pipeline (14+ steps, 7 phases) using multiple AI CLIs in parallel |
+| `auto-bmad epic` | `auto-bmad-epic` | One epic | Loops through all stories in an epic, delegating each to the story script, with PR + CI between stories |
 
 ### Architecture
 
 ```
-auto-bmad-epic.sh
+auto-bmad <command>  →  dispatches to underlying scripts
   │
-  ├── Story 1 ──→ auto-bmad-story.sh
+auto-bmad-epic
+  │
+  ├── Story 1 ──→ auto-bmad-story
   │     ├─ Phase 0: Epic start (TEA test design)
   │     ├─ Phase 1: Story prep
   │     │     ├── 3 parallel spec validations (GPT, MiMo, Claude)
@@ -82,7 +91,7 @@ auto-bmad-epic.sh
   │
   ├── git: commit → push → PR → squash-merge → CI ✓
   │
-  ├── Story 2 ──→ auto-bmad-story.sh ...
+  ├── Story 2 ──→ auto-bmad-story ...
   │
   └── Story N ──→ ...
 ```
@@ -131,32 +140,79 @@ Triage evaluates on **argument quality**, not reviewer count. A single reviewer 
 
 ## Installation
 
-The scripts must live in the root of your BMAD project (they derive `PROJECT_ROOT` from their own location).
+### Via `make install` (recommended)
 
 ```bash
-# Clone
 git clone https://github.com/user/auto-bmad.git
-
-# Copy scripts into your project root (preserves executable bit)
-cp -p auto-bmad/auto-bmad-story.sh auto-bmad/auto-bmad-epic.sh /path/to/your/project/
-
-# — or symlink to stay in sync with upstream —
-ln -s "$(pwd)/auto-bmad/auto-bmad-story.sh" /path/to/your/project/auto-bmad-story.sh
-ln -s "$(pwd)/auto-bmad/auto-bmad-epic.sh" /path/to/your/project/auto-bmad-epic.sh
-
-# Verify
-./auto-bmad-story.sh --help
-./auto-bmad-epic.sh --help
+cd auto-bmad
+make install                    # symlinks auto-bmad to /usr/local/bin, installs completions
 ```
 
-## Story Pipeline (`auto-bmad-story.sh`)
+For a user-local install (no sudo):
+
+```bash
+PREFIX=~/.local make install
+```
+
+This creates a symlink from `$(PREFIX)/bin/auto-bmad` back to the repo, so updates are immediately available. Shell completions are copied to the standard bash/zsh completion directories.
+
+To remove:
+
+```bash
+make uninstall                  # or: PREFIX=~/.local make uninstall
+```
+
+### Manual install
+
+The scripts and their supporting directories (`lib/`, `conf/`, `prompts/`) must live in the root of your BMAD project (they derive `PROJECT_ROOT` from their own location).
+
+```bash
+# Copy scripts and supporting directories into your project root
+cp -p auto-bmad-story auto-bmad-epic /path/to/your/project/
+cp -rp lib conf prompts /path/to/your/project/
+
+# — or symlink to stay in sync with upstream —
+ln -s "$(pwd)/auto-bmad-story" /path/to/your/project/auto-bmad-story
+ln -s "$(pwd)/auto-bmad-epic" /path/to/your/project/auto-bmad-epic
+ln -s "$(pwd)/lib" /path/to/your/project/lib
+ln -s "$(pwd)/conf" /path/to/your/project/conf
+ln -s "$(pwd)/prompts" /path/to/your/project/prompts
+```
+
+### Verify
+
+```bash
+auto-bmad help                  # if installed via make
+auto-bmad story --help
+auto-bmad epic --help
+```
+
+## Shell Completion
+
+Tab completion for subcommands and flags is installed automatically by `make install`. If your shell doesn't pick it up, source it manually:
+
+```bash
+# bash — add to ~/.bashrc
+source /usr/local/share/bash-completion/completions/auto-bmad
+
+# zsh — ensure the completion dir is in fpath, then:
+autoload -Uz compinit && compinit
+```
+
+Completions cover:
+- Subcommands: `auto-bmad <TAB>` → `story`, `epic`, `help`, `version`
+- Per-command flags: `auto-bmad story <TAB>` → `--story`, `--from-step`, `--dry-run`, ...
+- Flag values: `auto-bmad story --reviews <TAB>` → `full`, `fast`, `none`
+
+## Story Pipeline (`auto-bmad-story`)
 
 Automates one story through the full BMAD implementation workflow.
 
 ### Usage
 
 ```bash
-./auto-bmad-story.sh [options]
+auto-bmad story [options]       # via wrapper
+./auto-bmad-story [options]  # direct
 
 Options:
   --story STORY_ID       Override auto-detection (e.g., 1-2-database-schemas)
@@ -187,16 +243,26 @@ Options:
 
 ### AI Profiles
 
-Six AI profiles are assigned to different steps based on the task:
+Six named profiles are defined in `conf/profiles.conf` and referenced by steps via `@name`. Each profile specifies a CLI, model, effort level, and a fallback profile for automatic recovery:
 
-| Profile | CLI / Model | Effort | Used for |
-|---------|-------------|--------|----------|
-| `AI_OPUS` | Claude Opus 4.6 | max | Critical path: triage, fix, implementation |
-| `AI_OPUS_HIGH` | Claude Opus 4.6 | high | Structured, non-critical: spec reviews, code reviews, retro, docs |
-| `AI_SONNET` | Claude Sonnet 4.6 | high | Lightweight bookkeeping: traceability, closing |
-| `AI_GPT` | Codex GPT 5.4 | xhigh | Code reviews, edge cases |
-| `AI_GPT_HIGH` | Codex GPT 5.4 | high | Spec-level reviews (pre-implementation) |
-| `AI_MIMO` | OpenCode MiMo V2 Pro | max | Parallel reviews |
+| Profile | CLI / Model | Effort | Fallback | Used for |
+|---------|-------------|--------|----------|----------|
+| `@claude-opus-max` | Claude Opus | max | `@claude-sonnet-high` | Critical path: triage, fix, implementation |
+| `@claude-opus-high` | Claude Opus | high | `@claude-sonnet-high` | Structured: spec reviews, retro, docs |
+| `@claude-sonnet-high` | Claude Sonnet | high | none | Lightweight: traceability, closing |
+| `@codex-gpt54-xhigh` | Codex GPT 5.4 | xhigh | `@claude-opus-max` | Code reviews, edge cases |
+| `@codex-gpt54-high` | Codex GPT 5.4 | high | `@claude-opus-high` | Spec-level reviews |
+| `@opencode-mimo-max` | OpenCode MiMo V2 Pro | max | `@claude-opus-high` | Parallel reviews |
+
+### Retry & Fallback
+
+Steps that fail silently (completing in under 5 seconds with minimal output) or return a non-zero exit code are automatically retried:
+
+1. **Retry** — same profile, one attempt
+2. **Fallback** — switch to the fallback profile, one attempt
+3. **Fail** — if both exhaust, sequential steps stop the pipeline (with `--from-step` resume), parallel reviews degrade gracefully
+
+Fallback chains cross providers (codex/opencode fall back to claude) but do not recurse — a fallback's own fallback is never consulted. Retried and fell-back steps are annotated in the pipeline report and terminal summary.
 
 ### Story Detection
 
@@ -244,19 +310,20 @@ This is useful when the review reports have already been indexed into the story 
 Each phase is checkpointed as a git commit, so if the pipeline fails you won't lose prior phases. The script exits with a resume command:
 
 ```
-Resume: ./auto-bmad-story.sh --from-step 3.1 --story 1-2-database-schemas
+Resume: auto-bmad story --from-step 3.1 --story 1-2-database-schemas
 ```
 
 See [Troubleshooting](#troubleshooting) for common failure scenarios.
 
-## Epic Pipeline (`auto-bmad-epic.sh`)
+## Epic Pipeline (`auto-bmad-epic`)
 
 Thin orchestration wrapper that runs all stories in an epic sequentially.
 
 ### Usage
 
 ```bash
-./auto-bmad-epic.sh [options]
+auto-bmad epic [options]       # via wrapper
+./auto-bmad-epic [options]  # direct
 
 Options:
   --epic EPIC_ID         Target epic number (e.g., 1). Auto-detects if omitted.
@@ -265,7 +332,7 @@ Options:
   --no-merge             Skip auto-PR/merge between stories (manual git)
   --help                 Show usage
 
-Story pass-through flags (forwarded to auto-bmad-story.sh):
+Story pass-through flags (forwarded to auto-bmad-story):
   --skip-epic-phases     Skip phases 0 (epic start) and 5 (epic end)
   --skip-tea             Skip TEA phases even if installed
   --skip-reviews         Skip all review phases (1.2-1.4, 3.x)
@@ -278,7 +345,7 @@ Story pass-through flags (forwarded to auto-bmad-story.sh):
 ### What It Does
 
 1. **Parses `sprint-status.yaml`** to collect all stories for the target epic
-2. **Loops sequentially** — calls `./auto-bmad-story.sh --story STORY_ID` for each
+2. **Loops sequentially** — calls `auto-bmad-story --story STORY_ID` for each
 3. **PR + auto-merge between stories** — after each story completes:
    - Commits changes on the story branch
    - Pushes and creates a PR via `gh`
@@ -328,8 +395,8 @@ Epic 1 — STORY FAILED
   Failed story:      1-3-ci-pipeline (story 3 of 5)
   Stories completed: 2/5
 
-  Resume (story):  ./auto-bmad-story.sh --story 1-3-ci-pipeline --from-step <step>
-  Resume (epic):   ./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
+  Resume (story):  auto-bmad story --story 1-3-ci-pipeline --from-step <step>
+  Resume (epic):   auto-bmad epic --epic 1 --from-story 1-3-ci-pipeline
 ```
 
 **CI failure on PR:**
@@ -338,7 +405,7 @@ Epic 1 — STORY FAILED
     PR: https://github.com/.../pull/42
 
     Fix CI, merge the PR manually, then resume:
-    ./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
+    auto-bmad epic --epic 1 --from-story 1-3-ci-pipeline
 ```
 
 ### Retrospective Summary
@@ -383,28 +450,42 @@ epic-2-retrospective: optional
 
 ## Customization
 
-Both scripts keep all configuration in clearly marked blocks at the top — fork and edit to fit your setup.
+Configuration lives in dedicated files — no need to edit the shell scripts themselves.
 
-### AI Profiles
+### AI Profiles & Step Assignment
 
-Edit the `AI_*` variables at the top of `auto-bmad-story.sh`. Format: `"cli|model|effort"`.
+Edit `conf/profiles.conf` to change which AI model runs each step. The file has two sections:
 
-```bash
-# Example: swap MiMo for a different OpenCode model
-AI_MIMO="opencode|opencode/some-other-model|max"
+**Profile definitions** — named `@profiles` with CLI, model, effort, and fallback:
+
+```
+# @name                   cli       model    effort   fallback
+@claude-opus-max          claude    opus     max      @claude-sonnet-high
+@codex-gpt54-high         codex     gpt-5.4  high     @claude-opus-high
 ```
 
-### Step Assignment
+**Step mappings** — assign a `@profile` to each step ID:
 
-Edit `step_config()` in `auto-bmad-story.sh` to reassign steps to different AI profiles. Step IDs use a consistent scheme:
+```
+1.1     @claude-opus-max
+1.2a    @codex-gpt54-high
+```
+
+To change a model globally, edit the profile definition. To change a single step's assignment, point it at a different profile. The legacy format (`step_id cli model effort`) is still supported for backward compatibility.
+
+Step IDs use a consistent scheme:
 
 - **Numeric** (N.M) — sequential steps, run one at a time
 - **Letter suffix** (N.Ma, N.Mb, ...) — parallel slots within a phase. Phase 1: a=GPT, b=MiMo, c=Claude. Phase 3: a,b=GPT, c,d=MiMo, e,f=Claude.
 - **Sequential after parallel** (N.M+1) — synthesis step that runs after parallel slots complete (triage, fix)
 
+### Prompt Templates
+
+All step prompts live in `prompts/*.md` as plain text with `{{PLACEHOLDER}}` variables. Edit these to change what instructions the AI receives for each step — no shell code to touch.
+
 ### Git / CI Configuration
 
-Edit these variables at the top of `auto-bmad-epic.sh`:
+Edit these variables near the top of `auto-bmad-epic`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -425,14 +506,14 @@ for cli in claude codex opencode; do command -v "$cli" >/dev/null && echo "$cli 
 
 ### BMAD version mismatch
 
-The story script validates against BMad / TEA versions. A mismatch produces a warning but does not block execution. Update the `BMAD_BUILD_VERSION` and `BMAD_BUILD_TEA_VERSION` variables if you are running a different BMad version.
+The story script validates against BMad / TEA versions. A mismatch produces a warning but does not block execution. Update the `BMAD_BUILD_VERSION` and `BMAD_BUILD_TEA_VERSION` variables in `lib/config.sh` if you are running a different BMad version.
 
 ### Story pipeline fails mid-step
 
 Use `--from-step` to resume from the failed step:
 
 ```bash
-./auto-bmad-story.sh --story 1-2-database-schemas --from-step 3.1
+auto-bmad story --story 1-2-database-schemas --from-step 3.1
 ```
 
 ### CI failure or stuck checks
@@ -440,7 +521,7 @@ Use `--from-step` to resume from the failed step:
 If CI fails, the epic script stops immediately with a link to the PR. If CI appears stuck (runners hung, orphaned checks), the 2-hour safety timeout will eventually fire. Fix CI manually, merge the PR, then resume:
 
 ```bash
-./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
+auto-bmad epic --epic 1 --from-story 1-3-ci-pipeline
 ```
 
 ### sprint-status.yaml not found
@@ -451,43 +532,43 @@ Both scripts expect this file at `_bmad-output/implementation-artifacts/sprint-s
 
 ```bash
 # Preview what the next epic would do
-./auto-bmad-epic.sh --dry-run
+auto-bmad epic --dry-run
 
 # Run epic 1 end-to-end
-./auto-bmad-epic.sh --epic 1
+auto-bmad epic --epic 1
 
 # Resume epic after a story failure
-./auto-bmad-epic.sh --epic 1 --from-story 1-3-ci-pipeline
+auto-bmad epic --epic 1 --from-story 1-3-ci-pipeline
 
 # Run without auto-PR (manual git between stories)
-./auto-bmad-epic.sh --epic 1 --no-merge
+auto-bmad epic --epic 1 --no-merge
 
 # Run a single story manually
-./auto-bmad-story.sh --story 1-2-database-schemas
+auto-bmad story --story 1-2-database-schemas
 
 # Resume a failed story from code review
-./auto-bmad-story.sh --story 1-2-database-schemas --from-step 3.1
+auto-bmad story --story 1-2-database-schemas --from-step 3.1
 
 # Preview a single story's pipeline
-./auto-bmad-story.sh --story 1-2-database-schemas --dry-run
+auto-bmad story --story 1-2-database-schemas --dry-run
 
 # Quick run — single GPT reviewer, triage+fix skipped
-./auto-bmad-story.sh --fast-reviews
+auto-bmad story --fast-reviews
 
 # Minimal pipeline — create, implement, close (no reviews or TEA)
-./auto-bmad-story.sh --skip-reviews --skip-tea
+auto-bmad story --skip-reviews --skip-tea
 
 # Run clean — no pipeline artifacts left behind
-./auto-bmad-story.sh --no-traces
+auto-bmad story --no-traces
 
 # Epic with fast reviews for all stories
-./auto-bmad-epic.sh --epic 1 --fast-reviews
+auto-bmad epic --epic 1 --fast-reviews
 
 # Safe mode — AI tools prompt for permissions instead of auto-approving
-./auto-bmad-story.sh --safe-mode
+auto-bmad story --safe-mode
 
 # Cautious first run — safe mode + no git writes
-./auto-bmad-story.sh --safe-mode --skip-git
+auto-bmad story --safe-mode --skip-git
 ```
 
 ## Lineage
