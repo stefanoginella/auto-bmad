@@ -273,6 +273,21 @@ wait_for_merge() {
             echo ""
             echo -e "    Fix CI, merge the PR manually, then resume:"
             echo -e "    ${DIM}auto-bmad epic --epic ${EPIC_ID} --from-story <next-story>${NC}"
+
+            # Track CI failure as a GitHub Issue for visibility
+            gh issue create \
+                --title "CI failed: story ${branch#story/}" \
+                --label "ci-failure" \
+                --body "$(cat <<ISSEOF
+PR: ${pr_url:-unknown}
+Failed: ${failed} checks, Passed: ${passed} checks
+Epic: ${EPIC_ID:-unknown}
+
+Resume after fixing:
+\`auto-bmad epic --epic ${EPIC_ID} --from-story <next-story>\`
+ISSEOF
+                )" 2>/dev/null || true
+
             return 1
 
         elif (( pending == 0 && failed == 0 )); then
@@ -303,5 +318,19 @@ wait_for_merge() {
     log_error "Safety timeout reached ($(format_duration $PR_SAFETY_TIMEOUT)) — CI may be stuck"
     [[ -n "$pr_url" ]] && echo -e "    PR: ${pr_url}"
     echo -e "    Check for stuck runners, then merge manually and resume with --from-story"
+
+    # Track CI timeout as a GitHub Issue for visibility
+    gh issue create \
+        --title "CI timeout: story ${branch#story/}" \
+        --label "ci-timeout" \
+        --body "$(cat <<ISSEOF
+PR: ${pr_url:-unknown}
+Timeout after $(format_duration $PR_SAFETY_TIMEOUT)
+Epic: ${EPIC_ID:-unknown}
+
+Check for stuck runners, then merge manually and resume with --from-story.
+ISSEOF
+        )" 2>/dev/null || true
+
     return 1
 }

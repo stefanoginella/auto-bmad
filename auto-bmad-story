@@ -60,11 +60,11 @@ STORY_ID=""
 STORY_SHORT_ID=""   # numeric-only prefix (e.g. "1-1") — used for artifacts
 EPIC_ID=""
 STORY_FILE_PATH=""
+PREV_STORY_FILE=""   # previous story's file path (same epic only, empty if first)
 STORY_ARTIFACTS=""   # permanent artifacts (triage reports, pipeline report)
 TMP_DIR=""           # temp files (individual reviews, step logs) — cleaned on success
 PIPELINE_LOG=""      # raw step log in TMP_DIR (temporary)
 PIPELINE_REPORT=""   # structured markdown in STORY_ARTIFACTS (permanent)
-DEFERRED_WORK_FILE="" # persistent cross-story deferred work tracker
 CURRENT_STEP_LOG=""
 COMMIT_BASELINE=""   # SHA before pipeline — used for final squash
 DRY_RUN=false
@@ -74,10 +74,11 @@ SKIP_TEA=false
 REVIEWS_MODE="$cfg_pip_default_review_mode"
 SKIP_GIT=false
 NO_TRACES=false
+ACK_PREVIOUS=false
 PIPELINE_START_TIME=""
 
 # Step ordering for --from-step comparison (parallel sub-steps map to parent)
-STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 6.1 6.2"
+STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.1 6.2"
 
 # Step tracking convenience wrappers over lib/tracking.sh
 set_step_status()   { kv_set step "$1" status   "$2"; }
@@ -246,7 +247,21 @@ step_0_1_test_design() { run_ai "0.1" "$(load_prompt "0.1-test-design.md" EPIC_I
 
 # --- Phase 1: Story Preparation ---
 step_1_1_create_story() {
-    run_ai "1.1" "$(load_prompt "1.1-create-story.md" STORY_ID "$STORY_ID")"
+    # Build carry-forward instruction when a previous story exists in this epic
+    local carry_forward=""
+    if [[ -n "$PREV_STORY_FILE" && -f "$PREV_STORY_FILE" ]]; then
+        carry_forward="
+
+IMPORTANT — Carry-forward from previous story: Before creating this story, read the previous story file at ${PREV_STORY_FILE} and check its \"Human Review Required\" section:
+- \"Deferred to Future Stories\": incorporate any deferred items that fall within this story's scope into the tasks
+- \"Manual Testing Required\": check for unchecked items (- [ ]) this story could address or automate
+- \"Open Questions\": check for unresolved items (red circle Open) this story's context may resolve
+Do NOT blindly copy all items — only incorporate what is relevant to this story's scope."
+    fi
+
+    run_ai "1.1" "$(load_prompt "1.1-create-story.md" \
+        STORY_ID "$STORY_ID" \
+        PREV_STORY_CARRY_FORWARD "$carry_forward")"
     detect_story_file_path
     if [[ -n "$STORY_FILE_PATH" ]]; then log_ok "Story file: ${STORY_FILE_PATH}"
     else log_warn "Could not detect story file path — will retry before finalization"; fi
@@ -264,7 +279,6 @@ step_1_3_spec_triage() {
 step_1_4_resolve_spec_findings() {
     run_ai "1.4" "$(load_prompt "1.4-resolve-spec.md" \
         TRIAGE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md" \
-        DEFERRED_WORK_FILE "$DEFERRED_WORK_FILE" \
         STORY_ID "$STORY_ID")"
 }
 
@@ -301,7 +315,6 @@ step_3_5_resolve_code_spec_findings() {
     run_ai "3.5" "$(load_prompt "3.5-resolve-code-spec.md" \
         TRIAGE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md" \
         ACCEPTANCE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md" \
-        DEFERRED_WORK_FILE "$DEFERRED_WORK_FILE" \
         STORY_ID "$STORY_ID")"
 }
 
@@ -314,7 +327,16 @@ step_5_1_epic_trace()       { run_ai "5.1" "$(load_prompt "5.1-epic-trace.md" EP
 step_5_2_epic_nfr()         { run_ai "5.2" "$(load_prompt "5.2-epic-nfr.md" EPIC_ID "$EPIC_ID")"; }
 step_5_3_epic_test_review() { run_ai "5.3" "$(load_prompt "5.3-epic-test-review.md" EPIC_ID "$EPIC_ID")"; }
 step_5_4_retrospective()    { run_ai "5.4" "$(load_prompt "5.4-retrospective.md" EPIC_ID "$EPIC_ID")"; }
-step_5_5_project_context()  { run_ai "5.5" "$(load_prompt "5.5-project-context.md")"; }
+step_5_5_epic_exit_report() {
+    local epic_story_paths
+    epic_story_paths="$(collect_epic_story_paths)"
+    local epic_exit_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-5.5-epic-exit-report.md"
+    run_ai "5.5" "$(load_prompt "5.5-epic-exit-report.md" \
+        EPIC_ID "$EPIC_ID" \
+        EPIC_STORY_PATHS "$epic_story_paths" \
+        EPIC_EXIT_REPORT "$epic_exit_report")"
+}
+step_5_6_project_context()  { run_ai "5.6" "$(load_prompt "5.5-project-context.md")"; }
 
 # --- Generate Pipeline Report (structured markdown) ---
 
@@ -438,13 +460,22 @@ generate_pipeline_report() {
 
 step_6_1_document() {
     [[ -z "$STORY_FILE_PATH" ]] && detect_story_file_path
+
+    # Build carry-forward instruction for rolling deferred accumulator
+    local prev_deferred_instruction=""
+    if [[ -n "$PREV_STORY_FILE" && -f "$PREV_STORY_FILE" ]]; then
+        prev_deferred_instruction="
+   ALSO include unresolved deferred items carried forward from the previous story. Read the previous story file at ${PREV_STORY_FILE} and check its \"Deferred to Future Stories\" section. Any items listed there that were NOT addressed by THIS story should be carried forward into this story's \"Deferred to Future Stories\" section. This creates a rolling accumulator — each story's deferred section is the complete list of outstanding deferred items for the epic so far."
+    fi
+
     run_ai "6.1" "$(load_prompt "6.1-document.md" \
         STORY_ID "$STORY_ID" \
         STORY_REF "${STORY_FILE_PATH:-the story file for ${STORY_ID}}" \
         STORY_ARTIFACTS "$STORY_ARTIFACTS" \
         STORY_SHORT_ID "$STORY_SHORT_ID" \
         PIPELINE_REPORT "$PIPELINE_REPORT" \
-        COMMIT_BASELINE "$COMMIT_BASELINE")"
+        COMMIT_BASELINE "$COMMIT_BASELINE" \
+        PREV_STORY_DEFERRED "$prev_deferred_instruction")"
 }
 
 step_6_2_close() {
@@ -478,6 +509,31 @@ run_pipeline() {
         fi
     else
         log_skip "Phase 0 — not first story in epic"
+    fi
+
+    # --- Pre-flight: Previous story unresolved items warning ---
+    if [[ -n "$PREV_STORY_FILE" && -f "$PREV_STORY_FILE" && "$ACK_PREVIOUS" != "true" ]]; then
+        local _prev_unchecked=0 _prev_open=0 _prev_deferred=0
+        local _hr_section
+        _hr_section="$(sed -n '/^## Human Review Required/,/^## /p' "$PREV_STORY_FILE" 2>/dev/null)" || true
+        if [[ -n "$_hr_section" ]]; then
+            _prev_unchecked=$(echo "$_hr_section" | grep -c '^\- \[ \]' || true)
+            _prev_open=$(echo "$_hr_section" | grep -c '🔴' || true)
+            _prev_deferred=$(echo "$_hr_section" | sed -n '/### Deferred to Future Stories/,/^### /p' | grep -c '^\- \|^\*\*' || true)
+        fi
+        if (( _prev_unchecked + _prev_open + _prev_deferred > 0 )); then
+            echo ""
+            echo -e "${YELLOW}⚠️  Previous story has unresolved items:${NC}"
+            (( _prev_unchecked > 0 )) && echo -e "     - ${_prev_unchecked} unchecked manual test(s)"
+            (( _prev_open > 0 ))      && echo -e "     - ${_prev_open} open question(s)"
+            (( _prev_deferred > 0 ))  && echo -e "     - ${_prev_deferred} deferred item(s)"
+            echo ""
+            echo -e "     Review: ${DIM}${PREV_STORY_FILE}${NC}"
+            echo ""
+            if [[ "$DRY_RUN" != "true" ]]; then
+                confirm "     Continue? (or use --acknowledge-previous to skip)" || exit 0
+            fi
+        fi
     fi
 
     # --- Phase 1: Story Preparation ---
@@ -562,7 +618,8 @@ run_pipeline() {
         fi
 
         run_step "5.4" "Retrospective" step_5_4_retrospective
-        run_step "5.5" "Generate Project Context" step_5_5_project_context
+        run_step "5.5" "Epic Exit Report" step_5_5_epic_exit_report
+        run_step "5.6" "Generate Project Context" step_5_6_project_context
         git_checkpoint "phase 5 — epic end"
     else
         log_skip "Phase 5 — not last story in epic"
@@ -715,6 +772,7 @@ Options:
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
                          (pipeline report is kept)
+  --acknowledge-previous Skip warning about unresolved items from previous story
   --help                 Show this help message
 
 Step Numbering:
@@ -727,7 +785,7 @@ Step Numbering:
   Phase 2: Implementation (2.1 TDD, 2.2 impl)
   Phase 3: Code Review    (3.1a-f parallel reviews, 3.2 acceptance audit, 3.3 triage, 3.4 fix, 3.5 resolve)
   Phase 4: Traceability   (4.1 trace, 4.2 automate)
-  Phase 5: Epic End       (5.1-5.3 parallel, 5.4 retro, 5.5 context)
+  Phase 5: Epic End       (5.1-5.3 parallel, 5.4 retro, 5.5 exit report, 5.6 context)
   Phase 6: Finalization   (6.1 document, 6.2 close)
 
 AI Profiles (edit conf/profiles.conf):
@@ -769,6 +827,7 @@ parse_args() {
                 shift 2 ;;
             --skip-git)         SKIP_GIT=true; shift ;;
             --no-traces)        NO_TRACES=true; shift ;;
+            --acknowledge-previous) ACK_PREVIOUS=true; shift ;;
             --help|-h)        show_help; exit 0 ;;
             *)
                 log_error "Unknown argument: $1"
@@ -793,6 +852,7 @@ main() {
     fi
     extract_epic_id
     extract_short_id
+    detect_previous_story
 
     preflight_git_checks
     check_git_branch
@@ -801,7 +861,6 @@ main() {
     TMP_DIR="${PROJECT_ROOT}/.tmp/auto-bmad/${STORY_SHORT_ID}"
     PIPELINE_LOG="${TMP_DIR}/pipeline.log"
     PIPELINE_REPORT="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-6.1-pipeline-report.md"
-    DEFERRED_WORK_FILE="${IMPL_ARTIFACTS}/auto-bmad/deferred-work.md"
     mkdir -p "$STORY_ARTIFACTS" "$TMP_DIR"
 
     # Record baseline commit for final squash (captured early so resume path can persist it)

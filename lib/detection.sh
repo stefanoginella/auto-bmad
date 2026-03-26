@@ -14,9 +14,11 @@
 #   extract_short_id        — set STORY_SHORT_ID from STORY_ID
 #   extract_story_num       — echo story number
 #   _find_previous_story    — echo previous story ID
+#   detect_previous_story   — set PREV_STORY_FILE (same-epic only)
 #   is_epic_start           — true if first story in epic
 #   is_epic_end             — true if last story in epic
 #   detect_story_file_path  — set STORY_FILE_PATH
+#   collect_epic_story_paths — echo newline-separated story file paths for epic
 
 [[ -n "${_DETECTION_SH_LOADED:-}" ]] && return 0
 _DETECTION_SH_LOADED=1
@@ -94,6 +96,25 @@ _find_previous_story() {
     echo ""
 }
 
+# Detect previous story in the same epic and resolve its file path.
+# Sets PREV_STORY_FILE to the path, or empty string if first story in epic.
+detect_previous_story() {
+    local prev_id
+    prev_id="$(_find_previous_story)"
+    PREV_STORY_FILE=""
+
+    # Empty or not same epic → no previous story
+    if [[ -z "$prev_id" ]]; then
+        return 0
+    fi
+    local prev_epic="${prev_id%%-*}"
+    if [[ "$prev_epic" != "$EPIC_ID" ]]; then
+        return 0
+    fi
+
+    PREV_STORY_FILE="$(_resolve_story_file_path "$prev_id")"
+}
+
 is_epic_start() {
     local story_num
     story_num="$(extract_story_num)"
@@ -132,6 +153,50 @@ detect_story_file_path() {
             ! -name "*--*" -type f -name "*.md" 2>/dev/null | head -1)
         STORY_FILE_PATH="${match:-}"
     fi
+}
+
+# --- Story File Path Resolution (for arbitrary story IDs) ---
+
+# Resolve a story ID to its file path in IMPL_ARTIFACTS.
+# Usage: _resolve_story_file_path "1-2-some-story"
+# Prints the path or empty string.
+_resolve_story_file_path() {
+    local sid="$1"
+    local match
+    match=$(find "$IMPL_ARTIFACTS" -maxdepth 1 -name "${sid}*.md" \
+        ! -name "*--*" -type f 2>/dev/null | head -1)
+
+    if [[ -n "$match" ]]; then
+        echo "$match"
+        return 0
+    fi
+
+    local prefix
+    prefix="$(echo "$sid" | cut -d'-' -f1-2)"
+    match=$(find "$IMPL_ARTIFACTS" -maxdepth 1 -name "${prefix}-*" \
+        ! -name "*--*" -type f -name "*.md" 2>/dev/null | head -1)
+    echo "${match:-}"
+}
+
+# --- Collect Epic Story Paths ---
+
+# Returns newline-separated list of story file paths for the given epic.
+# Reads EPIC_ID and SPRINT_STATUS globals.
+collect_epic_story_paths() {
+    local paths=""
+    local sid
+    while IFS=: read -r key _status; do
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        [[ "$key" =~ ^${EPIC_ID}-[0-9]+- ]] || continue
+        local fpath
+        fpath="$(_resolve_story_file_path "$key")"
+        if [[ -n "$fpath" ]]; then
+            [[ -n "$paths" ]] && paths="${paths}
+"
+            paths="${paths}${fpath}"
+        fi
+    done < "$SPRINT_STATUS"
+    echo "$paths"
 }
 
 # --- Epic Detection ---
