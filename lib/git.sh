@@ -40,7 +40,9 @@ git_checkpoint() {
     fi
 
     git -C "$PROJECT_ROOT" add -A
-    git -C "$PROJECT_ROOT" commit -m "wip(${STORY_SHORT_ID}): ${phase_label}" --no-verify --quiet
+    local msg="wip(${STORY_SHORT_ID}): ${phase_label}"
+    [[ -n "${LAST_COMPLETED_STEP:-}" ]] && msg="${msg} [through ${LAST_COMPLETED_STEP}]"
+    git -C "$PROJECT_ROOT" commit -m "$msg" --no-verify --quiet
 }
 
 # Squash all checkpoint commits made since COMMIT_BASELINE into a single WIP commit.

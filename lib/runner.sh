@@ -209,6 +209,7 @@ run_step() {
         extract_and_record_usage "$step_id" "$cfg_cli" "$cfg_model" \
             "${TMP_DIR}/step-${step_id}-raw.json" "$duration" "ok"
         _emit_event "step_end" "$step_id" "status" "ok" "duration" "$duration"
+        LAST_COMPLETED_STEP="$step_id"
         log_ok "Completed in $(format_duration $duration)"
     else
         stop_activity_monitor
@@ -408,5 +409,6 @@ run_parallel_reviews() {
 
     _restore_cursor
     trap - INT TERM     # clean up cursor-restore trap
+    LAST_COMPLETED_STEP="$last_sid"
     return 0
 }
