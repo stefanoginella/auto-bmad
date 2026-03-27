@@ -9,7 +9,7 @@ _auto_bmad() {
     local commands="story epic status quickstart validate config help version"
 
     # Subcommand-specific flags
-    local story_flags="--story --from-step --dry-run --skip-cache --skip-tea --reviews --skip-git --no-traces --acknowledge-previous --help"
+    local story_flags="--story --from-step --dry-run --skip-cache --skip-tea --reviews --skip-git --no-traces --debug --acknowledge-previous --help"
     local epic_flags="--epic --from-story --to-story --dry-run --no-merge --skip-cache --skip-tea --reviews --skip-git --no-traces --help"
     local reviews_values="full fast none"
 

@@ -17,6 +17,7 @@ set -euo pipefail
 #   --reviews MODE       Review mode: full (default), fast (1 GPT only), none
 #   --skip-git           Skip git write operations (branch, checkpoint, squash)
 #   --no-traces          Remove pipeline artifacts after finalization
+#   --debug              Keep temp files for debugging
 #   --help               Show usage
 # ============================================================
 
@@ -77,7 +78,7 @@ EPIC_ID=""
 STORY_FILE_PATH=""
 PREV_STORY_FILE=""   # previous story's file path (same epic only, empty if first)
 STORY_ARTIFACTS=""   # permanent artifacts (triage reports, pipeline report)
-TMP_DIR=""           # temp files (individual reviews, step logs) — cleaned on success
+TMP_DIR=""           # temp files (individual reviews, step logs) — cleaned at start of next run
 PIPELINE_LOG=""      # raw step log in TMP_DIR (temporary)
 PIPELINE_REPORT=""   # structured markdown in STORY_ARTIFACTS (permanent)
 CURRENT_STEP_LOG=""
@@ -90,6 +91,7 @@ SKIP_TEA=false
 REVIEWS_MODE=""   # set after load_pipeline_conf, overridden by --reviews
 SKIP_GIT=false
 NO_TRACES=false
+DEBUG=false
 ACK_PREVIOUS=false
 PIPELINE_START_TIME=""
 
@@ -477,6 +479,7 @@ Options:
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
                          (pipeline report is kept)
+  --debug                Keep temp files for debugging
   --acknowledge-previous Skip warning about unresolved items from previous story
   --help                 Show this help message
 
@@ -546,6 +549,7 @@ parse_args() {
                 shift 2 ;;
             --skip-git)         SKIP_GIT=true; shift ;;
             --no-traces)        NO_TRACES=true; shift ;;
+            --debug)            DEBUG=true; shift ;;
             --acknowledge-previous) ACK_PREVIOUS=true; shift ;;
             --help|-h)        show_help; exit 0 ;;
             *)
@@ -624,6 +628,11 @@ main() {
     TMP_DIR="${PROJECT_ROOT}/.tmp/auto-bmad/${STORY_SHORT_ID}"
     PIPELINE_LOG="${TMP_DIR}/pipeline.log"
     PIPELINE_REPORT="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-6.1-pipeline-report.md"
+    # Clean previous temp files on fresh runs (skip on resume and --debug)
+    if [[ -z "$FROM_STEP" && "$DEBUG" != "true" && -d "$TMP_DIR" && "$TMP_DIR" == *"/.tmp/auto-bmad/"* ]]; then
+        rm -rf "$TMP_DIR"
+    fi
+
     mkdir -p "$STORY_ARTIFACTS" "$TMP_DIR"
 
     # Record baseline commit for final squash (captured early so resume path can persist it)
@@ -684,6 +693,7 @@ main() {
     [[ "$SKIP_TEA" == "true" ]]      && echo -e "  TEA:        ${YELLOW}Skipped${NC}"
     [[ "$SKIP_GIT" == "true" ]]      && echo -e "  Git:        ${YELLOW}Disabled (no branch, checkpoint, or squash)${NC}"
     [[ "$NO_TRACES" == "true" ]]     && echo -e "  No traces:  ${YELLOW}Artifacts removed after finalization${NC}"
+    [[ "$DEBUG" == "true" ]]         && echo -e "  Debug:      ${YELLOW}Temp files preserved${NC}"
     [[ -n "$FROM_STEP" ]]            && echo -e "  Resume:     from step ${BOLD}${FROM_STEP}${NC}"
     echo -e "  Artifacts:  ${DIM}${STORY_ARTIFACTS}/${NC}"
 
@@ -694,12 +704,6 @@ main() {
     _emit_event "pipeline_end" "-" "story_id" "$STORY_ID" "status" "ok"
 
     print_summary
-
-    # Clean up temp directory on success (individual reviews, step logs, raw pipeline log)
-    if [[ -d "$TMP_DIR" && "$TMP_DIR" == *"/.tmp/auto-bmad/"* ]]; then
-        rm -rf "$TMP_DIR"
-        echo -e "  ${DIM}Temp files cleaned: ${TMP_DIR}${NC}"
-    fi
 
     # --no-traces: remove all pipeline-generated artifacts, keep pipeline report
     if [[ "$NO_TRACES" == "true" ]]; then
