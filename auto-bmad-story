@@ -81,6 +81,7 @@ TMP_DIR=""           # temp files (individual reviews, step logs) — cleaned on
 PIPELINE_LOG=""      # raw step log in TMP_DIR (temporary)
 PIPELINE_REPORT=""   # structured markdown in STORY_ARTIFACTS (permanent)
 CURRENT_STEP_LOG=""
+LAST_COMPLETED_STEP=""
 COMMIT_BASELINE=""   # SHA before pipeline — used for final squash
 DRY_RUN=false
 FROM_STEP=""
