@@ -34,8 +34,12 @@ log_step() {
     parse_step_config "$step_id"
     local detail="$(_format_model_info)"
     [[ -n "$cfg_effort" ]] && detail="${detail}/${cfg_effort}"
+    local _elapsed=""
+    if [[ -n "${PIPELINE_START_TIME:-}" ]]; then
+        _elapsed="  ${DIM}[elapsed $(format_duration $(( $(date +%s) - PIPELINE_START_TIME )))]${NC}"
+    fi
     echo ""
-    echo -e "${BOLD}${BLUE}>>> Step ${step_id}: ${step_name}${NC}  ${DIM}[${detail}]${NC}"
+    echo -e "${BOLD}${BLUE}>>> Step ${step_id}: ${step_name}${NC}  ${DIM}[${detail}]${NC}${_elapsed}"
 }
 
 log_dry() {

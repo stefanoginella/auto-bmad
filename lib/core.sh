@@ -141,10 +141,15 @@ NC='\033[0m'
 # --- Logging ---
 
 # Decorated section header. Optionally writes to PIPELINE_LOG if set.
+# Shows total elapsed time when PIPELINE_START_TIME is available.
 log_phase() {
+    local _elapsed=""
+    if [[ -n "${PIPELINE_START_TIME:-}" ]]; then
+        _elapsed="  ${DIM}[elapsed $(format_duration $(( $(date +%s) - PIPELINE_START_TIME )))]${NC}"
+    fi
     echo ""
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
-    echo -e "${BOLD}${CYAN}  $1${NC}"
+    echo -e "${BOLD}${CYAN}  $1${NC}${_elapsed}"
     echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
     [[ -n "${PIPELINE_LOG:-}" ]] && printf "# ═══ %s ═══\n" "$1" >> "$PIPELINE_LOG" || true
 }

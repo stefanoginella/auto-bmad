@@ -400,8 +400,12 @@ run_parallel_reviews() {
     local first_sid="${sids[0]}" last_sid="${sids[$((count-1))]}"
     local group_name="${snames[0]}"
     group_name="${group_name% (*}"          # strip trailing " (GPT)" etc.
+    local _elapsed=""
+    if [[ -n "${PIPELINE_START_TIME:-}" ]]; then
+        _elapsed="  ${DIM}[elapsed $(format_duration $(( $(date +%s) - PIPELINE_START_TIME )))]${NC}"
+    fi
     echo ""
-    echo -e "${BOLD}${BLUE}>>> Steps ${first_sid}–${last_sid}: ${group_name} (parallel)${NC}"
+    echo -e "${BOLD}${BLUE}>>> Steps ${first_sid}–${last_sid}: ${group_name} (parallel)${NC}${_elapsed}"
 
     # --- Live status board: poll PIDs and redraw in-place ---
 
@@ -423,10 +427,13 @@ run_parallel_reviews() {
     done
 
     # Pre-cache model info per step (avoids re-parsing in poll loop)
-    local -a model_infos=()
+    local -a model_infos=() model_details=()
     for ((i=0; i<count; i++)); do
         parse_step_config "${sids[$i]}"
         model_infos+=("$(_format_model_info)")
+        local _detail; _detail="$(_format_model_info)"
+        [[ -n "$cfg_effort" ]] && _detail="${_detail}/${cfg_effort}"
+        model_details+=("$_detail")
     done
 
     local running=$count
@@ -473,13 +480,13 @@ run_parallel_reviews() {
                 running)
                     local t0; t0=$(get_step_start "${sids[$i]}" "$now")
                     local elapsed=$(( now - t0 ))
-                    echo -e "  ${frame} ${snames[$i]}  ${DIM}$(format_duration $elapsed)${NC}"
+                    echo -e "  ${frame} ${snames[$i]}  ${DIM}[${model_details[$i]}]  $(format_duration $elapsed)${NC}"
                     ;;
                 ok)
-                    echo -e "  ${GREEN}✓${NC} ${snames[$i]}  ${GREEN}$(format_duration "${durations[$i]}")${NC}"
+                    echo -e "  ${GREEN}✓${NC} ${snames[$i]}  ${DIM}[${model_details[$i]}]${NC}  ${GREEN}$(format_duration "${durations[$i]}")${NC}"
                     ;;
                 FAILED)
-                    echo -e "  ${YELLOW}!${NC} ${snames[$i]}  ${YELLOW}failed after $(format_duration "${durations[$i]}")${NC}"
+                    echo -e "  ${YELLOW}!${NC} ${snames[$i]}  ${DIM}[${model_details[$i]}]${NC}  ${YELLOW}failed after $(format_duration "${durations[$i]}")${NC}"
                     ;;
             esac
         done
