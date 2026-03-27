@@ -4,7 +4,9 @@
 #
 # Requires: lib/core.sh, lib/tracking.sh, lib/config.sh, lib/cli.sh, lib/monitor.sh sourced
 # Reads globals: _ABORT DRY_RUN FROM_STEP STEP_ORDER REVIEWS_MODE TMP_DIR PIPELINE_LOG
-#                PIPELINE_START_TIME STORY_ID CURRENT_STEP_LOG SPINNER_FRAMES
+#                PIPELINE_START_TIME STORY_ID CURRENT_STEP_LOG SPINNER_FRAMES PROJECT_ROOT
+#                cfg_pip_max_step_duration cfg_pip_max_output_rate cfg_pip_file_churn_threshold
+#                cfg_pip_parallel_stagger cfg_pip_min_reviewers
 #
 # Exports:
 #   should_run_step <step_id>     — check if step should run (--from-step filtering)
@@ -83,12 +85,84 @@ _run_with_retry() {
 
         local start_time; start_time=$(date +%s)
         local exit_code=0
-        "$@" || exit_code=$?
+        local guard_reason=""
+
+        # Run command in background so the guard can monitor and kill it
+        "$@" &
+        local _cmd_pid=$!
+
+        # --- Guard loop: duration cap, output rate, file churn ---
+        local _g_max_dur="${cfg_pip_max_step_duration:-600}"
+        local _g_max_rate="${cfg_pip_max_output_rate:-200000}"
+        local _g_churn_thresh="${cfg_pip_file_churn_threshold:-10}"
+        local _g_rate_start=$start_time _g_rate_bytes=0
+        local _g_churn_hash="" _g_churn_count=0 _g_churn_time=$start_time
+
+        while kill -0 "$_cmd_pid" 2>/dev/null; do
+            sleep 1
+            local now; now=$(date +%s)
+            local elapsed=$((now - start_time))
+
+            # 1. Duration cap
+            if (( _g_max_dur > 0 && elapsed > _g_max_dur )); then
+                guard_reason="duration:${elapsed}s>${_g_max_dur}s"
+                kill -TERM "$_cmd_pid" 2>/dev/null || true
+                sleep 2
+                kill -KILL "$_cmd_pid" 2>/dev/null || true
+                break
+            fi
+
+            # 2. Output rate (10-second sliding window)
+            local _g_cur_size=0
+            [[ -f "$CURRENT_STEP_LOG" ]] && _g_cur_size=$(wc -c < "$CURRENT_STEP_LOG" 2>/dev/null | tr -d ' ')
+            local _g_win_elapsed=$((now - _g_rate_start))
+            if (( _g_win_elapsed >= 10 )); then
+                local _g_win_bytes=$((_g_cur_size - _g_rate_bytes))
+                if (( _g_max_rate > 0 && _g_win_bytes > _g_max_rate )); then
+                    guard_reason="output_rate:${_g_win_bytes}B/10s>${_g_max_rate}B/10s"
+                    kill -TERM "$_cmd_pid" 2>/dev/null || true
+                    sleep 2
+                    kill -KILL "$_cmd_pid" 2>/dev/null || true
+                    break
+                fi
+                _g_rate_start=$now
+                _g_rate_bytes=$_g_cur_size
+            fi
+
+            # 3. File churn (every 30 seconds)
+            if (( _g_churn_thresh > 0 && now - _g_churn_time >= 30 )); then
+                _g_churn_time=$now
+                local _g_new_hash
+                _g_new_hash=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | cksum | cut -d' ' -f1) || true
+                if [[ -n "$_g_churn_hash" && -n "$_g_new_hash" && "$_g_new_hash" != "$_g_churn_hash" ]]; then
+                    _g_churn_count=$((_g_churn_count + 1))
+                    if (( _g_churn_count >= _g_churn_thresh )); then
+                        guard_reason="file_churn:diff_changed_${_g_churn_count}x"
+                        kill -TERM "$_cmd_pid" 2>/dev/null || true
+                        sleep 2
+                        kill -KILL "$_cmd_pid" 2>/dev/null || true
+                        break
+                    fi
+                fi
+                _g_churn_hash="${_g_new_hash:-}"
+            fi
+        done
+
+        wait "$_cmd_pid" 2>/dev/null && exit_code=0 || exit_code=$?
+
+        # Guard trigger supersedes normal exit code
+        if [[ -n "$guard_reason" ]]; then
+            log_warn "Guard terminated step ${step_id}: ${guard_reason}"
+            _emit_event "guard_trigger" "$step_id" "reason" "$guard_reason"
+            exit_code=1
+        fi
+
         local duration=$(( $(date +%s) - start_time ))
 
         if _detect_soft_fail "$exit_code" "$duration"; then
             local fail_type="soft"
             (( exit_code != 0 )) && fail_type="hard"
+            [[ -n "$guard_reason" ]] && fail_type="guard"
 
             if [[ "$using_fallback" == true ]]; then
                 # Fallback also failed — give up
@@ -312,6 +386,10 @@ run_parallel_reviews() {
         sids+=("$sid")
         snames+=("$sname")
         count=$((count + 1))
+
+        # Stagger launches to avoid resource contention and API rate limits
+        local stagger="${cfg_pip_parallel_stagger:-2}"
+        (( stagger > 0 )) && sleep "$stagger"
     done
 
     if [[ "$DRY_RUN" == "true" || $count -eq 0 ]]; then
@@ -419,5 +497,28 @@ run_parallel_reviews() {
     fi
     trap - TERM
     LAST_COMPLETED_STEP="$last_sid"
+
+    # --- Minimum validator threshold check ---
+    local succeeded=0 failed_count=0
+    for ((i=0; i<count; i++)); do
+        case "${statuses[$i]}" in
+            ok) succeeded=$((succeeded + 1)) ;;
+            FAILED) failed_count=$((failed_count + 1)) ;;
+        esac
+    done
+
+    local min_required="${cfg_pip_min_reviewers:-2}"
+    if (( succeeded < min_required )); then
+        if [[ "$REVIEWS_MODE" == "fast" ]]; then
+            log_warn "Only ${succeeded}/${count} reviewers succeeded (minimum: ${min_required}) — proceeding (fast mode)"
+        else
+            log_error "Only ${succeeded}/${count} reviewers succeeded (minimum: ${min_required})"
+            log_error "Resume: auto-bmad story --from-step ${first_sid%[a-f]} --story ${STORY_ID}"
+            _emit_event "review_threshold_fail" "${first_sid}" \
+                "succeeded" "$succeeded" "required" "$min_required" "total" "$count"
+            exit 1
+        fi
+    fi
+
     return 0
 }
