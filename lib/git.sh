@@ -215,7 +215,9 @@ _resolve_main_ref() {
 # Usage: _resolve_branch_name <story_id>
 _resolve_branch_name() {
     local _sid="$1"
-    local _tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
+    # Avoid ${var:-fallback} — bash 3.2 misparses when value contains '}'
+    local _tmpl="${cfg_pip_branch_pattern}"
+    [[ -z "$_tmpl" ]] && _tmpl='story/${STORY_ID}'
     # Safe substitution — no eval, no arbitrary code execution
     # Handle both ${STORY_ID} and $STORY_ID template forms
     local _result="${_tmpl//\$\{STORY_ID\}/$_sid}"
