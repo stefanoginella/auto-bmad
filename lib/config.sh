@@ -276,6 +276,7 @@ _load_profiles() {
 # Returns "|||" if not found.
 _resolve_profile() {
     local name="$1"
+    _load_profiles
     local i
     for ((i=0; i<${#_PROFILE_NAMES[@]}; i++)); do
         if [[ "${_PROFILE_NAMES[$i]}" == "$name" ]]; then

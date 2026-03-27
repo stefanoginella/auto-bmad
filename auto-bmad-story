@@ -645,7 +645,8 @@ main() {
         [[ -n "$orig_baseline" ]] && COMMIT_BASELINE="$orig_baseline"
 
         # Strip prior failure/resume footer, append resume marker
-        sed -i '' '/^# FAILED at step/d; /^# Resume:/d' "$PIPELINE_LOG"
+        sed -e '/^# FAILED at step/d' -e '/^# Resume:/d' "$PIPELINE_LOG" > "$PIPELINE_LOG.tmp" \
+            && mv "$PIPELINE_LOG.tmp" "$PIPELINE_LOG"
         printf "# Resumed from: %s at %s\n" "$FROM_STEP" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$PIPELINE_LOG"
     else
         # ── FRESH PATH: new pipeline log ──

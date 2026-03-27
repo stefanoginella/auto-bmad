@@ -359,6 +359,7 @@ extract_and_record_usage() {
     local usage_file="${TMP_DIR}/usage.jsonl"
 
     [[ ! -f "$raw" ]] && return 0
+    [[ -z "$cli" ]] && return 0
 
     "_extract_usage_${cli}" "$step_id" "$raw" "$cli" "$model" "$duration" "$status" >> "$usage_file"
 }
