@@ -238,49 +238,6 @@ run_pipeline() {
         log_skip "Phase 0 — not first story in epic"
     fi
 
-    # --- Pre-flight: Previous story unresolved items warning ---
-    if [[ -n "$PREV_STORY_FILE" && -f "$PREV_STORY_FILE" && "$ACK_PREVIOUS" != "true" ]]; then
-        local _prev_unchecked=0 _prev_open=0 _prev_deferred=0
-        local _hr_section
-        _hr_section="$(sed -n '/^## Human Review Required/,/^## /p' "$PREV_STORY_FILE" 2>/dev/null)" || true
-        if [[ -n "$_hr_section" ]]; then
-            _prev_unchecked=$(echo "$_hr_section" | grep -c '^\- \[ \]' || true)
-            _prev_open=$(echo "$_hr_section" | grep -c '🔴' || true)
-            _prev_deferred=$(echo "$_hr_section" | sed -n '/### Deferred to Future Stories/,/^### /p' | grep -c '^\- \|^\*\*' || true)
-        fi
-        if (( _prev_unchecked + _prev_open + _prev_deferred > 0 )); then
-            echo ""
-            echo -e "${YELLOW}⚠️  Previous story has unresolved items:${NC}"
-            (( _prev_unchecked > 0 )) && echo -e "     - ${_prev_unchecked} unchecked manual test(s)"
-            (( _prev_open > 0 ))      && echo -e "     - ${_prev_open} open question(s)"
-            (( _prev_deferred > 0 ))  && echo -e "     - ${_prev_deferred} deferred item(s)"
-
-            # Print actual items so operator can make an informed decision
-            if (( _prev_unchecked > 0 )); then
-                echo ""
-                echo -e "     ${BOLD}Unchecked tests:${NC}"
-                echo "$_hr_section" | grep '^\- \[ \]' | while IFS= read -r _item; do
-                    echo -e "       ${DIM}${_item}${NC}"
-                done
-            fi
-            if (( _prev_deferred > 0 )); then
-                echo ""
-                echo -e "     ${BOLD}Deferred items:${NC}"
-                echo "$_hr_section" | sed -n '/### Deferred to Future Stories/,/^### /p' | \
-                    grep '^\- \|^\*\*' | while IFS= read -r _item; do
-                        echo -e "       ${DIM}${_item}${NC}"
-                    done
-            fi
-
-            echo ""
-            echo -e "     Source: ${DIM}${PREV_STORY_FILE}${NC}"
-            echo ""
-            if [[ "$DRY_RUN" != "true" ]]; then
-                _confirm "     Continue? (or use --acknowledge-previous to skip) [y/N] " || exit 1
-            fi
-        fi
-    fi
-
     # --- Phase 1: Story Preparation ---
     log_phase "Phase 1 — Story Preparation"
 
@@ -615,6 +572,50 @@ main() {
     extract_epic_id
     extract_short_id
     detect_previous_story
+
+    # --- Pre-flight: Previous story unresolved items warning ---
+    # Checked before branch creation so the operator can bail out cleanly
+    if [[ -n "$PREV_STORY_FILE" && -f "$PREV_STORY_FILE" && "$ACK_PREVIOUS" != "true" ]]; then
+        local _prev_unchecked=0 _prev_open=0 _prev_deferred=0
+        local _hr_section
+        _hr_section="$(sed -n '/^## Human Review Required/,/^## /p' "$PREV_STORY_FILE" 2>/dev/null)" || true
+        if [[ -n "$_hr_section" ]]; then
+            _prev_unchecked=$(echo "$_hr_section" | grep -c '^\- \[ \]' || true)
+            _prev_open=$(echo "$_hr_section" | grep -c '🔴' || true)
+            _prev_deferred=$(echo "$_hr_section" | sed -n '/### Deferred to Future Stories/,/^### /p' | grep -c '^\- \|^\*\*' || true)
+        fi
+        if (( _prev_unchecked + _prev_open + _prev_deferred > 0 )); then
+            echo ""
+            echo -e "${YELLOW}⚠️  Previous story has unresolved items:${NC}"
+            (( _prev_unchecked > 0 )) && echo -e "     - ${_prev_unchecked} unchecked manual test(s)"
+            (( _prev_open > 0 ))      && echo -e "     - ${_prev_open} open question(s)"
+            (( _prev_deferred > 0 ))  && echo -e "     - ${_prev_deferred} deferred item(s)"
+
+            # Print actual items so operator can make an informed decision
+            if (( _prev_unchecked > 0 )); then
+                echo ""
+                echo -e "     ${BOLD}Unchecked tests:${NC}"
+                echo "$_hr_section" | grep '^\- \[ \]' | while IFS= read -r _item; do
+                    echo -e "       ${DIM}${_item}${NC}"
+                done
+            fi
+            if (( _prev_deferred > 0 )); then
+                echo ""
+                echo -e "     ${BOLD}Deferred items:${NC}"
+                echo "$_hr_section" | sed -n '/### Deferred to Future Stories/,/^### /p' | \
+                    grep '^\- \|^\*\*' | while IFS= read -r _item; do
+                        echo -e "       ${DIM}${_item}${NC}"
+                    done
+            fi
+
+            echo ""
+            echo -e "     Source: ${DIM}${PREV_STORY_FILE}${NC}"
+            echo ""
+            if [[ "$DRY_RUN" != "true" ]]; then
+                _confirm "     Continue? (or use --acknowledge-previous to skip) [y/N] " || exit 1
+            fi
+        fi
+    fi
 
     preflight_git_checks
     check_git_branch
