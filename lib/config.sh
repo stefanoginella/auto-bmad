@@ -289,29 +289,35 @@ _resolve_profile() {
 
 # Look up the AI profile for a step from profiles.conf cascade.
 # Returns "cli|model|effort|fallback". Falls back to "|||" if step not found.
-# Last match wins across cascade files.
+# Last match wins across cascade files. Results are cached per step ID.
+_STEP_CONFIG_CACHE_LOADED=false
 step_config() {
     local step="$1"
     _load_profiles
-    local result="" f
-    while IFS= read -r f; do
-        local line
-        while IFS= read -r line; do
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "${line// /}" ]] && continue
-            [[ "$line" == @* ]] && continue   # skip profile definitions
-            local sid profile_or_cli field3 field4
-            read -r sid profile_or_cli field3 field4 <<< "$line"
-            if [[ "$sid" == "$step" ]]; then
+
+    # Build cache on first call — parse all step mappings once
+    if [[ "$_STEP_CONFIG_CACHE_LOADED" != true ]]; then
+        local f line sid profile_or_cli field3 field4
+        while IFS= read -r f; do
+            while IFS= read -r line; do
+                [[ "$line" =~ ^[[:space:]]*# ]] && continue
+                [[ -z "${line// /}" ]] && continue
+                [[ "$line" == @* ]] && continue   # skip profile definitions
+                read -r sid profile_or_cli field3 field4 <<< "$line"
+                local resolved
                 if [[ "$profile_or_cli" == @* ]]; then
-                    result="$(_resolve_profile "$profile_or_cli")"
+                    resolved="$(_resolve_profile "$profile_or_cli")"
                 else
-                    result="${profile_or_cli}|${field3}|${field4}|-"
+                    resolved="${profile_or_cli}|${field3}|${field4}|-"
                 fi
-            fi
-        done < "$f"
-    done < <(_conf_files "profiles.conf")
-    echo "${result:-|||}"
+                # Last match wins — kv_set overwrites
+                kv_set _stepcfg "$sid" val "$resolved"
+            done < "$f"
+        done < <(_conf_files "profiles.conf")
+        _STEP_CONFIG_CACHE_LOADED=true
+    fi
+
+    echo "$(kv_get _stepcfg "$step" val "|||")"
 }
 
 # Parse step config once into cfg_cli, cfg_model, cfg_effort, cfg_fallback globals.

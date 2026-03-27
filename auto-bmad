@@ -192,12 +192,7 @@ _cmd_status() {
                     fi
                 done < "$SPRINT_STATUS"
 
-                case "$prev_ss" in
-                    done) prev_status_display="done" ;;
-                    in-progress) prev_status_display="in-progress" ;;
-                    backlog) prev_status_display="backlog" ;;
-                    *) prev_status_display="$prev_ss" ;;
-                esac
+                prev_status_display="$prev_ss"
 
                 # Check for merged PR
                 if [[ "$prev_ss" == "done" ]]; then

@@ -223,8 +223,6 @@ preflight_checks() {
 # ============================================================
 
 run_pipeline() {
-    local story_file_ref="${STORY_FILE_PATH:-the implementation-artifacts directory}"
-
     # COMMIT_BASELINE is set in main() before log init (resume path needs it from log header)
 
     # --- Phase 0: Epic Start ---
@@ -674,7 +672,7 @@ main() {
     echo -e "${BOLD}${MAGENTA}╚═════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  Story:      ${BOLD}${STORY_ID}${NC}"
-    echo -e "  Branch:     ${BOLD}$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'n/a')${NC}"
+    echo -e "  Branch:     ${BOLD}${branch_name}${NC}"
     echo -e "  Epic:       ${BOLD}${EPIC_ID}${NC}"
     echo -e "  Epic start: $(is_epic_start && echo -e "${GREEN}Yes (first story)${NC}" || echo "No")"
     echo -e "  Epic end:   $(is_epic_end && echo -e "${GREEN}Yes (last story)${NC}" || echo "No")"

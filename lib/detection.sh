@@ -144,19 +144,7 @@ is_epic_end() {
 }
 
 detect_story_file_path() {
-    local match
-    match=$(find "$IMPL_ARTIFACTS" -maxdepth 1 -name "${STORY_ID}*.md" \
-        ! -name "*--*" -type f 2>/dev/null | head -1)
-
-    if [[ -n "$match" ]]; then
-        STORY_FILE_PATH="$match"
-    else
-        local prefix
-        prefix="$(echo "$STORY_ID" | cut -d'-' -f1-2)"
-        match=$(find "$IMPL_ARTIFACTS" -maxdepth 1 -name "${prefix}-*" \
-            ! -name "*--*" -type f -name "*.md" 2>/dev/null | head -1)
-        STORY_FILE_PATH="${match:-}"
-    fi
+    STORY_FILE_PATH="$(_resolve_story_file_path "$STORY_ID")"
 }
 
 # --- Story File Path Resolution (for arbitrary story IDs) ---

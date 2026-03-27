@@ -25,6 +25,13 @@
 [[ -n "${_GIT_SH_LOADED:-}" ]] && return 0
 _GIT_SH_LOADED=1
 
+# Returns 0 if working tree is clean (no staged, unstaged, or untracked changes).
+_git_is_clean() {
+    git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null &&
+    git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null &&
+    [[ -z "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null)" ]]
+}
+
 # Save a checkpoint commit after a phase completes.
 # Skipped if there are no changes to commit.
 # Uses --no-verify because these are temporary WIP commits that get squashed
@@ -34,10 +41,7 @@ git_checkpoint() {
     local phase_label="$1"
     [[ "$DRY_RUN" == "true" || "$SKIP_GIT" == "true" ]] && return 0
 
-    if git -C "$PROJECT_ROOT" diff --quiet && git -C "$PROJECT_ROOT" diff --cached --quiet && \
-       [[ -z "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard)" ]]; then
-        return 0  # nothing to commit
-    fi
+    _git_is_clean && return 0
 
     git -C "$PROJECT_ROOT" add -A
     local msg="wip(${STORY_SHORT_ID}): ${phase_label}"
@@ -278,9 +282,7 @@ preflight_git_checks() {
     main_ref="$(_resolve_main_ref)"
 
     # ── Gate 1: Dirty working tree (soft gate) ──────────────────
-    if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
-       ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null || \
-       [[ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+    if ! _git_is_clean; then
         echo ""
         log_warn "Working tree has uncommitted changes"
         echo -e "    Uncommitted files may leak into the story branch."

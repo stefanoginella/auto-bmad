@@ -252,9 +252,10 @@ _extract_usage_codex() {
     fi
 
     local in_tok out_tok cached_tok
-    in_tok=$(echo "$usage_line" | jq -r '.usage.input_tokens // 0' 2>/dev/null) || in_tok=0
-    out_tok=$(echo "$usage_line" | jq -r '.usage.output_tokens // 0' 2>/dev/null) || out_tok=0
-    cached_tok=$(echo "$usage_line" | jq -r '.usage.cached_input_tokens // 0' 2>/dev/null) || cached_tok=0
+    local _tok_line
+    _tok_line=$(echo "$usage_line" | jq -r '[.usage.input_tokens // 0, .usage.output_tokens // 0, .usage.cached_input_tokens // 0] | @tsv' 2>/dev/null) || _tok_line=""
+    read -r in_tok out_tok cached_tok <<< "$_tok_line"
+    : "${in_tok:=0}" "${out_tok:=0}" "${cached_tok:=0}"
 
     # Ensure numeric values — fall back to empty usage on parse failure
     [[ "$in_tok" =~ ^[0-9]+$ ]] || in_tok=0
@@ -362,6 +363,37 @@ extract_and_record_usage() {
     [[ -z "$cli" ]] && return 0
 
     "_extract_usage_${cli}" "$step_id" "$raw" "$cli" "$model" "$duration" "$status" >> "$usage_file"
+}
+
+# --- Report Helpers ---
+
+# Render a "By CLI" or "By Model" markdown table from a JSON file.
+# Usage: _render_group_table <json_file> <jq_array_path> <label_field> <section_title>
+_render_group_table() {
+    local json="$1" jq_path="$2" label_field="$3" title="$4"
+    local label_title
+    case "$label_field" in
+        cli)   label_title="CLI" ;;
+        model) label_title="Model" ;;
+        *)
+            label_title="$label_field"
+            if [[ -n "$label_title" ]]; then
+                label_title="$(printf '%s' "${label_title:0:1}" | tr '[:lower:]' '[:upper:]')${label_title:1}"
+            fi
+            ;;
+    esac
+    echo "## ${title}"
+    echo ""
+    echo "| ${label_title} | Steps | Input | Output | Cost |"
+    echo "|$(printf -- '-%.0s' {1..7})|-------|-------|--------|------|"
+    jq -r "${jq_path}[] | \"| \(.${label_field}) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |\"" "$json" | \
+        while IFS='|' read -r _ lbl steps inp outp cost _; do
+            printf "| %s | %s | %s | %s | \$%.4f |\n" \
+                "$(echo "$lbl" | xargs)" "$(echo "$steps" | xargs)" \
+                "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
+                "$(echo "$cost" | xargs)"
+        done
+    echo ""
 }
 
 # --- Report Generation ---
@@ -477,33 +509,8 @@ generate_story_usage_report() {
         (( prem_req > 0 )) && echo "| Premium Requests | ${prem_req} |"
         echo ""
 
-        # --- By CLI ---
-        echo "## By CLI"
-        echo ""
-        echo "| CLI | Steps | Input | Output | Cost |"
-        echo "|-----|-------|-------|--------|------|"
-        jq -r '.totals.by_cli[] | "| \(.cli) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$json" | \
-            while IFS='|' read -r _ cli steps inp outp cost _; do
-                printf "| %s | %s | %s | %s | \$%.4f |\n" \
-                    "$(echo "$cli" | xargs)" "$(echo "$steps" | xargs)" \
-                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
-                    "$(echo "$cost" | xargs)"
-            done
-        echo ""
-
-        # --- By Model ---
-        echo "## By Model"
-        echo ""
-        echo "| Model | Steps | Input | Output | Cost |"
-        echo "|-------|-------|-------|--------|------|"
-        jq -r '.totals.by_model[] | "| \(.model) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$json" | \
-            while IFS='|' read -r _ model steps inp outp cost _; do
-                printf "| %s | %s | %s | %s | \$%.4f |\n" \
-                    "$(echo "$model" | xargs)" "$(echo "$steps" | xargs)" \
-                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
-                    "$(echo "$cost" | xargs)"
-            done
-        echo ""
+        _render_group_table "$json" ".totals.by_cli" "cli" "By CLI"
+        _render_group_table "$json" ".totals.by_model" "model" "By Model"
 
         # --- Per-step detail ---
         echo "## Per Step"
@@ -637,33 +644,8 @@ generate_epic_usage_report() {
         (( prem_req > 0 )) && echo "| Premium Requests | ${prem_req} |"
         echo ""
 
-        # --- By CLI ---
-        echo "## By CLI"
-        echo ""
-        echo "| CLI | Steps | Input | Output | Cost |"
-        echo "|-----|-------|-------|--------|------|"
-        jq -r '.totals.by_cli[] | "| \(.cli) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$tmp_json" | \
-            while IFS='|' read -r _ cli steps inp outp cost _; do
-                printf "| %s | %s | %s | %s | \$%.4f |\n" \
-                    "$(echo "$cli" | xargs)" "$(echo "$steps" | xargs)" \
-                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
-                    "$(echo "$cost" | xargs)"
-            done
-        echo ""
-
-        # --- By Model ---
-        echo "## By Model"
-        echo ""
-        echo "| Model | Steps | Input | Output | Cost |"
-        echo "|-------|-------|-------|--------|------|"
-        jq -r '.totals.by_model[] | "| \(.model) | \(.steps) | \(.input_tokens) | \(.output_tokens) | \(.cost_usd) |"' "$tmp_json" | \
-            while IFS='|' read -r _ model steps inp outp cost _; do
-                printf "| %s | %s | %s | %s | \$%.4f |\n" \
-                    "$(echo "$model" | xargs)" "$(echo "$steps" | xargs)" \
-                    "$(echo "$inp" | xargs)" "$(echo "$outp" | xargs)" \
-                    "$(echo "$cost" | xargs)"
-            done
-        echo ""
+        _render_group_table "$tmp_json" ".totals.by_cli" "cli" "By CLI"
+        _render_group_table "$tmp_json" ".totals.by_model" "model" "By Model"
 
         # --- Per-story breakdown ---
         echo "## Per Story"
