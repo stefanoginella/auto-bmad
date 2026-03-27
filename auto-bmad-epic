@@ -19,6 +19,7 @@ set -euo pipefail
 #   --reviews MODE       Pass-through: review mode (full|fast|none)
 #   --skip-git           Pass-through: skip git write ops in each story
 #   --no-traces          Pass-through: remove pipeline artifacts after each story
+#   --debug              Pass-through: keep temp files for debugging in each story
 #   --help               Show usage
 # ============================================================
 
@@ -485,6 +486,7 @@ Story pass-through flags (forwarded to auto-bmad-story):
   --reviews MODE       Review mode: full (default), fast (1 GPT only), none
   --skip-git           Skip git write ops (branch, checkpoint, squash)
   --no-traces          Remove pipeline artifacts after finalization
+  --debug              Keep temp files for debugging
 
 Examples:
   auto-bmad epic                             # Run next epic
@@ -529,7 +531,7 @@ parse_args() {
             --reviews)
                 [[ $# -lt 2 ]] && { log_error "--reviews requires an argument"; exit 1; }
                 STORY_EXTRA_FLAGS="${STORY_EXTRA_FLAGS} --reviews $2"; shift 2 ;;
-            --skip-cache|--skip-tea|--skip-git|--no-traces)
+            --skip-cache|--skip-tea|--skip-git|--no-traces|--debug)
                            STORY_EXTRA_FLAGS="${STORY_EXTRA_FLAGS} $1"; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)

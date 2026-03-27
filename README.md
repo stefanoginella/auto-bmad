@@ -227,6 +227,7 @@ Options:
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
                          (pipeline report is kept)
+  --debug                Keep temp files for debugging
   --acknowledge-previous Skip warning about unresolved items from previous story
   --help                 Show usage
 ```
@@ -266,6 +267,8 @@ Steps that fail silently (completing in under 5 seconds with minimal output) or 
 3. **Fail** — if both exhaust, sequential steps stop the pipeline (with `--from-step` resume), parallel reviews degrade gracefully
 
 Fallback chains cross providers (codex/opencode fall back to claude) but do not recurse — a fallback's own fallback is never consulted. Retried and fell-back steps are annotated in the pipeline report and terminal summary.
+
+**Runtime guards** also protect against runaway steps. A step is terminated if it exceeds the duration cap (`max_step_duration`), floods output (`max_output_rate`), or enters an edit loop (`file_churn_threshold`). Guard-terminated steps follow the same retry → fallback → fail path. See [Pipeline Configuration](#pipeline-configuration) for thresholds.
 
 ### Story Detection
 
@@ -337,6 +340,7 @@ Story pass-through flags (forwarded to auto-bmad-story):
   --reviews MODE         Review mode: full (default), fast (1 GPT only), none
   --skip-git             Skip git write ops (branch, checkpoint, squash)
   --no-traces            Remove pipeline artifacts after finalization
+  --debug                Keep temp files for debugging
 ```
 
 ### What It Does
@@ -564,7 +568,12 @@ Edit `conf/pipeline.conf` to tune operator-facing defaults. Override via the cas
 | `[timeouts]` | `pr_grace_polls` | `10` | Polls to wait for CI checks to appear |
 | `[thresholds]` | `min_step_duration` | `5` | Soft-fail: steps faster than this are suspect |
 | `[thresholds]` | `min_log_bytes` | `200` | Soft-fail: steps with less output are suspect |
+| `[thresholds]` | `min_reviewers` | `2` | Minimum successful parallel reviews before triage proceeds |
+| `[guard]` | `max_step_duration` | `600` (10m) | Per-step duration cap before termination (0 = disabled) |
+| `[guard]` | `max_output_rate` | `200000` | Max log output bytes per 10s window before flagging runaway |
+| `[guard]` | `file_churn_threshold` | `10` | Diff changes this many times = runaway (0 = disabled) |
 | `[cache]` | `preflight_max_age` | `86400` | Seconds before pre-flight results are re-checked |
+| `[monitor]` | `parallel_stagger` | `2` | Seconds between parallel review launches (reduces contention) |
 | `[git]` | `branch_pattern` | `story/${STORY_ID}` | Branch naming template |
 | `[git]` | `default_review_mode` | `full` | Default when `--reviews` not specified |
 
