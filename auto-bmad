@@ -142,7 +142,9 @@ _cmd_status() {
 
     if [[ -n "$story_id" ]]; then
         load_pipeline_conf
-        local branch_tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
+        # Avoid ${var:-fallback} — bash 3.2 misparses when value contains '}'
+        local branch_tmpl="${cfg_pip_branch_pattern}"
+        [[ -z "$branch_tmpl" ]] && branch_tmpl='story/${STORY_ID}'
         local expected_branch="${branch_tmpl//\$\{STORY_ID\}/$story_id}"
         expected_branch="${expected_branch//\$STORY_ID/$story_id}"
 
