@@ -124,9 +124,7 @@ commit_and_create_pr() {
 
     # Stage any remaining changes and amend the WIP commit with the real message
     local has_changes=false
-    if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
-       ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null || \
-       [[ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+    if ! _git_is_clean; then
         has_changes=true
     fi
 

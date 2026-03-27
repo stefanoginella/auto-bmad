@@ -62,7 +62,6 @@ start_activity_monitor() {
                 fi
                 last_log_size=$current_log_size
                 last_change_time=$now
-                warned_at=0
             fi
 
             local quiet_seconds=$((now - last_change_time))
