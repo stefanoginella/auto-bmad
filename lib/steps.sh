@@ -46,6 +46,217 @@ log_dry() {
 }
 
 # ============================================================
+# Review Anonymization — strip provider names before triage
+# ============================================================
+
+# Shuffle an array of labels using Fisher-Yates (Bash 3.2 compatible).
+# Reads array name, writes shuffled result to the same variable.
+_shuffle_labels() {
+    local -a arr=("$@")
+    local i j tmp n=${#arr[@]}
+    for ((i = n - 1; i > 0; i--)); do
+        j=$(( RANDOM % (i + 1) ))
+        tmp="${arr[$i]}"
+        arr[$i]="${arr[$j]}"
+        arr[$j]="$tmp"
+    done
+    echo "${arr[@]}"
+}
+
+# Anonymize review files before passing to triage.
+# Usage: _anonymize_reviews <step_prefix> <output_dir>
+# Reads review files matching ${TMP_DIR}/${step_prefix}*-*.md,
+# creates anonymized copies in output_dir with provider names replaced by
+# neutral labels. Saves the mapping to ${TMP_DIR}/reviewer-mapping-${step_prefix}.txt
+# Echoes newline-separated list of anonymized file paths (for {{REVIEW_FILES}}).
+_anonymize_reviews() {
+    local step_prefix="$1" output_dir="$2"
+    local -a originals=()
+    local f
+    for f in "${TMP_DIR}"/${step_prefix}*-*.md; do
+        [[ -f "$f" ]] && originals+=("$f")
+    done
+
+    [[ ${#originals[@]} -eq 0 ]] && return 0
+
+    # Generate shuffled labels: Reviewer A, B, C, ...
+    local -a all_labels=(A B C D E F G H)
+    local -a shuffled
+    IFS=' ' read -r -a shuffled <<< "$(_shuffle_labels "${all_labels[@]:0:${#originals[@]}}")"
+
+    # Known provider/model identifiers to strip
+    local -a provider_patterns=(
+        "Claude" "claude" "Opus" "opus" "Sonnet" "sonnet"
+        "GPT" "gpt" "Codex" "codex" "GPT-5.4" "gpt-5.4"
+        "Copilot" "copilot"
+        "OpenCode" "opencode" "MiMo" "mimo" "Kimi" "kimi"
+        "Gemini" "gemini"
+    )
+
+    local mapping_file="${TMP_DIR}/reviewer-mapping-${step_prefix}.txt"
+    : > "$mapping_file"
+    local review_files=""
+
+    local i=0
+    for f in "${originals[@]}"; do
+        local label="${shuffled[$i]}"
+        local basename="${f##*/}"
+        local anon_file="${output_dir}/anon-${label}-${step_prefix}.md"
+
+        # Record mapping: label → original file
+        echo "Reviewer ${label} = ${basename}" >> "$mapping_file"
+
+        # Copy and replace provider names with the assigned label
+        local content
+        content="$(<"$f")"
+        local pat
+        for pat in "${provider_patterns[@]}"; do
+            content="${content//$pat/Reviewer ${label}}"
+        done
+        echo "$content" > "$anon_file"
+
+        review_files="${review_files}
+- ${anon_file}"
+        i=$((i + 1))
+    done
+
+    echo "$review_files"
+}
+
+# ============================================================
+# Review Output Extraction — strip noise before triage
+# ============================================================
+
+# Extract the structured review report from a step log file using markers.
+# Falls back to the full log if markers are not found.
+# Usage: _extract_review_output <log_file> <output_file>
+_extract_review_output() {
+    local log_file="$1" output_file="$2"
+    sed -n '/<!-- REVIEW_REPORT_START -->/,/<!-- REVIEW_REPORT_END -->/p' \
+        "$log_file" | sed '1d;$d' > "$output_file"
+    # Fall back to full log if markers not found or empty extraction
+    [[ -s "$output_file" ]] || cp "$log_file" "$output_file"
+}
+
+# ============================================================
+# Antipatterns Learning Loop — learn from triage across stories
+# ============================================================
+
+# Antipatterns file path — lives at ARTIFACT_DIR level (persists across stories within an epic).
+# ARTIFACT_DIR is the parent of STORY_ARTIFACTS (e.g., _bmad-output/implementation-artifacts/auto-bmad/).
+_antipatterns_file() {
+    local artifact_base="${STORY_ARTIFACTS%/*}"
+    echo "${artifact_base}/antipatterns.md"
+}
+
+# Extract verified findings from a triage report and append to antipatterns file.
+# Looks for findings classified as patch, bad_spec, or defer in the decision table.
+# Usage: _extract_antipatterns <triage_report> <phase_label>
+_extract_antipatterns() {
+    local triage_report="$1" phase_label="$2"
+    [[ -f "$triage_report" ]] || return 0
+
+    local ap_file
+    ap_file="$(_antipatterns_file)"
+
+    # Extract rows from the decision summary table that are patch, bad_spec, or defer
+    local line
+    while IFS= read -r line; do
+        # Match table rows: | # | Finding | Category | ...
+        # Category is in field 4 (0-indexed field 3 after split on |)
+        local category=""
+        category=$(echo "$line" | awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4); print $4}')
+        case "$category" in
+            patch|bad_spec|defer|intent_gap)
+                local finding=""
+                finding=$(echo "$line" | awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3); print $3}')
+                [[ -z "$finding" ]] && continue
+                # Deduplicate: skip if this finding title already exists
+                if [[ -f "$ap_file" ]] && grep -qF "$finding" "$ap_file" 2>/dev/null; then
+                    continue
+                fi
+                echo "- **[${category}]** (${STORY_ID}, ${phase_label}): ${finding}" >> "$ap_file"
+                ;;
+        esac
+    done < <(grep '^|' "$triage_report" | grep -v '^|[[:space:]]*#\|^|[[:space:]]*-' || true)
+}
+
+# Build the antipatterns injection text for prompt placeholders.
+# Returns the header + accumulated antipatterns, or empty string if none exist.
+_build_antipatterns_injection() {
+    local ap_file
+    ap_file="$(_antipatterns_file)"
+    if [[ -f "$ap_file" && -s "$ap_file" ]]; then
+        local header_file="${INSTALL_DIR}/prompts/fragments/antipatterns-header.md"
+        if [[ -f "$header_file" ]]; then
+            printf '\n\n%s%s\n' "$(<"$header_file")" "$(<"$ap_file")"
+        else
+            printf '\n\n## Known Antipatterns\n\n%s\n' "$(<"$ap_file")"
+        fi
+    fi
+}
+
+# ============================================================
+# Git Intelligence — pre-capture git state for prompt embedding
+# ============================================================
+
+# Capture relevant git context for embedding in prompts.
+# Usage: _capture_git_context [mode]
+#   mode: "review" — full diff for code reviewers
+#         "impl"   — summary for implementation steps
+#         "doc"    — commit log for documentation
+_capture_git_context() {
+    local mode="${1:-impl}"
+    local context=""
+
+    context+="## Git Context (auto-captured by pipeline)
+"
+    case "$mode" in
+        review)
+            context+="
+### Changes Since Baseline (${COMMIT_BASELINE}..HEAD)
+\`\`\`
+$(git -C "$PROJECT_ROOT" diff --stat "$COMMIT_BASELINE" HEAD 2>/dev/null || echo "(no baseline)")
+\`\`\`
+
+### Full Diff
+\`\`\`diff
+$(git -C "$PROJECT_ROOT" diff "$COMMIT_BASELINE" HEAD 2>/dev/null | head -2000 || echo "(no diff)")
+\`\`\`
+"
+            ;;
+        impl)
+            context+="
+### Recent Commits
+\`\`\`
+$(git -C "$PROJECT_ROOT" log --oneline -5 2>/dev/null || echo "(no commits)")
+\`\`\`
+
+### Working Tree Status
+\`\`\`
+$(git -C "$PROJECT_ROOT" status --short 2>/dev/null || echo "(clean)")
+\`\`\`
+"
+            ;;
+        doc)
+            context+="
+### Story Commit History (${COMMIT_BASELINE}..HEAD)
+\`\`\`
+$(git -C "$PROJECT_ROOT" log --oneline "$COMMIT_BASELINE"..HEAD 2>/dev/null || echo "(no commits)")
+\`\`\`
+
+### Files Changed
+\`\`\`
+$(git -C "$PROJECT_ROOT" diff --stat "$COMMIT_BASELINE" HEAD 2>/dev/null || echo "(no changes)")
+\`\`\`
+"
+            ;;
+    esac
+
+    printf '%s' "$context"
+}
+
+# ============================================================
 # Step Functions (prompts externalized to prompts/*.md)
 # ============================================================
 
@@ -66,21 +277,42 @@ IMPORTANT — Carry-forward from previous story: Before creating this story, rea
 Do NOT blindly copy all items — only incorporate what is relevant to this story's scope."
     fi
 
+    local antipatterns
+    antipatterns="$(_build_antipatterns_injection)"
+
     run_ai "1.1" "$(load_prompt "1.1-create-story.md" \
         STORY_ID "$STORY_ID" \
-        PREV_STORY_CARRY_FORWARD "$carry_forward")"
+        PREV_STORY_CARRY_FORWARD "$carry_forward" \
+        ANTIPATTERNS "$antipatterns")"
     detect_story_file_path
     if [[ -n "$STORY_FILE_PATH" ]]; then log_ok "Story file: ${STORY_FILE_PATH}"
     else log_warn "Could not detect story file path — will retry before finalization"; fi
 }
 
 step_1_3_spec_triage() {
-    local review_files=""
-    for f in "${TMP_DIR}"/1.2*-*.md; do [[ -f "$f" ]] && review_files="${review_files}
-- ${f}"; done
+    # Extract structured review outputs from step logs (strips noise)
+    local f
+    for f in "${TMP_DIR}"/1.2*-*.md; do
+        [[ -f "$f" ]] && _extract_review_output "$f" "${f%.md}-extracted.md"
+    done
+    # Rename extracted files back so anonymization picks them up
+    for f in "${TMP_DIR}"/1.2*-extracted.md; do
+        [[ -f "$f" ]] && mv "$f" "${f%-extracted.md}.md"
+    done
+
+    # Anonymize reviewer identities before triage
+    local anon_dir="${TMP_DIR}/anon-1.2"
+    mkdir -p "$anon_dir"
+    local review_files
+    review_files="$(_anonymize_reviews "1.2" "$anon_dir")"
+
+    local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
     run_ai "1.3" "$(load_prompt "1.3-spec-triage.md" \
         REVIEW_FILES "$review_files" \
-        TRIAGE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md")"
+        TRIAGE_REPORT "$triage_report")"
+
+    # Extract verified findings into the epic-level antipatterns file
+    _extract_antipatterns "$triage_report" "Phase 1 — Spec Triage"
 }
 
 step_1_4_resolve_spec_findings() {
@@ -91,7 +323,16 @@ step_1_4_resolve_spec_findings() {
 
 # --- Phase 2: TDD + Implementation ---
 step_2_1_tdd_red() { run_ai "2.1" "$(load_prompt "2.1-tdd-red.md" STORY_ID "$STORY_ID")"; }
-step_2_2_implementation() { run_ai "2.2" "$(load_prompt "2.2-implementation.md" STORY_ID "$STORY_ID")"; }
+step_2_2_implementation() {
+    local antipatterns
+    antipatterns="$(_build_antipatterns_injection)"
+    local git_context
+    git_context="$(_capture_git_context impl)"
+    run_ai "2.2" "$(load_prompt "2.2-implementation.md" \
+        STORY_ID "$STORY_ID" \
+        ANTIPATTERNS "$antipatterns" \
+        GIT_CONTEXT "$git_context")"
+}
 
 # --- Phase 3: Code Review ---
 step_3_2_acceptance_auditor() {
@@ -103,19 +344,41 @@ step_3_2_acceptance_auditor() {
 }
 
 step_3_3_triage() {
-    local review_files=""
-    for f in "${TMP_DIR}"/3.1*-*.md; do [[ -f "$f" ]] && review_files="${review_files}
-- ${f}"; done
+    # Extract structured review outputs from step logs (strips noise)
+    local f
+    for f in "${TMP_DIR}"/3.1*-*.md; do
+        [[ -f "$f" ]] && _extract_review_output "$f" "${f%.md}-extracted.md"
+    done
+    for f in "${TMP_DIR}"/3.1*-extracted.md; do
+        [[ -f "$f" ]] && mv "$f" "${f%-extracted.md}.md"
+    done
+
+    # Anonymize reviewer identities before triage
+    local anon_dir="${TMP_DIR}/anon-3.1"
+    mkdir -p "$anon_dir"
+    local review_files
+    review_files="$(_anonymize_reviews "3.1" "$anon_dir")"
+
+    local triage_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
     run_ai "3.3" "$(load_prompt "3.3-code-triage.md" \
         REVIEW_FILES "$review_files" \
         ACCEPTANCE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md" \
-        TRIAGE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md")"
+        TRIAGE_REPORT "$triage_report")"
+
+    # Extract verified findings into the epic-level antipatterns file
+    _extract_antipatterns "$triage_report" "Phase 3 — Code Triage"
 }
 
 step_3_4_dev_fix() {
+    local antipatterns
+    antipatterns="$(_build_antipatterns_injection)"
+    local git_context
+    git_context="$(_capture_git_context impl)"
     run_ai "3.4" "$(load_prompt "3.4-dev-fix.md" \
         TRIAGE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md" \
-        ACCEPTANCE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md")"
+        ACCEPTANCE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md" \
+        ANTIPATTERNS "$antipatterns" \
+        GIT_CONTEXT "$git_context")"
 }
 
 step_3_5_resolve_code_spec_findings() {
@@ -239,10 +502,27 @@ generate_pipeline_report() {
             echo ""
         fi
 
+        # Reviewer anonymization mappings (for deanonymization in tech-writer step)
+        local mapping_file
+        for mapping_file in "${TMP_DIR}"/reviewer-mapping-*.txt; do
+            if [[ -f "$mapping_file" ]]; then
+                local prefix="${mapping_file##*reviewer-mapping-}"
+                prefix="${prefix%.txt}"
+                echo "## Reviewer Anonymization Mapping (${prefix})"
+                echo ""
+                echo "The following mapping was used during triage. Reviewer labels in triage reports correspond to these original review sessions:"
+                echo ""
+                while IFS= read -r map_line; do
+                    echo "- ${map_line}"
+                done < "$mapping_file"
+                echo ""
+            fi
+        done
+
         # Placeholder for reviewer assessment (populated by tech-writer step 6.1)
         echo "## Reviewer Assessment"
         echo ""
-        echo "<!-- Populated by the tech-writer step. Read both triage reports and the acceptance audit to fill in: -->"
+        echo "<!-- Populated by the tech-writer step. Read both triage reports and the acceptance audit to fill in. Use the anonymization mappings above to deanonymize reviewer labels back to actual provider names. -->"
         echo ""
         echo "| Model | Phase | Findings | Accepted | Signal | Notes |"
         echo "|-------|-------|----------|----------|--------|-------|"
@@ -275,6 +555,9 @@ step_6_1_document() {
    ALSO include unresolved deferred items carried forward from the previous story. Read the previous story file at ${PREV_STORY_FILE} and check its \"Deferred to Future Stories\" section. Any items listed there that were NOT addressed by THIS story should be carried forward into this story's \"Deferred to Future Stories\" section. This creates a rolling accumulator — each story's deferred section is the complete list of outstanding deferred items for the epic so far."
     fi
 
+    local git_context
+    git_context="$(_capture_git_context doc)"
+
     run_ai "6.1" "$(load_prompt "6.1-document.md" \
         STORY_ID "$STORY_ID" \
         STORY_REF "${STORY_FILE_PATH:-the story file for ${STORY_ID}}" \
@@ -282,7 +565,8 @@ step_6_1_document() {
         STORY_SHORT_ID "$STORY_SHORT_ID" \
         PIPELINE_REPORT "$PIPELINE_REPORT" \
         COMMIT_BASELINE "$COMMIT_BASELINE" \
-        PREV_STORY_DEFERRED "$prev_deferred_instruction")"
+        PREV_STORY_DEFERRED "$prev_deferred_instruction" \
+        GIT_CONTEXT "$git_context")"
 }
 
 step_6_2_close() {

@@ -156,10 +156,16 @@ run_review_step() {
         edge-cases)      template="3.1-edge-cases.md" ;;
         code-adversarial) template="3.1-code-adversarial.md" ;;
     esac
+    # Code review steps get embedded git context; spec validation does not
+    local git_context=""
+    if [[ "$file_prefix" != "validate" ]] && type _capture_git_context &>/dev/null; then
+        git_context="$(_capture_git_context review)"
+    fi
     run_ai "$step_id" "$(load_prompt "$template" \
         STORY_ID "$STORY_ID" \
         COMMIT_BASELINE "$COMMIT_BASELINE" \
-        OUTPUT_FILE "$f")"
+        OUTPUT_FILE "$f" \
+        GIT_CONTEXT "$git_context")"
 }
 
 # --- Model Availability Checks ---

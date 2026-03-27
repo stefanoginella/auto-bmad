@@ -57,6 +57,11 @@ cfg_pip_spinner_quiet=2
 cfg_pip_branch_pattern='story/${STORY_ID}'
 cfg_pip_min_git_version="2.25"
 cfg_pip_default_review_mode=full
+cfg_pip_parallel_stagger=2
+cfg_pip_min_reviewers=2
+cfg_pip_max_step_duration=600
+cfg_pip_max_output_rate=200000
+cfg_pip_file_churn_threshold=10
 
 _PIPELINE_CONF_LOADED=false
 
@@ -82,6 +87,11 @@ load_pipeline_conf() {
     cfg_pip_branch_pattern="${AUTO_BMAD_GIT_BRANCH_PATTERN:-$cfg_pip_branch_pattern}"
     cfg_pip_min_git_version="${AUTO_BMAD_GIT_MIN_GIT_VERSION:-$cfg_pip_min_git_version}"
     cfg_pip_default_review_mode="${AUTO_BMAD_GIT_DEFAULT_REVIEW_MODE:-$cfg_pip_default_review_mode}"
+    cfg_pip_parallel_stagger="${AUTO_BMAD_MONITOR_PARALLEL_STAGGER:-$cfg_pip_parallel_stagger}"
+    cfg_pip_min_reviewers="${AUTO_BMAD_THRESHOLDS_MIN_REVIEWERS:-$cfg_pip_min_reviewers}"
+    cfg_pip_max_step_duration="${AUTO_BMAD_GUARD_MAX_STEP_DURATION:-$cfg_pip_max_step_duration}"
+    cfg_pip_max_output_rate="${AUTO_BMAD_GUARD_MAX_OUTPUT_RATE:-$cfg_pip_max_output_rate}"
+    cfg_pip_file_churn_threshold="${AUTO_BMAD_GUARD_FILE_CHURN_THRESHOLD:-$cfg_pip_file_churn_threshold}"
 
     _PIPELINE_CONF_LOADED=true
 }
@@ -120,6 +130,11 @@ _parse_pipeline_file() {
             thresholds_min_log_bytes)    cfg_pip_min_log_bytes="$val" ;;
             cache_preflight_max_age)     cfg_pip_preflight_max_age="$val" ;;
             monitor_spinner_quiet)       cfg_pip_spinner_quiet="$val" ;;
+            monitor_parallel_stagger)    cfg_pip_parallel_stagger="$val" ;;
+            thresholds_min_reviewers)    cfg_pip_min_reviewers="$val" ;;
+            guard_max_step_duration)     cfg_pip_max_step_duration="$val" ;;
+            guard_max_output_rate)       cfg_pip_max_output_rate="$val" ;;
+            guard_file_churn_threshold)  cfg_pip_file_churn_threshold="$val" ;;
             git_branch_pattern)          cfg_pip_branch_pattern="$val" ;;
             git_min_git_version)         cfg_pip_min_git_version="$val" ;;
             git_default_review_mode)     cfg_pip_default_review_mode="$val" ;;
