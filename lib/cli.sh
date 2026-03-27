@@ -76,15 +76,13 @@ run_ai() {
             claude)
                 local cmd=(claude -p "$prompt" --model "$cfg_model" --dangerously-skip-permissions --output-format json)
                 [[ -n "$cfg_effort" ]] && cmd+=(--effort "$cfg_effort")
-                "${cmd[@]}" > "$raw_json" 2>&1 || true
-                exit_code=${PIPESTATUS[0]:-$?}
+                "${cmd[@]}" > "$raw_json" 2>&1 && exit_code=0 || exit_code=$?
                 ;;
             codex)
                 local cprompt; cprompt="$(codex_prompt "$prompt")"
                 local cmd=(codex exec "$cprompt" -m "$cfg_model" --full-auto --json)
                 [[ -n "$cfg_effort" ]] && cmd+=(-c "model_reasoning_effort=${cfg_effort}")
-                "${cmd[@]}" > "$raw_json" 2>&1 || true
-                exit_code=${PIPESTATUS[0]:-$?}
+                "${cmd[@]}" > "$raw_json" 2>&1 && exit_code=0 || exit_code=$?
                 ;;
             copilot)
                 local cmd=(copilot -p "$prompt" --model "$cfg_model" --yolo --output-format json)
@@ -93,14 +91,12 @@ run_ai() {
                     [[ "$eff" == "max" ]] && eff="xhigh"
                     cmd+=(--effort "$eff")
                 fi
-                "${cmd[@]}" > "$raw_json" 2>&1 || true
-                exit_code=${PIPESTATUS[0]:-$?}
+                "${cmd[@]}" > "$raw_json" 2>&1 && exit_code=0 || exit_code=$?
                 ;;
             opencode)
                 local cmd=(opencode run "$prompt" -m "$cfg_model" --format json)
                 [[ -n "$cfg_effort" ]] && cmd+=(--variant "$cfg_effort")
-                "${cmd[@]}" > "$raw_json" 2>&1 || true
-                exit_code=${PIPESTATUS[0]:-$?}
+                "${cmd[@]}" > "$raw_json" 2>&1 && exit_code=0 || exit_code=$?
                 ;;
             *)
                 log_error "Unknown CLI: ${cfg_cli}"
@@ -116,15 +112,13 @@ run_ai() {
             claude)
                 local cmd=(claude -p "$prompt" --model "$cfg_model" --dangerously-skip-permissions)
                 [[ -n "$cfg_effort" ]] && cmd+=(--effort "$cfg_effort")
-                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-                exit_code=${PIPESTATUS[0]}
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null && exit_code=0 || exit_code=$?
                 ;;
             codex)
                 local cprompt; cprompt="$(codex_prompt "$prompt")"
                 local cmd=(codex exec "$cprompt" -m "$cfg_model" --full-auto)
                 [[ -n "$cfg_effort" ]] && cmd+=(-c "model_reasoning_effort=${cfg_effort}")
-                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-                exit_code=${PIPESTATUS[0]}
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null && exit_code=0 || exit_code=$?
                 ;;
             copilot)
                 local cmd=(copilot -p "$prompt" --model "$cfg_model" --yolo)
@@ -133,14 +127,12 @@ run_ai() {
                     [[ "$eff" == "max" ]] && eff="xhigh"
                     cmd+=(--effort "$eff")
                 fi
-                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-                exit_code=${PIPESTATUS[0]}
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null && exit_code=0 || exit_code=$?
                 ;;
             opencode)
                 local cmd=(opencode run "$prompt" -m "$cfg_model")
                 [[ -n "$cfg_effort" ]] && cmd+=(--variant "$cfg_effort")
-                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null || true
-                exit_code=${PIPESTATUS[0]}
+                "${cmd[@]}" 2>&1 | tee -a "$CURRENT_STEP_LOG" > /dev/null && exit_code=0 || exit_code=$?
                 ;;
             *)
                 log_error "Unknown CLI: ${cfg_cli}"

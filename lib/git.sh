@@ -212,8 +212,10 @@ _resolve_main_ref() {
 _resolve_branch_name() {
     local _sid="$1"
     local _tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
-    local STORY_ID="$_sid"
-    eval "echo \"${_tmpl}\""
+    # Safe substitution — no eval, no arbitrary code execution
+    # Handle both ${STORY_ID} and $STORY_ID template forms
+    local _result="${_tmpl//\$\{STORY_ID\}/$_sid}"
+    echo "${_result//\$STORY_ID/$_sid}"
 }
 
 # Validates git state before check_git_branch() selects/creates branches.

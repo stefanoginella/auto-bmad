@@ -74,7 +74,7 @@ _confirm_cfa() {
             fi
             echo ""
             echo -e "    ${DIM}Running: ${fix_display}${NC}"
-            if eval "$fix_cmd"; then
+            if bash -c "$fix_cmd"; then
                 log_ok "Fixed"
                 return 0
             else
@@ -115,7 +115,7 @@ _confirm_fa() {
             fi
             echo ""
             echo -e "    ${DIM}Running: ${fix_display}${NC}"
-            if eval "$fix_cmd"; then
+            if bash -c "$fix_cmd"; then
                 log_ok "Fixed"
                 return 0
             else
