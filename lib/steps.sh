@@ -143,7 +143,7 @@ step_5_5_epic_exit_report() {
         EPIC_STORY_PATHS "$epic_story_paths" \
         EPIC_EXIT_REPORT "$epic_exit_report")"
 }
-step_5_6_project_context()  { run_ai "5.6" "$(load_prompt "5.5-project-context.md")"; }
+step_5_6_project_context()  { run_ai "5.6" "$(load_prompt "5.6-project-context.md")"; }
 
 # --- Generate Pipeline Report (structured markdown) ---
 

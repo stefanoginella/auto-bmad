@@ -327,8 +327,11 @@ run_parallel_reviews() {
 
     # --- Live status board: poll PIDs and redraw in-place ---
 
-    # Ensure cursor is restored if interrupted mid-draw (SIGINT/SIGTERM)
-    trap '_restore_cursor' INT TERM
+    # Save existing INT trap so we can restore it after the parallel section.
+    # Wraps cursor restore around the original handler to avoid losing abort behavior.
+    local _saved_int_trap
+    _saved_int_trap="$(trap -p INT)"
+    trap '_restore_cursor; _handle_abort' INT TERM
 
     # Print placeholder lines for the board
     _hide_cursor
@@ -408,7 +411,13 @@ run_parallel_reviews() {
     done
 
     _restore_cursor
-    trap - INT TERM     # clean up cursor-restore trap
+    # Restore original INT handler (typically _handle_abort from auto-bmad-story)
+    if [[ -n "$_saved_int_trap" ]]; then
+        eval "$_saved_int_trap"
+    else
+        trap - INT
+    fi
+    trap - TERM
     LAST_COMPLETED_STEP="$last_sid"
     return 0
 }

@@ -26,14 +26,17 @@ ensure_on_main() {
         return 0
     fi
 
-    # If on a story branch, try to switch to main
+    # If on a story branch, try to switch to main/master
     if [[ "$current_branch" == story/* ]]; then
-        log_warn "On branch ${current_branch} — switching to main"
-        git -C "$PROJECT_ROOT" checkout main 2>/dev/null || {
-            log_error "Failed to switch to main. Resolve manually."
+        local main_branch="main"
+        git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/main" 2>/dev/null \
+            || main_branch="master"
+        log_warn "On branch ${current_branch} — switching to ${main_branch}"
+        git -C "$PROJECT_ROOT" checkout "$main_branch" 2>/dev/null || {
+            log_error "Failed to switch to ${main_branch}. Resolve manually."
             exit 1
         }
-        git -C "$PROJECT_ROOT" pull origin main --ff-only 2>/dev/null || true
+        git -C "$PROJECT_ROOT" pull origin "$main_branch" --ff-only 2>/dev/null || true
         return 0
     fi
 

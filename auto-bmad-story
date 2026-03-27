@@ -87,7 +87,7 @@ DRY_RUN=false
 FROM_STEP=""
 SKIP_CACHE=false
 SKIP_TEA=false
-REVIEWS_MODE="$cfg_pip_default_review_mode"
+REVIEWS_MODE=""   # set after load_pipeline_conf, overridden by --reviews
 SKIP_GIT=false
 NO_TRACES=false
 ACK_PREVIOUS=false
@@ -122,6 +122,8 @@ get_step_final_profile() { kv_get step "$1" final_profile ""; }
 PREFLIGHT_CACHE="${PROJECT_ROOT}/.tmp/auto-bmad/preflight-cache"
 load_pipeline_conf
 PREFLIGHT_CACHE_MAX_AGE="$cfg_pip_preflight_max_age"
+# Apply config default only if not overridden by --reviews CLI flag
+[[ -z "$REVIEWS_MODE" ]] && REVIEWS_MODE="$cfg_pip_default_review_mode"
 
 _preflight_cache_valid() {
     [[ -f "$PREFLIGHT_CACHE" ]] || return 1
@@ -557,6 +559,7 @@ parse_args() {
         case "$1" in
             --dry-run)        DRY_RUN=true; shift ;;
             --from-step)
+                [[ $# -lt 2 ]] && { log_error "--from-step requires an argument"; exit 1; }
                 FROM_STEP="$2"
                 local _fs_valid=false
                 for _fs_s in $STEP_ORDER; do
@@ -570,6 +573,7 @@ parse_args() {
                 shift 2 ;;
             --skip-cache)     SKIP_CACHE=true; shift ;;
             --story)
+                [[ $# -lt 2 ]] && { log_error "--story requires an argument"; exit 1; }
                 STORY_ID="$2"
                 if [[ ! "$STORY_ID" =~ ^[0-9]+-[0-9]+ ]]; then
                     log_error "Invalid story ID format: ${STORY_ID} (expected: N-N or N-N-slug)"
@@ -578,6 +582,7 @@ parse_args() {
                 shift 2 ;;
             --skip-tea)         SKIP_TEA=true; shift ;;
             --reviews)
+                [[ $# -lt 2 ]] && { log_error "--reviews requires an argument"; exit 1; }
                 REVIEWS_MODE="$2"
                 if [[ "$REVIEWS_MODE" != "full" && "$REVIEWS_MODE" != "fast" && "$REVIEWS_MODE" != "none" ]]; then
                     log_error "Invalid --reviews mode: ${REVIEWS_MODE} (expected: full, fast, none)"

@@ -143,9 +143,8 @@ _cmd_status() {
     if [[ -n "$story_id" ]]; then
         load_pipeline_conf
         local branch_tmpl="${cfg_pip_branch_pattern:-story/\${STORY_ID}}"
-        local expected_branch
-        STORY_ID="$story_id"
-        eval "expected_branch=\"${branch_tmpl}\""
+        local expected_branch="${branch_tmpl//\$\{STORY_ID\}/$story_id}"
+        expected_branch="${expected_branch//\$STORY_ID/$story_id}"
 
         if [[ "$current_branch" == "$expected_branch" ]]; then
             on_story_branch=true

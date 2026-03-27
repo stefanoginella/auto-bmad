@@ -128,15 +128,19 @@ is_epic_end() {
         if [[ "$found_current" == "true" ]]; then
             if [[ "$key" == "epic-${EPIC_ID}-retrospective" ]]; then
                 return 0
-            else
+            # Another story in the same epic follows — not the end
+            elif [[ "$key" =~ ^${EPIC_ID}-[0-9]+- ]]; then
                 return 1
             fi
+            # Skip non-story lines (comments, metadata) and keep looking
+            continue
         fi
         if [[ "$key" == "$STORY_ID" ]]; then
             found_current=true
         fi
     done < "$SPRINT_STATUS"
-    return 1
+    # If we found the current story but no more stories followed → epic end
+    [[ "$found_current" == "true" ]]
 }
 
 detect_story_file_path() {
