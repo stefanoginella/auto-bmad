@@ -86,47 +86,6 @@ _confirm_cfa() {
     esac
 }
 
-# Hard gate prompt: [f]ix / [a]bort (no continue option)
-# Usage: _confirm_fa "fix command to display" "fix command to run"
-_confirm_fa() {
-    local fix_display="${1:-}" fix_cmd="${2:-$1}"
-    echo ""
-    if [[ -n "$fix_display" ]]; then
-        echo -e "    ${DIM}→ ${fix_display}${NC}"
-        echo -e "    ${BOLD}[f]${NC}ix  ${BOLD}[a]${NC}bort"
-    else
-        echo -e "    ${BOLD}[a]${NC}bort"
-    fi
-    echo ""
-    if [[ "$INTERACTIVE" != "true" ]]; then
-        echo -e "    ${DIM}(non-interactive — aborting)${NC}"
-        exit 1
-    fi
-    local choice
-    _restore_cursor
-    echo -en "    > "
-    read -r choice
-    _hide_cursor
-    case "$choice" in
-        [fF])
-            if [[ -z "$fix_cmd" ]]; then
-                log_warn "No auto-fix available"
-                exit 1
-            fi
-            echo ""
-            echo -e "    ${DIM}Running: ${fix_display}${NC}"
-            if bash -c "$fix_cmd"; then
-                log_ok "Fixed"
-                return 0
-            else
-                log_error "Fix failed"
-                exit 1
-            fi
-            ;;
-        *) exit 1 ;;
-    esac
-}
-
 # --- Colors ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'

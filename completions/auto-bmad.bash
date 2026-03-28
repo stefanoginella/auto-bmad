@@ -10,7 +10,7 @@ _auto_bmad() {
 
     # Subcommand-specific flags
     local story_flags="--story --from-step --dry-run --skip-cache --skip-tea --reviews --skip-git --no-traces --debug --help"
-    local epic_flags="--epic --from-story --to-story --dry-run --no-merge --skip-cache --skip-tea --reviews --skip-git --no-traces --help"
+    local epic_flags="--epic --from-story --to-story --dry-run --no-merge --skip-cache --skip-tea --reviews --skip-git --no-traces --debug --help"
     local reviews_values="full fast none"
 
     # Complete subcommand as first argument

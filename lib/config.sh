@@ -9,7 +9,6 @@
 #   check_bmad_version       — validate installed BMad/TEA versions
 #   BMAD_BUILD_VERSION       — expected BMad core version
 #   BMAD_BUILD_TEA_VERSION   — expected TEA module version
-#   TOOL_NAMES               — array of AI CLI tool names
 #   step_config <step_id>    — echo "cli|model|effort" for a step
 #   parse_step_config <id>   — set cfg_cli, cfg_model, cfg_effort globals
 #   load_pipeline_conf       — populate cfg_pip_* from conf/pipeline.conf
@@ -21,9 +20,6 @@ _CONFIG_SH_LOADED=1
 # --- BMad Version Constants ---
 BMAD_BUILD_VERSION="6.2.2"
 BMAD_BUILD_TEA_VERSION="1.7.2"
-
-# --- CLI Tools ---
-TOOL_NAMES=(claude codex copilot opencode)
 
 # --- jq availability (enables JSON usage tracking) ---
 HAS_JQ=false
@@ -37,12 +33,19 @@ fi
 _USER_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/auto-bmad"
 
 # Echo cascade of existing conf file paths for a given filename.
+# For each location, also checks for a .local variant (e.g. pipeline.local.conf)
+# which is gitignored and intended for per-machine overrides.
 _conf_files() {
     local name="$1" f
-    f="${INSTALL_DIR}/conf/${name}";    [[ -f "$f" ]] && echo "$f"
-    f="${_USER_CONF_DIR}/${name}";      [[ -f "$f" ]] && echo "$f"
+    local base="${name%.*}" ext="${name##*.}"
+    local local_name="${base}.local.${ext}"
+    f="${INSTALL_DIR}/conf/${name}";         [[ -f "$f" ]] && echo "$f"
+    f="${INSTALL_DIR}/conf/${local_name}";   [[ -f "$f" ]] && echo "$f"
+    f="${_USER_CONF_DIR}/${name}";           [[ -f "$f" ]] && echo "$f"
+    f="${_USER_CONF_DIR}/${local_name}";     [[ -f "$f" ]] && echo "$f"
     if [[ "$PROJECT_ROOT" != "$INSTALL_DIR" ]]; then
-        f="${PROJECT_ROOT}/conf/${name}"; [[ -f "$f" ]] && echo "$f"
+        f="${PROJECT_ROOT}/conf/${name}";        [[ -f "$f" ]] && echo "$f"
+        f="${PROJECT_ROOT}/conf/${local_name}";  [[ -f "$f" ]] && echo "$f"
     fi
 }
 

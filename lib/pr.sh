@@ -2,7 +2,7 @@
 # lib/pr.sh — PR lifecycle and git workflow for epic pipelines
 # Sourced by auto-bmad-epic
 #
-# Requires: lib/core.sh sourced, PROJECT_ROOT set
+# Requires: lib/core.sh, lib/git.sh sourced, PROJECT_ROOT set
 # Reads globals: IMPL_ARTIFACTS EPIC_ID PR_SAFETY_TIMEOUT PR_POLL_INTERVAL PR_EMPTY_CHECKS_GRACE_POLLS
 #   (PR_* values populated from conf/pipeline.conf by auto-bmad-epic)
 #

@@ -2,7 +2,7 @@
 # lib/cli.sh — AI CLI abstraction layer and model availability checks
 # Sourced by auto-bmad-story
 #
-# Requires: lib/core.sh, lib/config.sh sourced (parse_step_config, TOOL_NAMES)
+# Requires: lib/core.sh, lib/config.sh sourced (parse_step_config)
 # Reads globals: CURRENT_STEP_LOG TMP_DIR STORY_ID COMMIT_BASELINE
 #
 # Exports:

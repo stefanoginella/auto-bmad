@@ -178,7 +178,6 @@ _resolve_story_file_path() {
 # Reads EPIC_ID and SPRINT_STATUS globals.
 collect_epic_story_paths() {
     local paths=""
-    local sid
     while IFS=: read -r key _status; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
         [[ "$key" =~ ^${EPIC_ID}-[0-9]+- ]] || continue

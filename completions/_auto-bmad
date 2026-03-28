@@ -57,6 +57,7 @@ _auto-bmad() {
                         '--reviews[Review mode]:mode:(full fast none)' \
                         '--skip-git[Skip git write operations]' \
                         '--no-traces[Remove pipeline artifacts after finalization]' \
+                        '--debug[Keep temp files for debugging]' \
                         '--help[Show help]'
                     ;;
             esac
