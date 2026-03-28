@@ -187,8 +187,20 @@ preflight_checks() {
         errors=$((errors + 1))
     fi
 
+    # Check only CLIs referenced by loaded profiles (not all 4)
+    _load_profiles
+    local used_clis=""
+    local i
+    for ((i=0; i<${#_PROFILE_CLIS[@]}; i++)); do
+        local cli="${_PROFILE_CLIS[$i]}"
+        case " $used_clis " in
+            *" $cli "*) ;;
+            *) used_clis="${used_clis} ${cli}" ;;
+        esac
+    done
+
     local tool
-    for tool in "${TOOL_NAMES[@]}"; do
+    for tool in $used_clis; do
         if command -v "$tool" &>/dev/null; then
             log_ok "${tool} found"
         else
