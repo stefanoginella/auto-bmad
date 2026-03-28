@@ -285,7 +285,7 @@ Auto-detects the next story from `sprint-status.yaml`:
 
 ### Git Workflow
 
-The story script creates a `story/{STORY_ID}` branch from `main` at the start. During execution, each phase commits a checkpoint (`wip(1-1): phase N - name`) so work is recoverable if the pipeline fails mid-run. At the end, all checkpoint commits are squashed into a single commit using the conventional-commit message from the story file's Auto-bmad Completion section.
+The story script creates a `story/{STORY_ID}` branch from `main` at the start. During execution, checkpoints are committed at phase boundaries and after key mid-phase steps (e.g., after story creation in 1.1, after epic TEA reviews in 5.3) so work is recoverable if the pipeline fails mid-run. At the end, all checkpoint commits are squashed into a single commit using the conventional-commit message from the story file's Auto-bmad Completion section.
 
 ### Artifacts
 
@@ -314,7 +314,7 @@ This is useful when the review reports have already been indexed into the story 
 
 ### Resume on Failure
 
-Each phase is checkpointed as a git commit, so if the pipeline fails you won't lose prior phases. The script exits with a resume command:
+Each phase — and key mid-phase steps — is checkpointed as a git commit, so if the pipeline fails you won't lose prior work. The script exits with a resume command:
 
 ```
 Resume: auto-bmad story --from-step 3.1 --story 1-2-database-schemas

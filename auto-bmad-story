@@ -256,6 +256,7 @@ run_pipeline() {
     log_phase "Phase 1 — Story Preparation"
 
     run_step "1.1" "Create Story" step_1_1_create_story
+    git_checkpoint "step 1.1 — story created"
 
     # Step 1.2: Spec Validation Reviews (3 AIs in parallel)
     run_parallel_reviews \
@@ -332,6 +333,7 @@ run_pipeline() {
                 "5.1|Epic Trace|step_5_1_epic_trace" \
                 "5.2|Epic NFR Assessment|step_5_2_epic_nfr" \
                 "5.3|Epic Test Review|step_5_3_epic_test_review"
+            git_checkpoint "step 5.3 — epic TEA reviews"
         fi
 
         run_step "5.4" "Retrospective" step_5_4_retrospective
