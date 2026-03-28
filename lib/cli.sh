@@ -177,12 +177,41 @@ run_review_step() {
 
 _check_claude_model() {
     local model="$1"
-    local output
-    output=$(echo "." | claude -p --model "$model" --max-budget-usd 0.001 2>&1)
-    if echo "$output" | grep -q "There's an issue with the selected model"; then
-        return 1
+    local cache_dir="${PROJECT_ROOT}/.tmp/auto-bmad/model-checks"
+    local cache_file="${cache_dir}/claude_${model}"
+
+    # Check cache — return cached result if younger than TTL
+    if [[ -f "$cache_file" ]]; then
+        local now mtime age
+        now=$(date +%s)
+        if mtime=$(stat -f %m "$cache_file" 2>/dev/null); then
+            :
+        else
+            mtime=$(stat -c %Y "$cache_file" 2>/dev/null) || mtime=0
+        fi
+        age=$(( now - mtime ))
+        if (( age < ${MODEL_CHECK_MAX_AGE:-86400} )); then
+            local cached_rc=""
+            cached_rc=$(<"$cache_file") || true
+            case "$cached_rc" in
+                0|1|2) return "$cached_rc" ;;
+            esac
+        fi
     fi
-    return 0
+
+    # Live API probe (~$0.001)
+    local output
+    output=$(echo "." | claude -p --model "$model" --max-budget-usd 0.001 2>&1) || true
+    local result=0
+    if echo "$output" | grep -q "There's an issue with the selected model"; then
+        result=1
+    fi
+
+    # Cache the result
+    mkdir -p "$cache_dir"
+    echo "$result" > "$cache_file"
+
+    return "$result"
 }
 
 _check_codex_model() {

@@ -31,6 +31,7 @@ _reset_config_state() {
     cfg_pip_min_step_duration=""
     cfg_pip_min_log_bytes=""
     cfg_pip_preflight_max_age=""
+    cfg_pip_model_check_max_age=""
     cfg_pip_spinner_quiet=""
     cfg_pip_branch_pattern=""
     cfg_pip_min_git_version=""

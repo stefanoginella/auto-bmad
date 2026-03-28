@@ -54,6 +54,7 @@ cfg_pip_pr_grace_polls=10
 cfg_pip_min_step_duration=5
 cfg_pip_min_log_bytes=200
 cfg_pip_preflight_max_age=86400
+cfg_pip_model_check_max_age=86400
 cfg_pip_spinner_quiet=2
 cfg_pip_branch_pattern='story/${STORY_ID}'
 cfg_pip_min_git_version="2.25"
@@ -84,6 +85,7 @@ load_pipeline_conf() {
     cfg_pip_min_step_duration="${AUTO_BMAD_THRESHOLDS_MIN_STEP_DURATION:-$cfg_pip_min_step_duration}"
     cfg_pip_min_log_bytes="${AUTO_BMAD_THRESHOLDS_MIN_LOG_BYTES:-$cfg_pip_min_log_bytes}"
     cfg_pip_preflight_max_age="${AUTO_BMAD_CACHE_PREFLIGHT_MAX_AGE:-$cfg_pip_preflight_max_age}"
+    cfg_pip_model_check_max_age="${AUTO_BMAD_CACHE_MODEL_CHECK_MAX_AGE:-$cfg_pip_model_check_max_age}"
     cfg_pip_spinner_quiet="${AUTO_BMAD_MONITOR_SPINNER_QUIET:-$cfg_pip_spinner_quiet}"
     cfg_pip_branch_pattern="${AUTO_BMAD_GIT_BRANCH_PATTERN:-$cfg_pip_branch_pattern}"
     cfg_pip_min_git_version="${AUTO_BMAD_GIT_MIN_GIT_VERSION:-$cfg_pip_min_git_version}"
@@ -130,6 +132,7 @@ _parse_pipeline_file() {
             thresholds_min_step_duration) cfg_pip_min_step_duration="$val" ;;
             thresholds_min_log_bytes)    cfg_pip_min_log_bytes="$val" ;;
             cache_preflight_max_age)     cfg_pip_preflight_max_age="$val" ;;
+            cache_model_check_max_age)   cfg_pip_model_check_max_age="$val" ;;
             monitor_spinner_quiet)       cfg_pip_spinner_quiet="$val" ;;
             monitor_parallel_stagger)    cfg_pip_parallel_stagger="$val" ;;
             thresholds_min_reviewers)    cfg_pip_min_reviewers="$val" ;;

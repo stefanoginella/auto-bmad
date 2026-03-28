@@ -277,6 +277,118 @@ if [[ $? -eq 0 ]]; then assert_exit_ok; else test_fail "should write raw JSON fi
 unset MOCK_JSON
 
 # ═══════════════════════════════════════════════════
+# _check_claude_model caching
+# ═══════════════════════════════════════════════════
+
+echo ""
+echo -e "${_T_BOLD}  Model check caching${_T_NC}"
+
+# Each test uses a fresh PROJECT_ROOT so cache dirs don't collide
+_MODEL_ORIG_PROJECT_ROOT="$PROJECT_ROOT"
+
+test_begin "_check_claude_model: cache hit returns cached result without CLI call"
+(
+    PROJECT_ROOT="$(make_test_tmpdir)"
+    MODEL_CHECK_MAX_AGE=86400
+    cache_dir="${PROJECT_ROOT}/.tmp/auto-bmad/model-checks"
+    mkdir -p "$cache_dir"
+    echo "0" > "${cache_dir}/claude_opus"
+    # Track mock invocations
+    export MOCK_STATE_DIR="$(make_test_tmpdir)"
+    export MOCK_FAIL_FIRST=0
+    _check_claude_model "opus"
+    rc=$?
+    # Counter file should NOT exist — mock was never called
+    if [[ -f "${MOCK_STATE_DIR}/calls" ]]; then
+        exit 1  # fail: CLI was invoked
+    fi
+    exit "$rc"
+) && assert_exit_ok || test_fail "cache hit should return 0 without invoking CLI"
+
+test_begin "_check_claude_model: cache miss invokes CLI and writes cache"
+(
+    PROJECT_ROOT="$(make_test_tmpdir)"
+    MODEL_CHECK_MAX_AGE=86400
+    export MOCK_EXIT=0 MOCK_OUTPUT_BYTES=300
+    _check_claude_model "opus"
+    rc=$?
+    cache_file="${PROJECT_ROOT}/.tmp/auto-bmad/model-checks/claude_opus"
+    if [[ -f "$cache_file" ]] && [[ "$(cat "$cache_file")" == "0" ]]; then
+        exit "$rc"
+    fi
+    exit 1
+) && assert_exit_ok || test_fail "cache miss should invoke CLI and write cache file"
+
+test_begin "_check_claude_model: expired cache re-invokes CLI"
+(
+    PROJECT_ROOT="$(make_test_tmpdir)"
+    MODEL_CHECK_MAX_AGE=1  # 1 second TTL
+    cache_dir="${PROJECT_ROOT}/.tmp/auto-bmad/model-checks"
+    mkdir -p "$cache_dir"
+    echo "0" > "${cache_dir}/claude_sonnet"
+    # Backdate the file to 10 seconds ago
+    touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null || date -d '10 seconds ago' '+%Y%m%d%H%M.%S' 2>/dev/null)" "${cache_dir}/claude_sonnet" 2>/dev/null || true
+    sleep 1  # ensure cache is expired
+    export MOCK_EXIT=0 MOCK_OUTPUT_BYTES=300
+    export MOCK_STATE_DIR="$(make_test_tmpdir)"
+    export MOCK_FAIL_FIRST=0
+    _check_claude_model "sonnet"
+    # Mock should have been called
+    if [[ -f "${MOCK_STATE_DIR}/calls" ]]; then
+        exit 0
+    fi
+    exit 1
+) && assert_exit_ok || test_fail "expired cache should re-invoke CLI"
+
+test_begin "_check_claude_model: caches model-not-available as 1"
+(
+    PROJECT_ROOT="$(make_test_tmpdir)"
+    MODEL_CHECK_MAX_AGE=86400
+    # Override the mock to output the error message
+    _mock_claude() {
+        echo "There's an issue with the selected model"
+        return 0
+    }
+    # Temporarily replace claude in PATH with a function-based approach
+    # Since _check_claude_model invokes 'claude' via subshell, create a temp script
+    mock_bin="$(make_test_tmpdir)/bin"
+    mkdir -p "$mock_bin"
+    cat > "${mock_bin}/claude" <<'MOCKEOF'
+#!/usr/bin/env bash
+echo "There's an issue with the selected model"
+exit 0
+MOCKEOF
+    chmod +x "${mock_bin}/claude"
+    export PATH="${mock_bin}:${PATH}"
+    _check_claude_model "bad-model" || true
+    cache_file="${PROJECT_ROOT}/.tmp/auto-bmad/model-checks/claude_bad-model"
+    if [[ -f "$cache_file" ]] && [[ "$(cat "$cache_file")" == "1" ]]; then
+        exit 0
+    fi
+    exit 1
+) && assert_exit_ok || test_fail "unavailable model should be cached as 1"
+
+test_begin "_check_claude_model: invalid cache content triggers fresh check"
+(
+    PROJECT_ROOT="$(make_test_tmpdir)"
+    MODEL_CHECK_MAX_AGE=86400
+    cache_dir="${PROJECT_ROOT}/.tmp/auto-bmad/model-checks"
+    mkdir -p "$cache_dir"
+    echo "garbage" > "${cache_dir}/claude_opus"
+    export MOCK_EXIT=0 MOCK_OUTPUT_BYTES=300
+    export MOCK_STATE_DIR="$(make_test_tmpdir)"
+    export MOCK_FAIL_FIRST=0
+    _check_claude_model "opus"
+    # Mock should have been called due to invalid cache
+    if [[ -f "${MOCK_STATE_DIR}/calls" ]]; then
+        exit 0
+    fi
+    exit 1
+) && assert_exit_ok || test_fail "garbage cache should fall through to live check"
+
+PROJECT_ROOT="$_MODEL_ORIG_PROJECT_ROOT"
+
+# ═══════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════
 

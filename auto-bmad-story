@@ -125,6 +125,7 @@ get_step_final_profile() { kv_get step "$1" final_profile ""; }
 PREFLIGHT_CACHE="${PROJECT_ROOT}/.tmp/auto-bmad/preflight-cache"
 load_pipeline_conf
 PREFLIGHT_CACHE_MAX_AGE="$cfg_pip_preflight_max_age"
+MODEL_CHECK_MAX_AGE="$cfg_pip_model_check_max_age"
 # Apply config default only if not overridden by --reviews CLI flag
 [[ -z "$REVIEWS_MODE" ]] && REVIEWS_MODE="$cfg_pip_default_review_mode"
 
