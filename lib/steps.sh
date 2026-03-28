@@ -385,6 +385,21 @@ step_3_4_dev_fix() {
         GIT_CONTEXT "$git_context")"
 }
 
+step_3_4b_keep_reaudit() {
+    run_ai "3.4b" "$(load_prompt "3.4b-keep-reaudit.md" \
+        STORY_ID "$STORY_ID" \
+        STORY_FILE_PATH "$STORY_FILE_PATH" \
+        COMMIT_BASELINE "$COMMIT_BASELINE" \
+        ORIGINAL_AUDIT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md" \
+        REAUDIT_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.4b-keep-reaudit.md")"
+
+    # Flag regressions prominently
+    local report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.4b-keep-reaudit.md"
+    if [[ -f "$report" ]] && grep -q "REGRESSIONS_DETECTED" "$report"; then
+        log_warn "KEEP regression detected — review ${report}"
+    fi
+}
+
 step_3_5_resolve_code_spec_findings() {
     run_ai "3.5" "$(load_prompt "3.5-resolve-code-spec.md" \
         TRIAGE_REPORT "${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md" \

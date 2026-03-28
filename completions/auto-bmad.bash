@@ -30,7 +30,7 @@ _auto_bmad() {
             ;;
         --from-step)
             # Complete with known step IDs
-            COMPREPLY=( $(compgen -W "0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.0 6.1 6.2" -- "$cur") )
+            COMPREPLY=( $(compgen -W "0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.4b 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.0 6.1 6.2" -- "$cur") )
             return
             ;;
         --story|--epic|--from-story|--to-story)

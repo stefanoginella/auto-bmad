@@ -97,7 +97,7 @@ FULL_AUTO=false
 PIPELINE_START_TIME=""
 
 # Step ordering for --from-step comparison (parallel sub-steps map to parent)
-STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.0 6.1 6.2"
+STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.4b 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.0 6.1 6.2"
 
 # Step tracking convenience wrappers over lib/tracking.sh
 set_step_status()   { kv_set step "$1" status   "$2"; }
@@ -291,6 +291,7 @@ run_pipeline() {
         run_step "3.2" "Acceptance Auditor" step_3_2_acceptance_auditor
         run_step "3.3" "Triage" step_3_3_triage
         run_step "3.4" "Fix Patch Items (dev)" step_3_4_dev_fix
+        run_step "3.4b" "KEEP Re-Audit (acceptance)" step_3_4b_keep_reaudit
         run_step "3.5" "Resolve Spec Findings (analyst)" step_3_5_resolve_code_spec_findings
     else
         log_skip "Steps 3.2–3.5 — --reviews ${REVIEWS_MODE}"
