@@ -235,7 +235,6 @@ Options:
   --no-traces            Remove pipeline artifacts after finalization
                          (pipeline report is kept)
   --debug                Keep temp files for debugging
-  --acknowledge-previous Skip warning about unresolved items from previous story
   --help                 Show usage
 ```
 

@@ -43,8 +43,6 @@ _auto-bmad() {
                         '--skip-git[Skip git write operations]' \
                         '--no-traces[Remove pipeline artifacts after finalization]' \
                         '--debug[Keep temp files for debugging]' \
-                        '--acknowledge-previous[Skip carry-forward warning]' \
-                        '--full-auto[AI-resolve human items + auto-acknowledge previous]' \
                         '--help[Show help]'
                     ;;
                 epic)
