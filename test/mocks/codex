@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Mock codex CLI for testing
+# Same env vars as mock claude: MOCK_EXIT, MOCK_DELAY, MOCK_OUTPUT_BYTES,
+#   MOCK_JSON, MOCK_FAIL_FIRST, MOCK_STATE_DIR
+
+set -euo pipefail
+
+if [[ -n "${MOCK_FAIL_FIRST:-}" && -n "${MOCK_STATE_DIR:-}" ]]; then
+    counter_file="${MOCK_STATE_DIR}/calls"
+    count=0
+    [[ -f "$counter_file" ]] && count=$(cat "$counter_file")
+    count=$((count + 1))
+    echo "$count" > "$counter_file"
+    if (( count <= MOCK_FAIL_FIRST )); then
+        exit "${MOCK_FAIL_EXIT:-1}"
+    fi
+fi
+
+(( ${MOCK_DELAY:-0} > 0 )) && sleep "$MOCK_DELAY"
+
+bytes="${MOCK_OUTPUT_BYTES:-500}"
+
+_gen_text() {
+    local n="$1"
+    local line="Mock codex output for testing. This line is padding to reach the requested output size."
+    local out=""
+    while (( ${#out} < n )); do out="${out}${line}
+"; done
+    echo "${out:0:$n}"
+}
+
+if [[ "${MOCK_JSON:-0}" == "1" ]]; then
+    text="$(_gen_text "$bytes")"
+    text="${text//\\/\\\\}"
+    text="${text//$'\n'/\\n}"
+    text="${text//\"/\\\"}"
+    cat <<ENDJSON
+{
+  "status": "completed",
+  "model": "gpt-5.4",
+  "output": "${text}",
+  "usage": {
+    "input_tokens": 1500,
+    "output_tokens": 900,
+    "reasoning_tokens": 200
+  }
+}
+ENDJSON
+else
+    _gen_text "$bytes"
+fi
+
+exit "${MOCK_EXIT:-0}"

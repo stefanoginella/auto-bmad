@@ -15,7 +15,7 @@ Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. 
 - **3-way spec validation + 6-way code reviews** with structured triage and automated resolution
 - **Full epic orchestration** with automatic PR, CI gating, and squash-merge between stories
 
-> **Warning:** By default, these scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc), or use `--safe-mode` to let each AI tool prompt for permissions.
+> **Warning:** By default, these scripts execute AI agents with full filesystem access (`--dangerously-skip-permissions`, `--full-auto`, `--yolo`). Run only in isolated environments (VM, container, etc).
 
 ## Table of Contents
 
@@ -170,6 +170,12 @@ To remove:
 
 ```bash
 make uninstall                  # or: PREFIX=~/.local make uninstall
+```
+
+To run the test suite:
+
+```bash
+make test                       # or: bash test/run_all.sh
 ```
 
 ### Manual install
@@ -569,9 +575,9 @@ Edit `conf/pipeline.conf` to tune operator-facing defaults. Override via the cas
 | `[thresholds]` | `min_step_duration` | `5` | Soft-fail: steps faster than this are suspect |
 | `[thresholds]` | `min_log_bytes` | `200` | Soft-fail: steps with less output are suspect |
 | `[thresholds]` | `min_reviewers` | `2` | Minimum successful parallel reviews before triage proceeds |
-| `[guard]` | `max_step_duration` | `600` (10m) | Per-step duration cap before termination (0 = disabled) |
-| `[guard]` | `max_output_rate` | `200000` | Max log output bytes per 10s window before flagging runaway |
-| `[guard]` | `file_churn_threshold` | `10` | Diff changes this many times = runaway (0 = disabled) |
+| `[guard]` | `max_step_duration` | `2400` (40m) | Per-step duration cap before termination (0 = disabled) |
+| `[guard]` | `max_output_rate` | `300000` | Max log output bytes per 10s window before flagging runaway |
+| `[guard]` | `file_churn_threshold` | `20` | Diff changes this many times = runaway (0 = disabled) |
 | `[cache]` | `preflight_max_age` | `86400` | Seconds before pre-flight results are re-checked |
 | `[monitor]` | `parallel_stagger` | `2` | Seconds between parallel review launches (reduces contention) |
 | `[git]` | `branch_pattern` | `story/${STORY_ID}` | Branch naming template |

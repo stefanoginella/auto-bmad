@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Mock claude CLI for testing
+# Behaviour controlled by environment:
+#   MOCK_EXIT=N          exit code (default 0)
+#   MOCK_DELAY=N         sleep N seconds before responding (default 0)
+#   MOCK_OUTPUT_BYTES=N  approximate output size (default 500)
+#   MOCK_JSON=1          emit realistic JSON envelope (default: plain text)
+#   MOCK_FAIL_FIRST=N    fail first N invocations then succeed (uses counter file MOCK_STATE_DIR)
+
+set -euo pipefail
+
+# --- Fail-first bookkeeping ---
+if [[ -n "${MOCK_FAIL_FIRST:-}" && -n "${MOCK_STATE_DIR:-}" ]]; then
+    counter_file="${MOCK_STATE_DIR}/calls"
+    count=0
+    [[ -f "$counter_file" ]] && count=$(cat "$counter_file")
+    count=$((count + 1))
+    echo "$count" > "$counter_file"
+    if (( count <= MOCK_FAIL_FIRST )); then
+        exit "${MOCK_FAIL_EXIT:-1}"
+    fi
+fi
+
+# --- Delay ---
+(( ${MOCK_DELAY:-0} > 0 )) && sleep "$MOCK_DELAY"
+
+# --- Output ---
+bytes="${MOCK_OUTPUT_BYTES:-500}"
+
+_gen_text() {
+    local n="$1"
+    # Repeat a line until we reach ~n bytes
+    local line="Mock claude output for testing. This line is padding to reach the requested size."
+    local out=""
+    while (( ${#out} < n )); do
+        out="${out}${line}
+"
+    done
+    echo "${out:0:$n}"
+}
+
+if [[ "${MOCK_JSON:-0}" == "1" ]]; then
+    text="$(_gen_text "$bytes")"
+    # Escape for JSON
+    text="${text//\\/\\\\}"
+    text="${text//$'\n'/\\n}"
+    text="${text//\"/\\\"}"
+    cat <<ENDJSON
+{
+  "type": "result",
+  "subtype": "success",
+  "cost_usd": 0.042,
+  "is_error": false,
+  "duration_ms": $((${MOCK_DELAY:-6} * 1000)),
+  "duration_api_ms": $((${MOCK_DELAY:-6} * 900)),
+  "num_turns": 1,
+  "result": "${text}",
+  "session_id": "mock-session-001",
+  "total_cost_usd": 0.042,
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 800,
+    "cache_read_input_tokens": 400,
+    "cache_creation_input_tokens": 0
+  }
+}
+ENDJSON
+else
+    _gen_text "$bytes"
+fi
+
+exit "${MOCK_EXIT:-0}"

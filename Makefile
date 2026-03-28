@@ -4,7 +4,7 @@ BASH_COMPLETION_DIR = $(PREFIX)/share/bash-completion/completions
 ZSH_COMPLETION_DIR  = $(PREFIX)/share/zsh/site-functions
 REPO_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: install uninstall help
+.PHONY: install uninstall test help
 
 install:
 	@echo "Installing auto-bmad..."
@@ -35,10 +35,14 @@ uninstall:
 	@echo "  Removed zsh completion"
 	@echo "Done."
 
+test:
+	@bash $(REPO_DIR)test/run_all.sh
+
 help:
 	@echo "auto-bmad Makefile"
 	@echo ""
 	@echo "  make install    Install auto-bmad to PATH with shell completions"
 	@echo "  make uninstall  Remove auto-bmad and completions"
+	@echo "  make test       Run test suites"
 	@echo ""
 	@echo "  PREFIX=/usr/local  (default, override with PREFIX=~/.local)"
