@@ -89,6 +89,7 @@ auto-bmad-epic
   │     │     ├── Acceptance Auditor (Opus)
   │     │     ├── Triage (Opus) — normalize, dedup, classify
   │     │     ├── Dev fix (Opus) — patch items only
+  │     │     ├── KEEP re-audit (Opus) — verify passing criteria still hold
   │     │     └── Resolve spec findings (Opus/analyst) — bad_spec + intent_gap
   │     ├─ Phase 4: Traceability
   │     ├─ Phase 5: Epic end (retro, NFR, exit report, context)
@@ -245,7 +246,7 @@ Options:
 | 0 | 0.1 | Epic Start | TEA Test Design at epic level. *Only runs on the first story in an epic.* |
 | 1 | 1.1, 1.2a-c, 1.3, 1.4 | Story Preparation | Create story, 3 parallel spec validations (GPT, MiMo, Claude), triage, resolve findings |
 | 2 | 2.1, 2.2 | TDD + Implementation | Generate failing acceptance tests (red phase), then implement (green phase) |
-| 3 | 3.1a-f, 3.2, 3.3, 3.4, 3.5 | Code Review | 6 parallel code reviews (3 AIs × 2 types), acceptance audit, triage, dev fix, resolve spec findings |
+| 3 | 3.1a-f, 3.2, 3.3, 3.4, 3.4b, 3.5 | Code Review | 6 parallel code reviews (3 AIs × 2 types), acceptance audit, triage, dev fix, KEEP re-audit, resolve spec findings |
 | 4 | 4.1, 4.2 | Traceability | Testarch trace + test automation expansion |
 | 5 | 5.1-5.3, 5.4, 5.5, 5.6 | Epic End | Epic trace/NFR/test review, retrospective, epic exit report, project context. *Only runs on the last story in an epic.* |
 | 6 | 6.1, 6.2 | Finalization | Tech writer documents story, scrum master closes it |
@@ -358,6 +359,7 @@ Story pass-through flags (forwarded to auto-bmad-story):
    - Pushes and creates a PR via `gh`
    - Enables auto-merge (squash)
    - Polls CI check states every 30s until all checks resolve
+   - Syncs `sprint-status.yaml` — marks story `done`, marks epic `done` when all stories complete
    - Switches to `main` after merge
 4. **Tracks epic-level metrics** — per-story durations, total wall time
 5. **Prints retrospective summary** — after the last story, parses the retrospective output for action items and significant discovery alerts
@@ -382,6 +384,7 @@ Story completes on story/1-1-slug branch
   → gh pr create --title "feat(epic-1): 1-1-slug"
   → gh pr merge --auto --squash
   → poll until merged (15 min timeout)
+  → update sprint-status.yaml (story → done, epic → done if all complete)
   → git checkout main && git pull
   → git branch -d story/1-1-slug
 Next story starts from main
