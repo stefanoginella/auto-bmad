@@ -544,6 +544,12 @@ generate_pipeline_report() {
         echo "<!-- For each stop: file:line reference and one-line framing of what to look for. -->"
         echo ""
 
+        # Placeholder for file list (populated by tech-writer step 6.1)
+        echo "## File List"
+        echo ""
+        echo "<!-- Populated by the tech-writer step. List ALL files created, modified, or deleted across the entire pipeline. Check git diff --stat for completeness. Organize by category: new, modified, deleted, acceptance tests, pipeline artifacts. -->"
+        echo ""
+
     } > "$PIPELINE_REPORT"
 }
 
@@ -551,13 +557,6 @@ generate_pipeline_report() {
 
 step_6_1_document() {
     [[ -z "$STORY_FILE_PATH" ]] && detect_story_file_path
-
-    # Build carry-forward instruction for rolling deferred accumulator
-    local prev_deferred_instruction=""
-    if [[ -n "$PREV_STORY_FILE" && -f "$PREV_STORY_FILE" ]]; then
-        prev_deferred_instruction="
-   ALSO include unresolved deferred items carried forward from the previous story. Read the previous story file at ${PREV_STORY_FILE} and check its \"Deferred to Future Stories\" section. Any items listed there that were NOT addressed by THIS story should be carried forward into this story's \"Deferred to Future Stories\" section. This creates a rolling accumulator — each story's deferred section is the complete list of outstanding deferred items for the epic so far."
-    fi
 
     local git_context
     git_context="$(_capture_git_context doc)"
@@ -569,7 +568,6 @@ step_6_1_document() {
         STORY_SHORT_ID "$STORY_SHORT_ID" \
         PIPELINE_REPORT "$PIPELINE_REPORT" \
         COMMIT_BASELINE "$COMMIT_BASELINE" \
-        PREV_STORY_DEFERRED "$prev_deferred_instruction" \
         GIT_CONTEXT "$git_context")"
 }
 
