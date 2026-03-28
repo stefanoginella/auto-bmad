@@ -13,6 +13,7 @@
 #   step_config <step_id>    — echo "cli|model|effort" for a step
 #   parse_step_config <id>   — set cfg_cli, cfg_model, cfg_effort globals
 #   load_pipeline_conf       — populate cfg_pip_* from conf/pipeline.conf
+#   _resolve_branch_name     — expand cfg_pip_branch_pattern for a story ID
 
 [[ -n "${_CONFIG_SH_LOADED:-}" ]] && return 0
 _CONFIG_SH_LOADED=1
@@ -59,9 +60,9 @@ cfg_pip_min_git_version="2.25"
 cfg_pip_default_review_mode=full
 cfg_pip_parallel_stagger=2
 cfg_pip_min_reviewers=2
-cfg_pip_max_step_duration=600
-cfg_pip_max_output_rate=200000
-cfg_pip_file_churn_threshold=10
+cfg_pip_max_step_duration=2400
+cfg_pip_max_output_rate=300000
+cfg_pip_file_churn_threshold=20
 
 _PIPELINE_CONF_LOADED=false
 
@@ -230,12 +231,31 @@ check_bmad_version() {
         echo -e "    ${YELLOW}→${NC} ${m}"
     done
     echo ""
+    if [[ "$INTERACTIVE" != "true" ]]; then
+        log_warn "Non-interactive — proceeding with mismatched versions"
+        return 0
+    fi
     if _confirm "    Continue anyway? [y/N] "; then
         log_warn "Proceeding with mismatched versions"
     else
         log_error "Aborted. Update BMad/modules or rebuild this script for the installed versions."
         exit 1
     fi
+}
+
+# --- Branch Name Resolution ---
+
+# Resolve branch name for a given story ID using cfg_pip_branch_pattern.
+# Usage: _resolve_branch_name <story_id>
+_resolve_branch_name() {
+    local _sid="$1"
+    # Avoid ${var:-fallback} — bash 3.2 misparses when value contains '}'
+    local _tmpl="${cfg_pip_branch_pattern}"
+    [[ -z "$_tmpl" ]] && _tmpl='story/${STORY_ID}'
+    # Safe substitution — no eval, no arbitrary code execution
+    # Handle both ${STORY_ID} and $STORY_ID template forms
+    local _result="${_tmpl//\$\{STORY_ID\}/$_sid}"
+    echo "${_result//\$STORY_ID/$_sid}"
 }
 
 # --- AI Profile Lookup ---
@@ -336,13 +356,16 @@ step_config() {
 }
 
 # Parse step config once into cfg_cli, cfg_model, cfg_effort, cfg_fallback globals.
+# Note: the subshell is separated from the IFS='|' read to avoid a bash 3.2 bug
+# where IFS leaks into command substitutions on the same line.
 parse_step_config() {
-    IFS='|' read -r cfg_cli cfg_model cfg_effort cfg_fallback <<< "$(step_config "$1")"
+    local _sc; _sc="$(step_config "$1")"
+    IFS='|' read -r cfg_cli cfg_model cfg_effort cfg_fallback <<< "$_sc"
 }
 
 # Apply a specific @profile, overriding cfg_* globals.
 # Used by retry wrapper to switch to fallback profile.
 apply_profile() {
-    local profile="$1"
-    IFS='|' read -r cfg_cli cfg_model cfg_effort cfg_fallback <<< "$(_resolve_profile "$profile")"
+    local _ap; _ap="$(_resolve_profile "$1")"
+    IFS='|' read -r cfg_cli cfg_model cfg_effort cfg_fallback <<< "$_ap"
 }

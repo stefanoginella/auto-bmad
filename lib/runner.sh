@@ -92,9 +92,9 @@ _run_with_retry() {
         local _cmd_pid=$!
 
         # --- Guard loop: duration cap, output rate, file churn ---
-        local _g_max_dur="${cfg_pip_max_step_duration:-600}"
-        local _g_max_rate="${cfg_pip_max_output_rate:-200000}"
-        local _g_churn_thresh="${cfg_pip_file_churn_threshold:-10}"
+        local _g_max_dur="${cfg_pip_max_step_duration:-2400}"
+        local _g_max_rate="${cfg_pip_max_output_rate:-300000}"
+        local _g_churn_thresh="${cfg_pip_file_churn_threshold:-20}"
         local _g_rate_start=$start_time _g_rate_bytes=0
         local _g_churn_hash="" _g_churn_count=0 _g_churn_time=$start_time
 
@@ -450,10 +450,16 @@ run_parallel_reviews() {
                 local dur=$((now - t0))
                 durations[$i]="$dur"
                 set_step_duration "${sids[$i]}" "$dur"
+                # Resolve final model info (may differ from pre-cached if fallback occurred)
+                local _mi="${model_infos[$i]}"
+                local _fp; _fp="$(get_step_final_profile "${sids[$i]}")"
+                [[ -n "$_fp" && "$_fp" != "$_mi" ]] && _mi="${_mi}→${_fp}"
+                local _att; _att="$(get_step_attempts "${sids[$i]}")"
+                (( _att > 1 )) && _mi="${_mi}(x${_att})"
                 if wait "${pids[$i]}" 2>/dev/null; then
                     statuses[$i]="ok"
                     set_step_status "${sids[$i]}" "ok"
-                    _log_pipeline_entry "${sids[$i]}" "${model_infos[$i]}" "$dur" "ok" "${snames[$i]}"
+                    _log_pipeline_entry "${sids[$i]}" "$_mi" "$dur" "ok" "${snames[$i]}"
                     parse_step_config "${sids[$i]}"
                     extract_and_record_usage "${sids[$i]}" "$cfg_cli" "$cfg_model" \
                         "${TMP_DIR}/step-${sids[$i]}-raw.json" "$dur" "ok"
@@ -461,7 +467,7 @@ run_parallel_reviews() {
                 else
                     statuses[$i]="FAILED"
                     set_step_status "${sids[$i]}" "FAILED"
-                    _log_pipeline_entry "${sids[$i]}" "${model_infos[$i]}" "$dur" "FAILED" "${snames[$i]}"
+                    _log_pipeline_entry "${sids[$i]}" "$_mi" "$dur" "FAILED" "${snames[$i]}"
                     parse_step_config "${sids[$i]}"
                     extract_and_record_usage "${sids[$i]}" "$cfg_cli" "$cfg_model" \
                         "${TMP_DIR}/step-${sids[$i]}-raw.json" "$dur" "FAILED"

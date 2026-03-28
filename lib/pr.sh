@@ -146,8 +146,7 @@ EOF
     log_ok "Commit finalized"
 
     # Push branch
-    # TODO: use cfg_pip_branch_pattern instead of hardcoding story/ prefix
-    local branch="story/${story_id}"
+    local branch; branch="$(_resolve_branch_name "$story_id")"
     git -C "$PROJECT_ROOT" push -u origin "$branch" 2>&1 | tail -2
     log_ok "Pushed to origin/${branch}"
 

@@ -11,7 +11,7 @@
 #   extract_story_commit_msg      — extract commit msg from story file
 #   check_git_branch              — ensure correct branch + post-checkout gates
 #   preflight_git_checks          — 7-gate pre-flight (tools, tree, merge, freshness, shadow, divergence, conflict)
-#   _resolve_branch_name <sid>    — expand cfg_pip_branch_pattern for a story ID
+#   _resolve_branch_name           — (moved to config.sh)
 #
 # Gate architecture (preflight_git_checks + check_git_branch):
 #   Gate 0: Required tools       — hard gate, checks gh auth + git version
@@ -211,18 +211,7 @@ _resolve_main_ref() {
     fi
 }
 
-# Resolve branch name for a given story ID using cfg_pip_branch_pattern.
-# Usage: _resolve_branch_name <story_id>
-_resolve_branch_name() {
-    local _sid="$1"
-    # Avoid ${var:-fallback} — bash 3.2 misparses when value contains '}'
-    local _tmpl="${cfg_pip_branch_pattern}"
-    [[ -z "$_tmpl" ]] && _tmpl='story/${STORY_ID}'
-    # Safe substitution — no eval, no arbitrary code execution
-    # Handle both ${STORY_ID} and $STORY_ID template forms
-    local _result="${_tmpl//\$\{STORY_ID\}/$_sid}"
-    echo "${_result//\$STORY_ID/$_sid}"
-}
+# _resolve_branch_name moved to config.sh (shared by story + epic)
 
 # Validates git state before check_git_branch() selects/creates branches.
 # Gates are ordered by dependency — earliest failures abort cheapest.

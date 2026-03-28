@@ -555,6 +555,37 @@ generate_pipeline_report() {
 
 # --- Phase 6: Finalization ---
 
+step_6_0_resolve_human_items() {
+    [[ -z "$STORY_FILE_PATH" ]] && detect_story_file_path
+
+    local spec_triage="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
+    local code_triage="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
+    local acceptance_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.2-code-acceptance.md"
+    local resolution_report="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-6.0-ai-resolution.md"
+
+    run_ai "6.0" "$(load_prompt "6.0-resolve-human-items.md" \
+        STORY_ID "$STORY_ID" \
+        STORY_REF "${STORY_FILE_PATH:-the story file for ${STORY_ID}}" \
+        SPEC_TRIAGE "$spec_triage" \
+        CODE_TRIAGE "$code_triage" \
+        ACCEPTANCE_REPORT "$acceptance_report" \
+        RESOLUTION_REPORT "$resolution_report" \
+        STORY_ARTIFACTS "$STORY_ARTIFACTS" \
+        STORY_SHORT_ID "$STORY_SHORT_ID")"
+
+    # Terminal warning for critical promotions
+    if [[ -f "$resolution_report" ]]; then
+        local critical_count
+        critical_count=$(grep -c '🔴🔴' "$resolution_report" 2>/dev/null || true)
+        if (( critical_count > 0 )); then
+            echo ""
+            log_error "CRITICAL: ${critical_count} item(s) could not be validated — requires human attention"
+            echo -e "  ${DIM}→ ${resolution_report}${NC}"
+            echo ""
+        fi
+    fi
+}
+
 step_6_1_document() {
     [[ -z "$STORY_FILE_PATH" ]] && detect_story_file_path
 

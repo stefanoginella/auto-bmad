@@ -93,10 +93,11 @@ SKIP_GIT=false
 NO_TRACES=false
 DEBUG=false
 ACK_PREVIOUS=false
+FULL_AUTO=false
 PIPELINE_START_TIME=""
 
 # Step ordering for --from-step comparison (parallel sub-steps map to parent)
-STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.1 6.2"
+STEP_ORDER="0.1 1.1 1.2 1.3 1.4 2.1 2.2 3.1 3.2 3.3 3.4 3.5 4.1 4.2 5.1 5.2 5.3 5.4 5.5 5.6 6.0 6.1 6.2"
 
 # Step tracking convenience wrappers over lib/tracking.sh
 set_step_status()   { kv_set step "$1" status   "$2"; }
@@ -286,13 +287,13 @@ run_pipeline() {
         "3.1f|Adversarial (Claude)|code-adversarial|claude"
 
     # Steps 3.2-3.5: acceptance audit → triage → dev fix → resolve spec findings
-    if [[ "$REVIEWS_MODE" != "none" ]]; then
+    if [[ "$REVIEWS_MODE" == "full" ]]; then
         run_step "3.2" "Acceptance Auditor" step_3_2_acceptance_auditor
         run_step "3.3" "Triage" step_3_3_triage
         run_step "3.4" "Fix Patch Items (dev)" step_3_4_dev_fix
         run_step "3.5" "Resolve Spec Findings (analyst)" step_3_5_resolve_code_spec_findings
     else
-        log_skip "Steps 3.2–3.5 — --reviews none"
+        log_skip "Steps 3.2–3.5 — --reviews ${REVIEWS_MODE}"
     fi
 
     git_checkpoint "phase 3 — code review fixes"
@@ -340,6 +341,7 @@ run_pipeline() {
 
     fi
 
+    run_step "6.0" "Resolve Human Review Items (AI)" step_6_0_resolve_human_items
     run_step "6.1" "Document Story (tech-writer)" step_6_1_document
     run_step "6.2" "Close Story (SM)" step_6_2_close
 
@@ -458,6 +460,7 @@ Options:
                          (pipeline report is kept)
   --debug                Keep temp files for debugging
   --acknowledge-previous Skip warning about unresolved items from previous story
+  --full-auto            AI-resolve human review items + auto-acknowledge previous
   --help                 Show this help message
 
 Step Numbering:
@@ -471,7 +474,7 @@ Step Numbering:
   Phase 3: Code Review    (3.1a-f parallel reviews, 3.2 acceptance audit, 3.3 triage, 3.4 fix, 3.5 resolve)
   Phase 4: Traceability   (4.1 trace, 4.2 automate)
   Phase 5: Epic End       (5.1-5.3 parallel, 5.4 retro, 5.5 exit report, 5.6 context)
-  Phase 6: Finalization   (6.1 document, 6.2 close)
+  Phase 6: Finalization   (6.0 resolve, 6.1 document, 6.2 close)
 
 AI Profiles (edit conf/profiles.conf):
   Step-to-model assignments are in conf/profiles.conf.
@@ -528,6 +531,7 @@ parse_args() {
             --no-traces)        NO_TRACES=true; shift ;;
             --debug)            DEBUG=true; shift ;;
             --acknowledge-previous) ACK_PREVIOUS=true; shift ;;
+            --full-auto)              FULL_AUTO=true; ACK_PREVIOUS=true; shift ;;
             --help|-h)        show_help; exit 0 ;;
             *)
                 log_error "Unknown argument: $1"
@@ -671,6 +675,7 @@ main() {
     [[ "$SKIP_GIT" == "true" ]]      && echo -e "  Git:        ${YELLOW}Disabled (no branch, checkpoint, or squash)${NC}"
     [[ "$NO_TRACES" == "true" ]]     && echo -e "  No traces:  ${YELLOW}Artifacts removed after finalization${NC}"
     [[ "$DEBUG" == "true" ]]         && echo -e "  Debug:      ${YELLOW}Temp files preserved${NC}"
+    [[ "$FULL_AUTO" == "true" ]]     && echo -e "  Full auto:  ${YELLOW}AI resolution of human review items${NC}"
     [[ -n "$FROM_STEP" ]]            && echo -e "  Resume:     from step ${BOLD}${FROM_STEP}${NC}"
     echo -e "  Artifacts:  ${DIM}${STORY_ARTIFACTS}/${NC}"
 

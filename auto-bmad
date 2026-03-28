@@ -142,11 +142,7 @@ _cmd_status() {
 
     if [[ -n "$story_id" ]]; then
         load_pipeline_conf
-        # Avoid ${var:-fallback} — bash 3.2 misparses when value contains '}'
-        local branch_tmpl="${cfg_pip_branch_pattern}"
-        [[ -z "$branch_tmpl" ]] && branch_tmpl='story/${STORY_ID}'
-        local expected_branch="${branch_tmpl//\$\{STORY_ID\}/$story_id}"
-        expected_branch="${expected_branch//\$STORY_ID/$story_id}"
+        local expected_branch; expected_branch="$(_resolve_branch_name "$story_id")"
 
         if [[ "$current_branch" == "$expected_branch" ]]; then
             on_story_branch=true
@@ -198,7 +194,7 @@ _cmd_status() {
 
                 # Check for merged PR
                 if [[ "$prev_ss" == "done" ]]; then
-                    local prev_branch="story/${prev_story}"
+                    local prev_branch; prev_branch="$(_resolve_branch_name "$prev_story")"
                     local main_ref="main"
                     git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/main" 2>/dev/null || main_ref="master"
                     local pr_merged=false
@@ -597,6 +593,86 @@ _cmd_quickstart() {
     return "$errors"
 }
 
+# --- Config Command ---
+_cmd_config() {
+    echo -e "${BOLD}auto-bmad config${NC} (v${VERSION})"
+    echo ""
+
+    # Paths
+    local impl; impl="$(_detect_impl_artifacts)"
+    echo -e "${BOLD}Paths:${NC}"
+    echo "  INSTALL_DIR            = ${INSTALL_DIR}"
+    echo "  PROJECT_ROOT           = ${PROJECT_ROOT}"
+    echo "  IMPL_ARTIFACTS         = ${impl}"
+    echo "  USER_CONF_DIR          = ${_USER_CONF_DIR}"
+    echo ""
+
+    # Pipeline config
+    echo -e "${BOLD}Pipeline (conf/pipeline.conf):${NC}"
+    echo "  [timeouts]"
+    echo "    pr_safety            = ${cfg_pip_pr_safety}s"
+    echo "    pr_poll_interval     = ${cfg_pip_pr_poll_interval}s"
+    echo "    pr_grace_polls       = ${cfg_pip_pr_grace_polls}"
+    echo "  [thresholds]"
+    echo "    min_step_duration    = ${cfg_pip_min_step_duration}s"
+    echo "    min_log_bytes        = ${cfg_pip_min_log_bytes}"
+    echo "  [cache]"
+    echo "    preflight_max_age    = ${cfg_pip_preflight_max_age}s"
+    echo "  [monitor]"
+    echo "    spinner_quiet        = ${cfg_pip_spinner_quiet}s"
+    echo "  [git]"
+    echo "    branch_pattern       = ${cfg_pip_branch_pattern}"
+    echo "    min_git_version      = ${cfg_pip_min_git_version}"
+    echo "    default_review_mode  = ${cfg_pip_default_review_mode}"
+    echo ""
+
+    # Overrides active
+    local has_user=false has_project=false has_env=false
+    [[ -d "${_USER_CONF_DIR}" ]] && has_user=true
+    if [[ "$PROJECT_ROOT" != "$INSTALL_DIR" ]]; then
+        [[ -d "${PROJECT_ROOT}/conf" ]] && has_project=true
+    fi
+    env | grep -q '^AUTO_BMAD_' 2>/dev/null && has_env=true
+    echo -e "${BOLD}Overrides:${NC}"
+    echo "  ~/.config/auto-bmad/   = ${has_user}"
+    echo "  PROJECT_ROOT/conf/     = ${has_project}"
+    echo "  AUTO_BMAD_* env vars   = ${has_env}"
+    # Show which conf files are active in the cascade
+    echo ""
+    echo -e "${BOLD}Config cascade:${NC}"
+    local _cf _cascade
+    for _cf_name in pipeline.conf profiles.conf pricing.conf; do
+        _cascade=""
+        while IFS= read -r _cf; do
+            _cascade="${_cascade:+${_cascade} → }${_cf}"
+        done < <(_conf_files "$_cf_name")
+        echo "  ${_cf_name}: ${_cascade:-<not found>}"
+    done
+    echo ""
+
+    # Profiles
+    echo -e "${BOLD}Profiles (${#_PROFILE_NAMES[@]} defined):${NC}"
+    printf "  %-25s %-10s %-25s %-8s %s\n" "NAME" "CLI" "MODEL" "EFFORT" "FALLBACK"
+    printf "  %-25s %-10s %-25s %-8s %s\n" "-------------------------" "----------" "-------------------------" "--------" "--------"
+    for ((i=0; i<${#_PROFILE_NAMES[@]}; i++)); do
+        printf "  %-25s %-10s %-25s %-8s %s\n" \
+            "${_PROFILE_NAMES[$i]}" "${_PROFILE_CLIS[$i]}" "${_PROFILE_MODELS[$i]}" \
+            "${_PROFILE_EFFORTS[$i]}" "${_PROFILE_FALLBACKS[$i]}"
+    done
+    echo ""
+
+    # Tools
+    echo -e "${BOLD}Tools:${NC}"
+    echo "  jq                     = ${HAS_JQ}"
+    for t in claude codex copilot opencode gh git; do
+        if command -v "$t" &>/dev/null; then
+            echo "  ${t}$(printf '%*s' $((25 - ${#t})) '')= $(command -v "$t")"
+        else
+            echo "  ${t}$(printf '%*s' $((25 - ${#t})) '')= ${RED}not found${NC}"
+        fi
+    done
+}
+
 # --- Dispatch ---
 if [[ $# -eq 0 ]]; then
     show_help
@@ -653,84 +729,8 @@ case "$COMMAND" in
         source "$SCRIPT_DIR/lib/config.sh"
         load_pipeline_conf
         _load_profiles
-
-        echo -e "${BOLD}auto-bmad config${NC} (v${VERSION})"
-        echo ""
-
-        # Paths
-        impl="$(_detect_impl_artifacts)"
-        echo -e "${BOLD}Paths:${NC}"
-        echo "  INSTALL_DIR            = ${INSTALL_DIR}"
-        echo "  PROJECT_ROOT           = ${PROJECT_ROOT}"
-        echo "  IMPL_ARTIFACTS         = ${impl}"
-        echo "  USER_CONF_DIR          = ${_USER_CONF_DIR}"
-        echo ""
-
-        # Pipeline config
-        echo -e "${BOLD}Pipeline (conf/pipeline.conf):${NC}"
-        echo "  [timeouts]"
-        echo "    pr_safety            = ${cfg_pip_pr_safety}s"
-        echo "    pr_poll_interval     = ${cfg_pip_pr_poll_interval}s"
-        echo "    pr_grace_polls       = ${cfg_pip_pr_grace_polls}"
-        echo "  [thresholds]"
-        echo "    min_step_duration    = ${cfg_pip_min_step_duration}s"
-        echo "    min_log_bytes        = ${cfg_pip_min_log_bytes}"
-        echo "  [cache]"
-        echo "    preflight_max_age    = ${cfg_pip_preflight_max_age}s"
-        echo "  [monitor]"
-        echo "    spinner_quiet        = ${cfg_pip_spinner_quiet}s"
-        echo "  [git]"
-        echo "    branch_pattern       = ${cfg_pip_branch_pattern}"
-        echo "    min_git_version      = ${cfg_pip_min_git_version}"
-        echo "    default_review_mode  = ${cfg_pip_default_review_mode}"
-        echo ""
-
-        # Overrides active
-        local has_user=false has_project=false has_env=false
-        [[ -d "${_USER_CONF_DIR}" ]] && has_user=true
-        if [[ "$PROJECT_ROOT" != "$INSTALL_DIR" ]]; then
-            [[ -d "${PROJECT_ROOT}/conf" ]] && has_project=true
-        fi
-        env | grep -q '^AUTO_BMAD_' 2>/dev/null && has_env=true
-        echo -e "${BOLD}Overrides:${NC}"
-        echo "  ~/.config/auto-bmad/   = ${has_user}"
-        echo "  PROJECT_ROOT/conf/     = ${has_project}"
-        echo "  AUTO_BMAD_* env vars   = ${has_env}"
-        # Show which conf files are active in the cascade
-        echo ""
-        echo -e "${BOLD}Config cascade:${NC}"
-        local _cf
-        for _cf_name in pipeline.conf profiles.conf pricing.conf; do
-            local _cascade=""
-            while IFS= read -r _cf; do
-                _cascade="${_cascade:+${_cascade} → }${_cf}"
-            done < <(_conf_files "$_cf_name")
-            echo "  ${_cf_name}: ${_cascade:-<not found>}"
-        done
-        echo ""
-
-        # Profiles
-        echo -e "${BOLD}Profiles (${#_PROFILE_NAMES[@]} defined):${NC}"
-        printf "  %-25s %-10s %-25s %-8s %s\n" "NAME" "CLI" "MODEL" "EFFORT" "FALLBACK"
-        printf "  %-25s %-10s %-25s %-8s %s\n" "-------------------------" "----------" "-------------------------" "--------" "--------"
-        for ((i=0; i<${#_PROFILE_NAMES[@]}; i++)); do
-            printf "  %-25s %-10s %-25s %-8s %s\n" \
-                "${_PROFILE_NAMES[$i]}" "${_PROFILE_CLIS[$i]}" "${_PROFILE_MODELS[$i]}" \
-                "${_PROFILE_EFFORTS[$i]}" "${_PROFILE_FALLBACKS[$i]}"
-        done
-        echo ""
-
-        # Tools
-        echo -e "${BOLD}Tools:${NC}"
-        echo "  jq                     = ${HAS_JQ}"
-        for t in claude codex copilot opencode gh git; do
-            if command -v "$t" &>/dev/null; then
-                echo "  ${t}$(printf '%*s' $((25 - ${#t})) '')= $(command -v "$t")"
-            else
-                echo "  ${t}$(printf '%*s' $((25 - ${#t})) '')= ${RED}not found${NC}"
-            fi
-        done
-        exit 0
+        _cmd_config
+        exit $?
         ;;
     help|--help|-h)
         show_help

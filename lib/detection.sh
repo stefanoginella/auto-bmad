@@ -199,7 +199,7 @@ validate_sprint_status() {
     local status_file="${1:-$SPRINT_STATUS}"
     local errors=0 warnings=0 line_num=0
     local -a seen_stories=() seen_epics=()
-    local valid_statuses="backlog in-progress done"
+    local valid_statuses="backlog in-progress done optional ready-for-dev review"
 
     if [[ ! -f "$status_file" ]]; then
         log_error "Sprint status file not found: ${status_file}"
