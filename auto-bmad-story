@@ -410,29 +410,6 @@ print_summary() {
         echo -e "  ${GREEN}✓${NC} WIP commit: ${BOLD}${final_sha}${NC}"
         echo -e "  ${DIM}Pipeline report: ${PIPELINE_REPORT}${NC}"
 
-        # Surface unresolved spec findings (intent_gap/bad_spec that couldn't be auto-resolved)
-        local spec_triage="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-1.3-spec-triage.md"
-        local code_triage="${STORY_ARTIFACTS}/${STORY_SHORT_ID}-3.3-code-triage.md"
-        local unresolved_count=0
-        local triage_file
-        for triage_file in "$spec_triage" "$code_triage"; do
-            if [[ -f "$triage_file" ]]; then
-                local n
-                n=$(grep -c '## Unresolvable Findings' "$triage_file" 2>/dev/null || true)
-                if [[ "$n" -gt 0 ]]; then
-                    # Count individual findings under the Unresolvable section
-                    local items
-                    items=$(sed -n '/## Unresolvable Findings/,/^## /p' "$triage_file" 2>/dev/null | grep -c '^\*\*\|^- \*\*\|^[0-9]' || true)
-                    unresolved_count=$((unresolved_count + items))
-                fi
-            fi
-        done
-        if [[ "$unresolved_count" -gt 0 ]]; then
-            echo ""
-            echo -e "  ${YELLOW}⚠  ${unresolved_count} unresolvable finding(s) require manual review${NC}"
-            echo -e "  ${DIM}Check triage reports for details: ${STORY_ARTIFACTS}/${NC}"
-        fi
-
         # Print copy-paste manual finalization commands
         local commit_msg
         commit_msg="$(extract_story_commit_msg)"
