@@ -11,6 +11,7 @@
 #   collect_epic_stories    — set STORY_IDS STORY_STATUSES STORY_COUNT
 #   validate_epic           — verify epic has remaining stories
 #   extract_epic_id         — set EPIC_ID from STORY_ID
+#   resolve_full_story_id   — expand short ID (N-N) to full ID (N-N-slug)
 #   extract_short_id        — set STORY_SHORT_ID from STORY_ID
 #   extract_story_num       — echo story number
 #   _find_previous_story    — echo previous story ID
@@ -63,6 +64,37 @@ detect_next_story() {
         log_error "No stories with status 'in-progress' or 'backlog' found in sprint-status.yaml"
         exit 1
     fi
+}
+
+# Resolve a possibly-short story ID (e.g., "1-2") to the full ID (e.g., "1-2-auth-login")
+# by looking up sprint-status.yaml. Full IDs pass through unchanged.
+# Returns 1 if a short ID has no match.
+resolve_full_story_id() {
+    local input="$1"
+    # Already a full ID (has slug segment) — pass through
+    if [[ "$input" =~ ^[0-9]+-[0-9]+-.+ ]]; then
+        echo "$input"
+        return 0
+    fi
+    # Short ID — scan sprint-status for a prefix match
+    local match=""
+    while IFS=: read -r key _status; do
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        [[ "$key" =~ ^[0-9]+-[0-9]+- ]] || continue
+        local k_epic="${key%%-*}"
+        local k_remainder="${key#*-}"
+        local k_num="${k_remainder%%-*}"
+        if [[ "${k_epic}-${k_num}" == "$input" ]]; then
+            match="$key"
+            break
+        fi
+    done < "$SPRINT_STATUS"
+    if [[ -n "$match" ]]; then
+        echo "$match"
+        return 0
+    fi
+    echo "$input"
+    return 1
 }
 
 extract_epic_id() {

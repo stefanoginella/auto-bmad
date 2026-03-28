@@ -590,6 +590,24 @@ main() {
     collect_epic_stories
     validate_epic
 
+    # Resolve short IDs (e.g., "1-1") to full IDs (e.g., "1-1-auth-login")
+    if [[ -n "$FROM_STORY" ]]; then
+        local resolved
+        resolved="$(resolve_full_story_id "$FROM_STORY")" || {
+            log_error "Story ${FROM_STORY} not found in sprint-status.yaml"
+            exit 1
+        }
+        FROM_STORY="$resolved"
+    fi
+    if [[ -n "$TO_STORY" ]]; then
+        local resolved
+        resolved="$(resolve_full_story_id "$TO_STORY")" || {
+            log_error "Story ${TO_STORY} not found in sprint-status.yaml"
+            exit 1
+        }
+        TO_STORY="$resolved"
+    fi
+
     # Verify we're on main (unless dry run)
     if [[ "$DRY_RUN" != "true" ]]; then
         ensure_on_main

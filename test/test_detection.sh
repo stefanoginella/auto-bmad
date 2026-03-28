@@ -158,6 +158,42 @@ local_num="$(extract_story_num)"
 assert_eq "10" "$local_num"
 
 # ═══════════════════════════════════════════════════
+# resolve_full_story_id
+# ═══════════════════════════════════════════════════
+
+write_status <<'EOF'
+epic-1: in-progress
+1-1-auth-login: done
+1-2-user-profile: backlog
+epic-2: backlog
+2-1-dashboard-setup: backlog
+2-10-backup-disaster-recovery: backlog
+EOF
+
+test_begin "resolve_full_story_id: full ID passes through unchanged"
+result="$(resolve_full_story_id "1-2-user-profile")"
+assert_eq "1-2-user-profile" "$result"
+
+test_begin "resolve_full_story_id: short ID resolves to full ID"
+result="$(resolve_full_story_id "1-2")"
+assert_eq "1-2-user-profile" "$result"
+
+test_begin "resolve_full_story_id: short ID with two-digit story number"
+result="$(resolve_full_story_id "2-10")"
+assert_eq "2-10-backup-disaster-recovery" "$result"
+
+test_begin "resolve_full_story_id: cross-epic short ID resolves correctly"
+result="$(resolve_full_story_id "2-1")"
+assert_eq "2-1-dashboard-setup" "$result"
+
+test_begin "resolve_full_story_id: unknown short ID returns error"
+if resolve_full_story_id "9-9" >/dev/null 2>&1; then
+    test_fail "expected non-zero exit for unknown ID"
+else
+    test_pass
+fi
+
+# ═══════════════════════════════════════════════════
 # detect_next_epic
 # ═══════════════════════════════════════════════════
 

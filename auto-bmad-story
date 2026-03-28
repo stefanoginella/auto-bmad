@@ -561,6 +561,14 @@ main() {
 
     if [[ -z "$STORY_ID" ]]; then
         detect_next_story
+    else
+        # Resolve short ID (e.g., "1-1") to full ID (e.g., "1-1-auth-login")
+        local resolved
+        resolved="$(resolve_full_story_id "$STORY_ID")" || {
+            log_error "Story ${STORY_ID} not found in sprint-status.yaml"
+            exit 1
+        }
+        STORY_ID="$resolved"
     fi
     extract_epic_id
     extract_short_id
