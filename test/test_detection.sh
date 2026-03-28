@@ -399,6 +399,132 @@ result="$(_resolve_story_file_path "2-1-dashboard")"
 assert_not_empty "$result"
 
 # ═══════════════════════════════════════════════════
+# update_sprint_status
+# ═══════════════════════════════════════════════════
+
+test_begin "update_sprint_status: updates story status"
+write_status <<'EOF'
+epic-1: in-progress
+1-1-setup: done
+1-2-auth: in-progress
+1-3-api: backlog
+EOF
+update_sprint_status "1-2-auth" "done"
+result="$(grep "1-2-auth" "$_sf")"
+assert_match "done" "$result"
+
+test_begin "update_sprint_status: preserves indentation"
+write_status <<'EOF'
+development_status:
+  epic-1: in-progress
+  1-1-setup: done
+  1-2-auth: in-progress
+EOF
+update_sprint_status "1-2-auth" "done"
+result="$(grep "1-2-auth" "$_sf")"
+assert_eq "  1-2-auth: done" "$result"
+
+test_begin "update_sprint_status: preserves other lines"
+write_status <<'EOF'
+epic-1: in-progress
+1-1-setup: backlog
+1-2-auth: in-progress
+1-3-api: backlog
+EOF
+update_sprint_status "1-2-auth" "done"
+result="$(grep "1-1-setup" "$_sf")"
+assert_match "backlog" "$result"
+result="$(grep "1-3-api" "$_sf")"
+assert_match "backlog" "$result"
+
+test_begin "update_sprint_status: updates epic key"
+write_status <<'EOF'
+epic-1: in-progress
+1-1-setup: done
+EOF
+update_sprint_status "epic-1" "done"
+result="$(grep "^epic-1:" "$_sf")"
+assert_match "done" "$result"
+
+test_begin "update_sprint_status: returns 1 for unknown key"
+write_status <<'EOF'
+epic-1: in-progress
+1-1-setup: done
+EOF
+if update_sprint_status "9-9-nonexistent" "done"; then
+    test_fail "should return 1 for unknown key"
+else
+    assert_exit_fail
+fi
+
+test_begin "update_sprint_status: returns 1 for missing file"
+_saved_ss="$SPRINT_STATUS"
+SPRINT_STATUS="/nonexistent/path/sprint-status.yaml"
+if update_sprint_status "1-1-setup" "done"; then
+    test_fail "should return 1 for missing file"
+else
+    assert_exit_fail
+fi
+SPRINT_STATUS="$_saved_ss"
+
+test_begin "update_sprint_status: refreshes last_updated"
+write_status <<'EOF'
+last_updated: 2020-01-01T00:00:00Z
+epic-1: in-progress
+1-1-setup: backlog
+EOF
+update_sprint_status "1-1-setup" "done"
+result="$(grep "last_updated" "$_sf")"
+assert_not_empty "$result"
+# Should no longer be the old date
+if [[ "$result" == *"2020-01-01"* ]]; then
+    test_fail "last_updated was not refreshed"
+else
+    assert_exit_ok
+fi
+
+# ═══════════════════════════════════════════════════
+# all_epic_stories_done
+# ═══════════════════════════════════════════════════
+
+test_begin "all_epic_stories_done: true when all done"
+write_status <<'EOF'
+epic-1: in-progress
+1-1-setup: done
+1-2-auth: done
+1-3-api: done
+EOF
+EPIC_ID=1
+if all_epic_stories_done; then assert_exit_ok; else test_fail "all stories are done"; fi
+
+test_begin "all_epic_stories_done: false when some not done"
+write_status <<'EOF'
+epic-1: in-progress
+1-1-setup: done
+1-2-auth: in-progress
+1-3-api: backlog
+EOF
+EPIC_ID=1
+if all_epic_stories_done; then test_fail "not all stories are done"; else assert_exit_fail; fi
+
+test_begin "all_epic_stories_done: cross-epic isolation"
+write_status <<'EOF'
+epic-1: in-progress
+1-1-setup: done
+1-2-auth: done
+epic-2: backlog
+2-1-dashboard: backlog
+EOF
+if all_epic_stories_done 1; then assert_exit_ok; else test_fail "epic 1 should be all done"; fi
+if all_epic_stories_done 2; then test_fail "epic 2 is not done"; else assert_exit_fail; fi
+
+test_begin "all_epic_stories_done: false for empty epic"
+write_status <<'EOF'
+epic-3: backlog
+EOF
+if all_epic_stories_done 3; then test_fail "empty epic should not be done"; else assert_exit_fail; fi
+
+# ═══════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════
 

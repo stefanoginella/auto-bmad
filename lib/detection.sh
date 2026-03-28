@@ -19,6 +19,8 @@
 #   is_epic_end             — true if last story in epic
 #   detect_story_file_path  — set STORY_FILE_PATH
 #   collect_epic_story_paths — echo newline-separated story file paths for epic
+#   update_sprint_status    — update a key's status in sprint-status.yaml
+#   all_epic_stories_done   — true if all stories for an epic are done
 
 [[ -n "${_DETECTION_SH_LOADED:-}" ]] && return 0
 _DETECTION_SH_LOADED=1
@@ -390,4 +392,74 @@ validate_epic() {
         log_error "All stories in epic ${EPIC_ID} are already done"
         exit 1
     fi
+}
+
+# --- Sprint Status YAML Updates ---
+
+# Update a key's status in sprint-status.yaml.
+# Also refreshes the last_updated timestamp.
+# Usage: update_sprint_status "1-2-auth" "done"
+#        update_sprint_status "epic-1" "done"
+# Returns 1 if key not found or file missing.
+update_sprint_status() {
+    local target_key="$1" new_status="$2"
+
+    [[ -f "$SPRINT_STATUS" ]] || return 1
+
+    local tmp="${SPRINT_STATUS}.tmp"
+    local found=false
+    local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Update last_updated timestamp
+        local trimmed="${line#"${line%%[![:space:]]*}"}"
+        if [[ "$trimmed" == last_updated:* ]]; then
+            local indent="${line%%[![:space:]]*}"
+            printf '%s\n' "${indent}last_updated: ${now}" >> "$tmp"
+            continue
+        fi
+
+        # Parse key: value lines
+        if [[ "$trimmed" == *:* ]]; then
+            local line_key="${trimmed%%:*}"
+            line_key="${line_key%"${line_key##*[![:space:]]}"}"
+            if [[ "$line_key" == "$target_key" ]]; then
+                local indent="${line%%[![:space:]]*}"
+                printf '%s\n' "${indent}${target_key}: ${new_status}" >> "$tmp"
+                found=true
+                continue
+            fi
+        fi
+
+        printf '%s\n' "$line" >> "$tmp"
+    done < "$SPRINT_STATUS"
+
+    if [[ "$found" == "true" ]]; then
+        mv "$tmp" "$SPRINT_STATUS"
+        return 0
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+# Check if all stories for an epic are done in sprint-status.yaml.
+# Re-reads the file (not stale in-memory arrays).
+# Usage: all_epic_stories_done        (uses $EPIC_ID)
+#        all_epic_stories_done 2       (explicit epic)
+# Returns 0 if all done, 1 if any not done or no stories found.
+all_epic_stories_done() {
+    local epic="${1:-$EPIC_ID}"
+    local count=0
+
+    while IFS=: read -r key status; do
+        key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+        status="${status#"${status%%[![:space:]]*}"}"; status="${status%"${status##*[![:space:]]}"}"
+
+        [[ "$key" =~ ^${epic}-[0-9]+- ]] || continue
+        count=$((count + 1))
+        [[ "$status" == "done" ]] || return 1
+    done < "$SPRINT_STATUS"
+
+    (( count > 0 ))
 }

@@ -93,6 +93,28 @@ get_story_track_duration() { kv_get story "$1" duration "0"; }
 
 # detect_next_epic, collect_epic_stories, validate_epic → lib/detection.sh
 
+# Sync sprint-status.yaml after a story's PR merges.
+# Updates story to done, closes epic if all stories complete, commits+pushes.
+_sync_sprint_status() {
+    local sid="$1"
+
+    if ! update_sprint_status "$sid" "done"; then
+        log_warn "Could not update ${sid} in sprint-status.yaml — update manually"
+        return
+    fi
+
+    local msg="chore(sprint): mark ${sid} done"
+    if all_epic_stories_done; then
+        update_sprint_status "epic-${EPIC_ID}" "done" || true
+        msg="chore(sprint): mark ${sid} done, close epic-${EPIC_ID}"
+    fi
+
+    git -C "$PROJECT_ROOT" add "$SPRINT_STATUS" 2>/dev/null \
+        && git -C "$PROJECT_ROOT" commit -m "$msg" --no-verify --quiet 2>/dev/null \
+        && git -C "$PROJECT_ROOT" push origin main --quiet 2>/dev/null \
+        || log_warn "Could not commit sprint-status update — commit manually"
+}
+
 # ============================================================
 # Pre-flight Checks
 # ============================================================
@@ -409,7 +431,11 @@ run_epic() {
             log_ok "Reached --to-story target: ${sid}"
             # Still do the PR for this story before stopping
             if [[ "$NO_MERGE" == "false" ]]; then
-                commit_and_create_pr "$sid" || log_warn "Final story PR/merge failed — merge manually"
+                if commit_and_create_pr "$sid"; then
+                    _sync_sprint_status "$sid"
+                else
+                    log_warn "Final story PR/merge failed — merge manually"
+                fi
             fi
             break
         fi
@@ -434,11 +460,14 @@ run_epic() {
                 fi
                 exit 1
             }
+            _sync_sprint_status "$sid"
         elif (( i == STORY_COUNT )) && [[ "$NO_MERGE" == "false" ]]; then
             # Last story — still commit and PR, but don't need to wait for next story
-            commit_and_create_pr "$sid" || {
+            if commit_and_create_pr "$sid"; then
+                _sync_sprint_status "$sid"
+            else
                 log_warn "Final story PR/merge failed — merge manually"
-            }
+            fi
         fi
     done
 
