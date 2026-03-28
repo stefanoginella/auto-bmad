@@ -1,4 +1,4 @@
-# auto-bmad
+# auto-bmad - Automate your BMAD pipelines with multiple AIs
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 [![Bash: 3.2+](https://img.shields.io/badge/Bash-3.2%2B-green.svg)]()
@@ -6,7 +6,7 @@
 [![BMad: 6.2.2](https://img.shields.io/badge/BMad-6.2.2-purple.svg)](https://github.com/bmad-code-org/BMAD-METHOD)
 [![TEA: 1.7.2](https://img.shields.io/badge/TEA-1.7.2-teal.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise)
 
-Fully automated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with structured triage reviews — designed for unattended, sandboxed execution.
+Fully automated and very opinionated BMAD pipeline orchestration using multiple AI CLIs in parallel. Runs stories through 14+ steps across 7 phases with structured triage reviews — designed for unattended, sandboxed execution.
 
 > **Note:** This is a personal tool, built to fit a specific workflow. It is highly opinionated, under constant development, and may be unstable. Use at your own risk.
 
