@@ -73,13 +73,17 @@ TOOLS = {
 _INLINE_MAP_RE = re.compile(r"^([\w-]+):\s*\{(.*)\}\s*$")
 
 
+def _strip_comment(s: str) -> str:
+    """Drop a trailing ` # comment` (must be preceded by whitespace)."""
+    m = re.search(r"\s+#", s)
+    if m:
+        s = s[: m.start()]
+    return s.rstrip()
+
+
 def _strip_value(val: str) -> str:
     """Strip an inline trailing comment and surrounding quotes from a scalar."""
-    # Drop a trailing ` # comment` (must be preceded by whitespace).
-    m = re.search(r"\s+#", val)
-    if m:
-        val = val[: m.start()]
-    val = val.strip()
+    val = _strip_comment(val).strip()
     if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
         val = val[1:-1]
     return val.strip()
@@ -124,10 +128,13 @@ def parse_profiles(text: str) -> dict:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip(" "))
-        stripped = raw.strip()
+        # Indent comes from `raw`; strip any trailing comment so structural lines
+        # like `profiles:  # ...`, `ab-max:  # ...`, `claude:  # ...` (the
+        # documented config carries these) parse the same as bare ones.
+        stripped = _strip_comment(raw.strip())
 
         if not in_block:
-            if indent == 0 and stripped.rstrip() == "profiles:":
+            if indent == 0 and stripped == "profiles:":
                 in_block = True
             continue
 
@@ -317,6 +324,21 @@ def _run_self_test() -> int:
     assert mixed["ab-max"]["claude"]["model"] == "opus", mixed
     assert mixed["ab-max"]["claude"]["effort"] == "max", mixed
     assert "git" not in mixed and "tea" not in mixed
+
+    # Trailing comments on STRUCTURAL lines (profiles:/profile/tool), as the
+    # documented runtime config carries them — must parse like bare lines.
+    commented = parse_profiles(
+        "profiles:                  # per-profile model + effort, PER TOOL\n"
+        "  ab-max:                  # reads to generate the agent files\n"
+        "    claude:                # keep block style; run reprovision after\n"
+        "      model: opus\n"
+        "      effort: max\n"
+        "    codex:\n"
+        "      model: gpt-5.5\n"
+        "      reasoning_effort: high\n"
+    )
+    assert commented["ab-max"]["claude"] == {"model": "opus", "effort": "max"}, commented
+    assert commented["ab-max"]["codex"]["reasoning_effort"] == "high", commented
 
     # End-to-end render into a temp project root, both tools.
     with tempfile.TemporaryDirectory() as td:

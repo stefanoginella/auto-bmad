@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scripts/bump-version.py` now creates an **annotated** tag (was lightweight), so
   `git push --follow-tags` actually pushes it and the release workflow fires.
+- `scripts/render-agents.py` now tolerates **trailing comments on structural lines**
+  (`profiles:`, the profile name, the tool key) in the profiles source. The
+  documented `config.yaml` schema carries inline comments on those lines, which
+  previously made the parser miss the `profiles:` block entirely and fail
+  reprovisioning with "no 'profiles:' block found".
 
 ## [0.2.0] - 2026-05-27
 
