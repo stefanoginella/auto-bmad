@@ -1,6 +1,7 @@
 ---
 name: auto-bmad
 description: "Run the FULL BMAD story implementation workflow end-to-end for one story at a time. Use when the user says 'auto-bmad', 'run auto-bmad', 'implement the next story', 'auto implement story X-Y', or wants the whole create-story -> dev-story -> code-review (+ TEA + epic-boundary) pipeline driven automatically on a branch with a PR at the end."
+argument-hint: "[--story <id> | setup | reprovision | <overrides…>]"
 ---
 
 # auto-bmad orchestrator

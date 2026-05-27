@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `argument-hint` frontmatter on the `auto-bmad` skill, so Claude Code shows the
+  expected arguments (`--story <id>`, `setup`/`reprovision`, overrides) in the
+  slash-command autocomplete popup. No effect on Codex, which doesn't read
+  `argument-hint` for skills — harmless there.
+
 ### Changed
 
 - Codex delegate defaults (`gpt-5.5`/`gpt-5.4`) are now treated as **real model
