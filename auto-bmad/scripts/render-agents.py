@@ -354,7 +354,7 @@ def _run_self_test() -> int:
 
         codex_max = (root / ".codex/agents/ab-max.toml").read_text(encoding="utf-8")
         assert 'model = "gpt-5.5"' in codex_max, codex_max[:200]
-        assert 'model_reasoning_effort = "high"' in codex_max, codex_max[:200]
+        assert 'model_reasoning_effort = "xhigh"' in codex_max, codex_max[:200]
         assert "@@" not in codex_max, "unfilled placeholder in Codex output"
 
         # Codex output must be valid TOML.
@@ -364,7 +364,7 @@ def _run_self_test() -> int:
             parsed = tomllib.loads(codex_max)
             assert parsed["name"] == "ab-max"
             assert parsed["model"] == "gpt-5.5"
-            assert parsed["model_reasoning_effort"] == "high"
+            assert parsed["model_reasoning_effort"] == "xhigh"
             assert parsed["developer_instructions"].strip()
         except ModuleNotFoundError:
             # Older Python: fall back to a structural sanity check.

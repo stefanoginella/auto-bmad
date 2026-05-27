@@ -115,7 +115,8 @@ runtime concern (`/auto-bmad reprovision`), not a release artifact, so nothing r
   there, not via the Agent tool — that's why the templates exist); they CAN invoke skills but
   CANNOT spawn sub-agents.
 - **Codex:** subagents are TOML files in `.codex/agents/` (project) or `~/.codex/agents/`, with
-  `model` + `model_reasoning_effort` (effort: minimal|low|medium|high); invoked by naming the
+  `model` + `model_reasoning_effort` (gpt-5.x effort: low|medium|high|xhigh — xhigh is the
+  ceiling); invoked by naming the
   agent in natural language — Codex spawns/collects them. Model names are environment-specific
   (retunable per install), so they're config, not hardcoded — the shipped defaults are real.
 - **BMAD** has no portable abstraction for delegation or model/effort; modules are skills copied

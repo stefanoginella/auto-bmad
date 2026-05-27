@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expected arguments (`--story <id>`, `setup`/`reprovision`, overrides) in the
   slash-command autocomplete popup. No effect on Codex, which doesn't read
   `argument-hint` for skills — harmless there.
+- Phase 7 now resolves `[Review][Decision]` (decision-needed) review findings via
+  batched `AskUserQuestion` (≤4 per call) **before** the fix pass — it never
+  auto-guesses an ambiguous fix — and feeds the human-chosen directions into the
+  `code_review_fix` delegate.
 
 ### Changed
 
@@ -26,9 +30,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names**, not placeholders. Setup no longer emits the "⚠️ Codex models are
   placeholders — confirm them" warning / "needs human" action; retuning the
   `profiles` block stays available but is no longer flagged as required.
+- The phase→profile mapping now lives **only** in config `phase_profiles`: the
+  pipeline/delegation playbooks reference its keys (e.g. `create_story`,
+  `code_review_review`) instead of raw profile names, removing the prior
+  triplication. Added the missing `code_review_review_secondary` key (the even-
+  iteration reviewer used when `code_review.alternate_models` is on) and a
+  `phase_profiles:` defaults block to `assets/agents/profiles.yaml` so first-run
+  actually has it to copy. `render-agents.py` ignores the new block.
+- `assets/agents/profiles.yaml` is now the **single source** for the default
+  `profiles` + `phase_profiles` values. The `config.yaml` schema in
+  `state-and-resume.md` previously re-listed every model/effort and had already
+  drifted from the asset (e.g. `ab-fast` codex `gpt-5.4-mini` vs `gpt-5.4`, and
+  `xhigh` vs `high` effort on `ab-max`/`ab-xhigh`). The schema now shows just the
+  *shape* and points at the asset, so the two can't drift.
+- Corrected the documented Codex reasoning-effort set to `low|medium|high|xhigh`
+  (gpt-5.x; `xhigh` is the ceiling) in `profiles.yaml` and `CLAUDE.md` — the prior
+  `minimal|low|medium|high` wrongly omitted `xhigh`.
+- Standardized delegation-prompt placeholders: `<...>` for filesystem paths,
+  `{...}` for non-path fill-ins — so `{project_root}` is now `<project_root>`.
+- Bumped the Codex `reasoning_effort` of the top-tier profiles `ab-max` and
+  `ab-xhigh` from `high` to `xhigh` (the Codex gpt-5.x ceiling), restoring the
+  Claude-side tiering on Codex; `ab-high`/`ab-fast` stay `high`. Re-run
+  `/auto-bmad reprovision` to regenerate the Codex delegate `.toml` files.
 
 ### Fixed
 
+- Code-review references pointed at an `[AI-Review]` tag that `bmad-code-review`
+  never writes — it persists findings to a `### Review Findings` section as
+  `[Review][Patch]` / `[Review][Decision]` / `[Review][Defer]`. The review and fix
+  prompts and Phase 7 now reference the real artifact, so the fix pass reliably
+  finds its work instead of hunting for a tag that isn't there.
 - `scripts/bump-version.py` now creates an **annotated** tag (was lightweight), so
   `git push --follow-tags` actually pushes it and the release workflow fires.
 - `scripts/render-agents.py` now tolerates **trailing comments on structural lines**

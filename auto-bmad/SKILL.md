@@ -110,7 +110,7 @@ invocation carried any instructions — `references/overrides.md`, then:
    `code_review_iterations`). Otherwise initialize a fresh state file in Phase 1.
 4. **Git preflight & triage** (per Phase 0 of the pipeline): **you run the git preflight directly**
    — detect repo, clean tree, git mode, base branch. Then, **only if TEA enabled**, delegate the
-   story-risk classification to `ab-fast` to pick per-story TEA skills. Record the decisions in state.
+   story-risk classification to the `tea_per_story` profile to pick per-story TEA skills. Record the decisions in state.
 
 ### Step 2 — Run the pipeline
 Execute Phases 1–9 exactly as specified in `references/pipeline.md`, in order, skipping phases

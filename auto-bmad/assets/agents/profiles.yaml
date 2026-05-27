@@ -10,10 +10,10 @@
 # and run `/auto-bmad reprovision`. Keep the BLOCK style shown here (two-space
 # nesting) — the renderer's dependency-free parser expects it.
 #
-# Codex reasoning effort is one of: minimal | low | medium | high. Claude effort
-# is one of: low | medium | high | xhigh | max (set via the sub-agent `effort:`
-# frontmatter). Model names are environment-specific — retune above if your Codex
-# install exposes different names.
+# Codex reasoning effort (gpt-5.x) is one of: low | medium | high | xhigh — xhigh
+# is the ceiling (older GPT-5 also exposed minimal/none). Claude effort is one of:
+# low | medium | high | xhigh | max (set via the sub-agent `effort:` frontmatter).
+# Model names are environment-specific — retune above if your Codex install differs.
 profiles:
   ab-max:
     claude:
@@ -21,14 +21,14 @@ profiles:
       effort: max
     codex:
       model: gpt-5.5
-      reasoning_effort: high
+      reasoning_effort: xhigh
   ab-xhigh:
     claude:
       model: opus
       effort: xhigh
     codex:
       model: gpt-5.5
-      reasoning_effort: high
+      reasoning_effort: xhigh
   ab-high:
     claude:
       model: opus
@@ -43,3 +43,19 @@ profiles:
     codex:
       model: gpt-5.4
       reasoning_effort: high
+
+# Phase -> profile mapping. This is the SINGLE source of the phase->profile
+# binding: pipeline.md / delegation.md name these keys, never raw profile names.
+# `render-agents.py` only reads the `profiles:` block above and ignores this one
+# (its parser stops at the next top-level key), so editing here is renderer-safe.
+# Copied alongside `profiles` into config.yaml at first run; retune there.
+phase_profiles:
+  create_story: ab-xhigh
+  dev_story: ab-max
+  code_review_review: ab-xhigh            # primary reviewer (odd iterations)
+  code_review_review_secondary: ab-fast   # even iterations, when code_review.alternate_models
+  code_review_fix: ab-max
+  tea_per_story: ab-fast                  # Phase 0 triage, Phase 4 ATDD, Phase 6 automate
+  tea_epic: ab-high                       # Phase 2 epic test design, Phase 8 epic gates
+  retrospective: ab-high
+  project_context: ab-fast

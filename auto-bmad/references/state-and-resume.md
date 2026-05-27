@@ -28,53 +28,27 @@ git:
   base_branch: main        # auto-detected; written after first detection
 code_review:
   max_iterations: 3
-  alternate_models: true   # odd iters use the review profile (ab-xhigh), even iters ab-fast
-profiles:                  # per-profile model + effort, PER TOOL — the source render-agents.py
-  ab-max:                  # reads to generate .claude/agents and .codex/agents. Keep block
-    claude:                # style; run `/auto-bmad reprovision` after editing.
-      model: opus
-      effort: max
-    codex:
-      model: gpt-5.5
-      reasoning_effort: xhigh
-  ab-xhigh:
-    claude:
-      model: opus
-      effort: xhigh
-    codex:
-      model: gpt-5.5
-      reasoning_effort: xhigh
-  ab-high:
-    claude:
-      model: opus
-      effort: high
-    codex:
-      model: gpt-5.5
-      reasoning_effort: high
-  ab-fast:
-    claude:
-      model: sonnet
-      effort: high
-    codex:
-      model: gpt-5.4-mini
-      reasoning_effort: high
-phase_profiles:            # phase -> profile (defaults; user may retune)
-  create_story: ab-xhigh
-  dev_story: ab-max
-  code_review_review: ab-xhigh
-  code_review_fix: ab-max
-  tea_per_story: ab-fast
-  tea_epic: ab-high
-  retrospective: ab-high
-  project_context: ab-fast
-  # (git/PR work is run by the orchestrator directly — it has no delegate profile)
+  alternate_models: true   # odd iters use code_review_review, even iters code_review_review_secondary
+# profiles + phase_profiles complete the file but are NOT reproduced here (with values) on
+# purpose — their single source is assets/agents/profiles.yaml, which render-agents.py reads and
+# first run copies in verbatim. Edit that file (or this per-project copy) then `/auto-bmad
+# reprovision`. Shape only — see the asset for the actual model/effort defaults:
+profiles: {…}              # ab-max | ab-xhigh | ab-high | ab-fast, each:
+                           #   {claude: {model, effort}, codex: {model, reasoning_effort}}
+phase_profiles: {…}        # create_story, dev_story, code_review_review,
+                           #   code_review_review_secondary, code_review_fix, tea_per_story,
+                           #   tea_epic, retrospective, project_context
+                           # (git/PR work is run by the orchestrator directly — no delegate profile)
 ```
 
-The `profiles` block is the single source of truth for model/effort; `phase_profiles` picks
-which profile each phase uses. `delegation.host`/`mode` default to `auto` and are **re-detected
-each run**, so the same config runs in Claude Code or Codex with no reconfiguration;
-`target_tools` only controls which agent files were provisioned (see `delegation-runtime.md`).
-Codex model names ship as real defaults; retune the `profiles` block if your install differs.
+**`assets/agents/profiles.yaml` is the single source of truth for both blocks** — the default
+model/effort (`profiles`) and the phase→profile binding (`phase_profiles`, whose keys the
+pipeline/delegation playbooks name instead of raw profile names). First run copies it here
+verbatim; this schema shows only the *shape* so the asset and the doc can never drift.
+`delegation.host`/`mode` default to `auto` and are **re-detected each run**, so the same config
+runs in Claude Code or Codex with no reconfiguration; `target_tools` only controls which agent
+files were provisioned (see `delegation-runtime.md`). Codex model names ship as real defaults;
+retune `profiles` (in the asset) if your install differs.
 
 ## First-run flow (only when config.yaml is absent)
 The single interactive episode in normal operation. Always confirm `target_tools`, then offer
