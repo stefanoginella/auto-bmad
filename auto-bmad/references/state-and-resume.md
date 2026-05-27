@@ -74,7 +74,7 @@ The `profiles` block is the single source of truth for model/effort; `phase_prof
 which profile each phase uses. `delegation.host`/`mode` default to `auto` and are **re-detected
 each run**, so the same config runs in Claude Code or Codex with no reconfiguration;
 `target_tools` only controls which agent files were provisioned (see `delegation-runtime.md`).
-Codex model names are placeholders confirmed at setup.
+Codex model names ship as real defaults; retune the `profiles` block if your install differs.
 
 ## First-run flow (only when config.yaml is absent)
 The single interactive episode in normal operation. Always confirm `target_tools`, then offer

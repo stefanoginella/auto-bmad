@@ -117,7 +117,7 @@ runtime concern (`/auto-bmad reprovision`), not a release artifact, so nothing r
 - **Codex:** subagents are TOML files in `.codex/agents/` (project) or `~/.codex/agents/`, with
   `model` + `model_reasoning_effort` (effort: minimal|low|medium|high); invoked by naming the
   agent in natural language — Codex spawns/collects them. Model names are environment-specific
-  (confirmed at setup), so they're config, not hardcoded.
+  (retunable per install), so they're config, not hardcoded — the shipped defaults are real.
 - **BMAD** has no portable abstraction for delegation or model/effort; modules are skills copied
   into a tool's skills dir (`.claude/skills/`, `.codex/skills/`). Hence the tiered design.
 - `/bmad-create-story` has no `validate` mode; it self-validates against its checklist.

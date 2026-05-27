@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Codex delegate defaults (`gpt-5.5`/`gpt-5.4`) are now treated as **real model
+  names**, not placeholders. Setup no longer emits the "⚠️ Codex models are
+  placeholders — confirm them" warning / "needs human" action; retuning the
+  `profiles` block stays available but is no longer flagged as required.
+
 ### Fixed
 
 - `scripts/bump-version.py` now creates an **annotated** tag (was lightweight), so

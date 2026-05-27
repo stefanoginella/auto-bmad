@@ -10,10 +10,10 @@
 # and run `/auto-bmad reprovision`. Keep the BLOCK style shown here (two-space
 # nesting) — the renderer's dependency-free parser expects it.
 #
-# NOTE: Codex model names below are PLACEHOLDERS. Confirm the models available in
-# your Codex install during setup. Codex reasoning effort is one of:
-# minimal | low | medium | high. Claude effort is one of: low | medium | high |
-# xhigh | max (set via the sub-agent `effort:` frontmatter).
+# Codex reasoning effort is one of: minimal | low | medium | high. Claude effort
+# is one of: low | medium | high | xhigh | max (set via the sub-agent `effort:`
+# frontmatter). Model names are environment-specific — retune above if your Codex
+# install exposes different names.
 profiles:
   ab-max:
     claude:
