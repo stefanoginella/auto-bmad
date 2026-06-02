@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/auto-bmad reset-defaults` restores shipped profile defaults.** Discards your `config.yaml`
+  retunes and re-seeds `profiles`/`phase_profiles` from the module asset — scope it to one profile,
+  all profiles, or the phase mapping. Leaves your git/TEA/delegation setup untouched (config_plan.py).
+
 ### Fixed
 
 - **Long-epic trace advisory now triggers from a deterministic story count** — the sprint-status

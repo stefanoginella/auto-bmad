@@ -46,7 +46,8 @@ code_review:
 # profiles + phase_profiles complete the file but are NOT reproduced here (with values) on
 # purpose — their single source is assets/agents/profiles.yaml, which render-agents.py reads and
 # first run copies in verbatim. Edit that file (or this per-project copy) then `/auto-bmad
-# reprovision`. Shape only — see the asset for the actual model/effort defaults:
+# reprovision`; `/auto-bmad reset-defaults` discards edits and re-seeds from the asset (see
+# "reset-defaults" below). Shape only — see the asset for the actual model/effort defaults:
 profiles: {…}              # ab-xhigh | ab-high | ab-alt-xhigh | ab-alt-high, each:
                            #   {claude: {model, effort}, codex: {model, reasoning_effort}}
 phase_profiles: {…}        # create_story, dev_story, code_review_review,
@@ -94,7 +95,9 @@ The single interactive episode in normal operation. Always confirm `target_tools
    true). `git.base_branch` is auto-detected, never asked.
 5. Write `config.yaml` with the seeded delegation/profiles, the confirmed `target_tools`, the
    answers, and detected `git`/`base_branch` values (Quick fills the step-4 fields with the
-   defaults above). Also stamp `profiles_source_version` with the current `module_version` from
+   defaults above). Above the copied `profiles:` block, write a short pointer comment naming both
+   retune paths — *edit here, then `/auto-bmad reprovision`* and *discard edits with `/auto-bmad
+   reset-defaults`* (see "reset-defaults" below). Also stamp `profiles_source_version` with the current `module_version` from
    `{skill-root}/assets/module.yaml` (advisory; never auto-overwrites the user's blocks — see the
    `config.yaml` comment above).
    **Then stop — do not start the pipeline this session.** This first-run write
@@ -108,6 +111,50 @@ The single interactive episode in normal operation. Always confirm `target_tools
 
    Either way, running the pipeline on the context that just did setup wastes the window. (On
    later runs `config.yaml` already exists, so this flow is skipped.)
+
+## reset-defaults — restore shipped profile defaults
+`/auto-bmad reset-defaults [scope]` discards retunes in `config.yaml` and re-seeds the
+**asset-sourced** blocks from `{skill-root}/assets/agents/profiles.yaml`. It is the inverse of the
+Phase 0 additive heal (which only *appends* missing keys and never reverts an edited value), and the
+one-shot fix for a `manual_review` item the heal won't auto-write (a sub-key missing from a profile
+that already exists). **Config-only:** report what changed, then stop — never start a pipeline.
+
+**Scope** (the optional arg; bare = both asset blocks):
+- *(omitted)* — both `profiles` and `phase_profiles`.
+- `profiles` — every profile block (a user-added profile absent from the asset is left intact).
+- `<profile-name>` (e.g. `ab-high`) — that one profile.
+- `phase_profiles` — the phase→profile mapping only.
+
+**Boundary (state it to the user):** reset-defaults touches **only** `profiles`, `phase_profiles`,
+and the `profiles_source_version` stamp — **never** `delegation`/`tea`/`git`/`code_review`, which
+are setup answers, not shipped defaults. Redoing those is `setup`/`configure`.
+
+**Flow:**
+1. Require `config.yaml` to exist. Absent → "Nothing to reset — run `/auto-bmad setup` first." and stop.
+2. Plan (read-only):
+   ```
+   python3 {skill-root}/scripts/config_plan.py --reset <scope> --config <output_folder>/auto-bmad/config.yaml
+   ```
+   (the shipped `assets/agents/profiles.yaml` + `assets/module.yaml` resolve relative to the script).
+   Empty `would_change` → "Already at shipped defaults for `<scope>`." and stop.
+3. **Confirm** with `AskUserQuestion`, showing the `current → default` diff (truncate long persona
+   strings). Options: **Reset** (discards the listed retunes) / **Cancel**. This is the sole
+   interactive moment; Cancel → stop, write nothing.
+4. On confirm, write by re-running with `--write` (backs the prior config up to `config.yaml.bak`,
+   then overwrites). Report the backup path and any `version_restamp`: a **full** reset restamps
+   `profiles_source_version` to the module version; a **scoped** reset leaves it — a partial reset
+   can't claim the whole asset-sourced surface matches that version.
+5. **Re-render delegates iff the plan's `render_needed` is true** — a profile's model/effort/persona
+   changed, so the `ab-*` agent files are now stale. Hand this to the **same reprovision path** the
+   rest of the skill uses: resolve host/tier per `delegation-runtime.md` and read
+   `delegation.target_tools` from the config you just wrote, then run the `reprovision` action
+   (`scripts/render-agents.py` for those tools) exactly as `module-setup.md` describes — don't
+   re-derive it here. It is a no-op off `custom-subagents` (there are no `ab-*` files under
+   `general-subagents`/`inline`), and a `phase_profiles`-only reset never sets `render_needed`. When
+   agents were actually rendered, surface the **process-restart caveat** (`delegation-runtime.md` →
+   "Newly-rendered agents need a process restart") — the new agents aren't invokable until a full
+   quit & relaunch.
+6. Report scope, what was reset, the backup path, restamp, and whether a relaunch is needed. Stop.
 
 ## state/{key}.yaml
 The state file is a **machine-readable contract**, not a prose log. Every field listed below is

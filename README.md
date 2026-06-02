@@ -93,6 +93,7 @@ Run from the root of a BMAD-enabled project:
 /auto-bmad stop before code-review        # steer a single run (see Overrides)
 /auto-bmad --story 1-3 skip git commits
 /auto-bmad reprovision                    # re-render delegate agents after editing profiles
+/auto-bmad reset-defaults                 # discard profile retunes, restore shipped defaults
 ```
 
 > 💡 **Run it in an auto-approve / "YOLO" mode.** auto-bmad is built to run autonomously between the [human-in-the-loop stops](#human-in-the-loop-stops) below, so it works best when the host tool isn't prompting for permission on every tool call — Claude Code's `--dangerously-skip-permissions` (aka YOLO mode), or Codex's full-auto/auto-approve mode. Because that hands the agent broad access, run it inside a sandbox: see [aicontainer](https://github.com/stefanoginella/aicontainer) for a containerized environment that lets you skip permission prompts safely.
@@ -174,7 +175,7 @@ A plain no-arg `/auto-bmad` resumes the interrupted pipeline at the next unfinis
 
 ## Configuration
 
-`_bmad-output/auto-bmad/config.yaml` (created on first run) controls TEA on/off (including the non-blocking long-epic per-story trace advisory, `tea.story_trace_advisory` — toggle + `min_epic_stories` threshold), git mode (PR vs local-only), branch prefix, code-review iteration cap + model alternation, the per-phase profile mapping (`phase_profiles`), and the per-tool model + effort for each delegate (`profiles`). It also records `delegation.target_tools` — the tools agents are provisioned for. Setup **defaults this to whichever AIs your BMAD install already targets** (detected from where the skill is installed — `.claude/skills` for Claude Code, `.agents/skills` for Codex) and lets you confirm or adjust. **Provision more than one and the same project works in either** — the running tool is auto-detected each run, so you never reconfigure when you switch. After editing `profiles` (e.g. to set your Codex model names), run `/auto-bmad reprovision`. See `references/state-and-resume.md` for the full schema.
+`_bmad-output/auto-bmad/config.yaml` (created on first run) controls TEA on/off (including the non-blocking long-epic per-story trace advisory, `tea.story_trace_advisory` — toggle + `min_epic_stories` threshold), git mode (PR vs local-only), branch prefix, code-review iteration cap + model alternation, the per-phase profile mapping (`phase_profiles`), and the per-tool model + effort for each delegate (`profiles`). It also records `delegation.target_tools` — the tools agents are provisioned for. Setup **defaults this to whichever AIs your BMAD install already targets** (detected from where the skill is installed — `.claude/skills` for Claude Code, `.agents/skills` for Codex) and lets you confirm or adjust. **Provision more than one and the same project works in either** — the running tool is auto-detected each run, so you never reconfigure when you switch. After editing `profiles` (e.g. to set your Codex model names), run `/auto-bmad reprovision`; to undo your edits and restore the shipped defaults, run `/auto-bmad reset-defaults` (scope it to one profile, all profiles, or the phase mapping — your git/TEA/delegation settings are never touched). See `references/state-and-resume.md` for the full schema.
 
 ## Contributing
 

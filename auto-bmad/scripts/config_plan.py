@@ -330,6 +330,219 @@ def _restamp_version(lines: list[str], new_version: str) -> dict:
     return {"from": None, "to": new_version}
 
 
+# --------------------------------------------------------------------------- #
+# reset: restore shipped defaults (the inverse of the additive --apply heal).  #
+# --apply only APPENDS missing keys; it never reverts a user's edited value.   #
+# reset OVERWRITES the asset-sourced blocks (profiles / phase_profiles) from    #
+# the asset, scoped, and NEVER touches the behavioural blocks (delegation /     #
+# tea / git / code_review) — those are setup answers, not shipped defaults.    #
+# --------------------------------------------------------------------------- #
+
+RESET_BLOCK_SCOPES = ("both", "profiles", "phase_profiles")
+
+
+def _profile_leaf_values(lines: Sequence[str], start: int, end: int) -> dict:
+    """Leaf ``key -> value`` map for one profile's ``lines[start:end]``.
+
+    Keys mirror ``parse_profiles_blocks`` (``meta:<k>`` for a per-profile scalar,
+    ``<tool>:<k>`` for a tool sub-key) but carry the *value* too — so a reset can
+    report a precise ``current -> default`` diff. ``start`` is the ``  name:``
+    header line; sub-keys sit at indent 4, tool sub-keys at indent >= 6.
+    """
+    out: dict = {}
+    cur_tool: str | None = None
+    for i in range(start + 1, end):
+        line = lines[i]
+        if _is_blank_or_comment(line):
+            continue
+        ind = _indent(line)
+        stripped = _strip_comment(line.strip())
+        if ind == 4:
+            if stripped.endswith(":") and not stripped.startswith("{"):
+                cur_tool = stripped[:-1].strip()
+            elif ":" in stripped:
+                key, _, val = stripped.partition(":")
+                val = val.strip()
+                if val.startswith("{"):  # inline tool map: tool: {model: .., effort: ..}
+                    tool = key.strip()
+                    for part in val.strip("{} ").split(","):
+                        if ":" in part:
+                            sk, _, sv = part.partition(":")
+                            out[f"{tool}:{sk.strip()}"] = _strip_value(sv)
+                    cur_tool = None
+                else:  # per-profile scalar metadata
+                    out[f"meta:{key.strip()}"] = _strip_value(val)
+                    cur_tool = None
+        elif ind >= 6 and cur_tool is not None and ":" in stripped:
+            key, _, val = stripped.partition(":")
+            out[f"{cur_tool}:{key.strip()}"] = _strip_value(val)
+    return out
+
+
+def reset(config_text: str, asset_text: str, config_version: str | None,
+          module_version: str | None, scope: str | None) -> dict:
+    """Restore the asset's defaults for ``scope`` into the config.
+
+    ``scope`` is one of ``profiles`` (all profile blocks), ``phase_profiles``
+    (the phase->profile mapping), a single ``<profile-name>``, or ``None``/``both``
+    (both asset blocks). Returns a plan + the rewritten text; callers decide
+    whether to write. On an unrecognised scope returns ``{"error": ...}``.
+
+    Restamp rule: only a **full** reset (``both``) restamps ``profiles_source_version``
+    to ``module_version`` — a partial reset can't honestly claim the whole
+    asset-sourced surface matches that version, so it leaves the stamp.
+    """
+    cfg_lines = config_text.splitlines(keepends=True)
+    asset_lines = asset_text.splitlines(keepends=True)
+
+    asset_prof = parse_profiles_blocks(asset_lines, find_block(asset_lines, "profiles"))
+    cfg_prof = parse_profiles_blocks(cfg_lines, find_block(cfg_lines, "profiles"))
+
+    sc = "both" if scope is None else scope
+    if sc not in RESET_BLOCK_SCOPES and sc not in asset_prof:
+        return {
+            "error": "unknown_scope",
+            "scope": scope,
+            "valid_scopes": sorted(RESET_BLOCK_SCOPES) + sorted(asset_prof),
+        }
+
+    is_full = sc == "both"
+    do_phase = sc in ("both", "phase_profiles")
+    if sc in ("both", "profiles"):
+        target_profiles = list(asset_prof)         # all asset-known profiles
+    elif sc in asset_prof:
+        target_profiles = [sc]                      # one named profile
+    else:
+        target_profiles = []                        # phase_profiles-only
+
+    would_change: list[dict] = []
+
+    # --- profile diffs (current -> default per leaf key) ---
+    for name in target_profiles:
+        a_info = asset_prof[name]
+        a_vals = _profile_leaf_values(asset_lines, a_info["start"], a_info["end"])
+        if name in cfg_prof:
+            c_info = cfg_prof[name]
+            c_vals = _profile_leaf_values(cfg_lines, c_info["start"], c_info["end"])
+        else:
+            c_vals = {}
+        for k, dv in a_vals.items():
+            cv = c_vals.get(k)
+            if cv != dv:
+                would_change.append({"profile": name, "key": k, "current": cv, "default": dv})
+        for k, cv in c_vals.items():
+            if k not in a_vals:  # config-only sub-key the reset will drop
+                would_change.append({"profile": name, "key": k, "current": cv, "default": None})
+
+    # --- phase_profiles diff ---
+    if do_phase:
+        cfg_pp = parse_phase_profiles(cfg_lines, find_block(cfg_lines, "phase_profiles"))
+        asset_pp = parse_phase_profiles(asset_lines, find_block(asset_lines, "phase_profiles"))
+        for k, dv in asset_pp.items():
+            cv = cfg_pp.get(k)
+            if cv != dv:
+                would_change.append({"block": "phase_profiles", "key": k, "current": cv, "default": dv})
+        for k, cv in cfg_pp.items():
+            if k not in asset_pp:
+                would_change.append({"block": "phase_profiles", "key": k, "current": cv, "default": None})
+
+    render_needed = any("profile" in c for c in would_change)
+
+    # --- build the rewritten text ---
+    # In-place/anchored edits (start < end_exclusive) applied bottom-up; whole-block
+    # (re)creation, used only if the config lacks a `profiles:`/`phase_profiles:` header,
+    # is appended at EOF afterwards so plan and write never disagree.
+    edits: list[tuple[int, int, list[str]]] = []
+    trailing: list[str] = []
+
+    in_config = [n for n in target_profiles if n in cfg_prof]
+    missing = [n for n in target_profiles if n not in cfg_prof]
+    for name in in_config:
+        c = cfg_prof[name]
+        a = asset_prof[name]
+        edits.append((c["start"], c["end"], list(asset_lines[a["start"]: a["end"]])))
+    if missing:
+        block: list[str] = []
+        for name in missing:
+            a = asset_prof[name]
+            block.append("\n")
+            block.extend(asset_lines[a["start"]: a["end"]])
+        span = find_block(cfg_lines, "profiles")
+        if span is not None:
+            header, end = span
+            anchor = _last_content_idx(cfg_lines, header + 1, end)
+            anchor = anchor if anchor is not None else header
+            _ensure_newline(cfg_lines, anchor)
+            edits.append((anchor + 1, anchor + 1, block))
+        else:  # no `profiles:` block at all — recreate it at EOF
+            trailing += ["profiles:\n"] + block
+
+    if do_phase:
+        a_span = find_block(asset_lines, "phase_profiles")
+        if a_span is not None:
+            a_h, a_e = a_span
+            body = list(asset_lines[a_h + 1: a_e])
+            c_span = find_block(cfg_lines, "phase_profiles")
+            if c_span is not None:
+                c_h, c_e = c_span
+                edits.append((c_h + 1, c_e, body))
+            else:  # no `phase_profiles:` block at all — recreate it at EOF
+                trailing += (["\n"] if trailing else []) + ["phase_profiles:\n"] + body
+
+    # Apply bottom-up so earlier indices stay valid; guard the splice boundary.
+    for start, stop, repl in sorted(edits, key=lambda t: t[0], reverse=True):
+        if repl and not repl[-1].endswith("\n"):
+            repl = repl[:-1] + [repl[-1] + "\n"]
+        cfg_lines[start:stop] = repl
+    if trailing:
+        if cfg_lines:
+            _ensure_newline(cfg_lines, len(cfg_lines) - 1)
+        if not trailing[-1].endswith("\n"):
+            trailing[-1] = trailing[-1] + "\n"
+        cfg_lines.extend(trailing)
+
+    restamped = None
+    if is_full and module_version and config_version != module_version:
+        restamped = _restamp_version(cfg_lines, module_version)
+
+    return {
+        "scope": sc,
+        "would_change": would_change,
+        "render_needed": render_needed,
+        "version_restamp": restamped,
+        "new_text": "".join(cfg_lines),
+    }
+
+
+def reset_to_file(config_path: Path, asset_path: Path, module_version: str | None,
+                  scope: str | None, write: bool) -> dict:
+    config_text = config_path.read_text(encoding="utf-8")
+    asset_text = asset_path.read_text(encoding="utf-8")
+    config_version = _read_version(config_text, "profiles_source_version")
+    res = reset(config_text, asset_text, config_version, module_version, scope)
+    if res.get("error"):
+        return {"status": "error", "message": f"unknown reset scope: {res['scope']!r}",
+                "valid_scopes": res["valid_scopes"], "config_path": str(config_path)}
+
+    changed = bool(res["would_change"]) or bool(res["version_restamp"])
+    backup = None
+    if write and changed:
+        backup = str(config_path) + ".bak"
+        Path(backup).write_text(config_text, encoding="utf-8")
+        config_path.write_text(res["new_text"], encoding="utf-8")
+
+    status = "reset" if (write and changed) else ("noop" if write else "reset-plan")
+    return {
+        "status": status,
+        "scope": res["scope"],
+        "would_change": res["would_change"],
+        "render_needed": res["render_needed"],
+        "version_restamp": res["version_restamp"],
+        "backup": backup,
+        "config_path": str(config_path),
+    }
+
+
 def _default_asset_profiles() -> Path:
     return Path(__file__).resolve().parent.parent / "assets" / "agents" / "profiles.yaml"
 
@@ -477,6 +690,119 @@ def _run_self_test() -> int:
         chk2 = check_file(cfgp, asset, "0.9.0")
         assert chk2["status"] == "fresh", chk2
 
+    # --- reset: restore shipped defaults (the inverse of the additive heal). ---
+    def _mk_cfg(version: str, body: str) -> str:
+        return (
+            'version: 1\n'
+            f'profiles_source_version: "{version}"\n'
+            'delegation:\n  host: auto\n'
+            'git:\n  mode: auto\n'
+            'tea:\n  enabled: true\n'
+        ) + body
+
+    # ab-xhigh retuned (model+effort) and one phase mapping retuned, on top of the asset.
+    retuned_body = asset_text.replace(
+        "      model: opus\n      effort: xhigh\n", "      model: haiku\n      effort: low\n", 1
+    )
+    assert "model: haiku" in retuned_body, "fixture: ab-xhigh claude block not retuned"
+    retuned_body = retuned_body.replace("  create_story: ab-xhigh\n", "  create_story: ab-alt-high\n", 1)
+    cfg_r = _mk_cfg("0.8.0", retuned_body)
+
+    # Full reset: restores values, restamps, flags render, preserves non-asset blocks.
+    full = reset(cfg_r, asset_text, "0.8.0", "0.9.0", None)
+    assert not full.get("error"), full
+    assert full["render_needed"] is True, full
+    assert full["version_restamp"] == {"from": "0.8.0", "to": "0.9.0"}, full["version_restamp"]
+    changed = {(c.get("profile"), c.get("block"), c["key"]) for c in full["would_change"]}
+    assert ("ab-xhigh", None, "claude:model") in changed, changed
+    assert ("ab-xhigh", None, "claude:effort") in changed, changed
+    assert (None, "phase_profiles", "create_story") in changed, changed
+    ht = full["new_text"]
+    h_lines2 = ht.splitlines(keepends=True)
+    h_prof2 = parse_profiles_blocks(h_lines2, find_block(h_lines2, "profiles"))
+    h_vals = _profile_leaf_values(h_lines2, h_prof2["ab-xhigh"]["start"], h_prof2["ab-xhigh"]["end"])
+    assert h_vals["claude:model"] == "opus" and h_vals["claude:effort"] == "xhigh", h_vals
+    assert parse_phase_profiles(h_lines2, find_block(h_lines2, "phase_profiles")) == a_pp, "phase_profiles not restored"
+    assert "delegation:" in ht and "git:" in ht and "enabled: true" in ht, "non-asset blocks dropped"
+    assert 'profiles_source_version: "0.9.0"' in ht, "stamp not restamped on full reset"
+    full2 = reset(ht, asset_text, "0.9.0", "0.9.0", None)  # idempotent
+    assert not full2["would_change"] and full2["version_restamp"] is None, full2
+
+    # Scoped (single profile): only that profile changes; OTHER retunes survive; stamp untouched.
+    two = asset_text.replace(
+        "      model: opus\n      effort: xhigh\n", "      model: haiku\n      effort: low\n", 1
+    ).replace("      model: opus\n      effort: high\n", "      model: sonnet\n      effort: low\n", 1)
+    one = reset(_mk_cfg("0.8.0", two), asset_text, "0.8.0", "0.9.0", "ab-xhigh")
+    assert one["version_restamp"] is None, "scoped reset must NOT restamp"
+    assert {c.get("profile") for c in one["would_change"]} == {"ab-xhigh"}, one["would_change"]
+    ot = one["new_text"]
+    o_lines = ot.splitlines(keepends=True)
+    o_prof = parse_profiles_blocks(o_lines, find_block(o_lines, "profiles"))
+    o_x = _profile_leaf_values(o_lines, o_prof["ab-xhigh"]["start"], o_prof["ab-xhigh"]["end"])
+    o_h = _profile_leaf_values(o_lines, o_prof["ab-high"]["start"], o_prof["ab-high"]["end"])
+    assert o_x["claude:model"] == "opus", "ab-xhigh not restored"
+    assert o_h["claude:model"] == "sonnet" and o_h["claude:effort"] == "low", "ab-high retune clobbered by scoped reset"
+    assert 'profiles_source_version: "0.8.0"' in ot, "scoped reset changed the stamp"
+
+    # phase_profiles-only reset: mapping restored, profiles untouched, no render, stamp left.
+    pres = reset(_mk_cfg("0.8.0", asset_text.replace("  dev_story: ab-xhigh", "  dev_story: ab-high", 1)),
+                 asset_text, "0.8.0", "0.9.0", "phase_profiles")
+    assert pres["render_needed"] is False, pres
+    assert pres["version_restamp"] is None, pres
+    assert {(c.get("block"), c["key"]) for c in pres["would_change"]} == {("phase_profiles", "dev_story")}, pres["would_change"]
+    pt = pres["new_text"]
+    assert parse_phase_profiles(pt.splitlines(keepends=True), find_block(pt.splitlines(keepends=True), "phase_profiles")) == a_pp, "phase_profiles not restored"
+
+    # reset <profile> is the remedy for a manual_review (missing sub-key) that --apply won't write.
+    cfg_drop = _mk_cfg("0.9.0", asset_text.replace("      model: opus\n      effort: xhigh\n", "      model: opus\n", 1))
+    assert any(m["profile"] == "ab-xhigh" and m["missing_key"] == "claude:effort"
+               for m in analyze(cfg_drop, asset_text, "0.9.0", "0.9.0")["manual_review"]), "fixture: missing sub-key not detected"
+    fixed = reset(cfg_drop, asset_text, "0.9.0", "0.9.0", "ab-xhigh")["new_text"]
+    assert not analyze(fixed, asset_text, "0.9.0", "0.9.0")["manual_review"], "reset did not heal the missing sub-key"
+
+    # A user-added profile is preserved by a 'profiles' reset and is not itself a valid scope.
+    mini = (
+        'version: 1\nprofiles_source_version: "0.9.0"\n'
+        'profiles:\n'
+        '  ab-xhigh:\n    description: "x"\n    claude:\n      model: haiku\n      effort: low\n'
+        '    codex:\n      model: gpt-x\n      reasoning_effort: low\n'
+        '  ab-custom:\n    description: "mine"\n    claude:\n      model: opus\n      effort: medium\n'
+        'phase_profiles:\n  create_story: ab-xhigh\n'
+    )
+    rprof = reset(mini, asset_text, "0.9.0", "0.9.0", "profiles")
+    rt = rprof["new_text"]
+    r_lines = rt.splitlines(keepends=True)
+    rp = parse_profiles_blocks(r_lines, find_block(r_lines, "profiles"))
+    assert "ab-custom" in rp, "user-added profile pruned by reset"
+    assert {"ab-xhigh", "ab-high", "ab-alt-xhigh", "ab-alt-high"}.issubset(set(rp)), sorted(rp)
+    assert _profile_leaf_values(r_lines, rp["ab-xhigh"]["start"], rp["ab-xhigh"]["end"])["claude:model"] == "opus", "ab-xhigh not reset"
+    rc = _profile_leaf_values(r_lines, rp["ab-custom"]["start"], rp["ab-custom"]["end"])
+    assert rc["claude:model"] == "opus" and rc["claude:effort"] == "medium", "ab-custom altered"
+    assert parse_phase_profiles(r_lines, find_block(r_lines, "phase_profiles")) == {"create_story": "ab-xhigh"}, "phase_profiles touched by 'profiles' scope"
+    assert reset(mini, asset_text, "0.9.0", "0.9.0", "ab-nope").get("error") == "unknown_scope", "unknown profile accepted as scope"
+    assert reset(mini, asset_text, "0.9.0", "0.9.0", "ab-custom").get("error") == "unknown_scope", "config-only profile is not an asset scope"
+
+    # A config missing an entire asset block has it recreated — plan and write agree.
+    no_pp = _mk_cfg("0.8.0", asset_text[:asset_text.index("phase_profiles:")])
+    assert find_block(no_pp.splitlines(keepends=True), "phase_profiles") is None, "fixture: phase_profiles still present"
+    rec = reset(no_pp, asset_text, "0.8.0", "0.9.0", None)
+    assert any(c.get("block") == "phase_profiles" for c in rec["would_change"]), "plan omits the missing block"
+    rl = rec["new_text"].splitlines(keepends=True)
+    assert parse_phase_profiles(rl, find_block(rl, "phase_profiles")) == a_pp, "missing phase_profiles not recreated"
+
+    # File-driven: read-only plan writes nothing; --write backs up then resets; re-run is a noop.
+    with tempfile.TemporaryDirectory() as td:
+        cp = Path(td) / "config.yaml"
+        cp.write_text(cfg_r, encoding="utf-8")
+        plan = reset_to_file(cp, asset, "0.9.0", scope=None, write=False)
+        assert plan["status"] == "reset-plan" and plan["would_change"] and plan["backup"] is None, plan
+        assert not (Path(str(cp) + ".bak")).exists(), "read-only plan must not write a .bak"
+        done = reset_to_file(cp, asset, "0.9.0", scope=None, write=True)
+        assert done["status"] == "reset" and done["backup"] == str(cp) + ".bak", done
+        assert Path(done["backup"]).read_text(encoding="utf-8") == cfg_r, "backup must hold the original"
+        assert reset_to_file(cp, asset, "0.9.0", scope=None, write=True)["status"] == "noop", "second reset should be a noop"
+        assert reset_to_file(cp, asset, "0.9.0", scope="ab-nope", write=False)["status"] == "error", "bad scope must error"
+
     print("SELF-TEST PASSED (all assertions)")
     return 0
 
@@ -516,6 +842,12 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true", help="Run internal tests and exit.")
     parser.add_argument("--check", action="store_true", help="Report drift (read-only). Exit 1 if drift.")
     parser.add_argument("--apply", action="store_true", help="Additively heal the config in place.")
+    parser.add_argument(
+        "--reset", nargs="?", const="both", metavar="SCOPE",
+        help="Restore asset defaults for SCOPE: 'profiles' (all profile blocks), 'phase_profiles', "
+             "a single <profile-name>, or omit SCOPE for both asset blocks. Read-only plan unless --write. "
+             "Never touches delegation/tea/git/code_review.")
+    parser.add_argument("--write", action="store_true", help="With --reset: write the result (backs up to <config>.bak first).")
     parser.add_argument("--config", help="Runtime config.yaml to inspect/heal.")
     parser.add_argument("--asset-profiles", help="Shipped profiles.yaml. Default: assets/agents/profiles.yaml next to this script.")
     parser.add_argument("--module-yaml", help="module.yaml to read module_version from. Default: assets/module.yaml next to this script.")
@@ -525,8 +857,8 @@ def main() -> int:
     if args.self_test:
         return _run_self_test()
 
-    if not (args.check or args.apply):
-        print(json.dumps({"status": "error", "message": "one of --check / --apply / --self-test is required"}))
+    if not (args.check or args.apply or args.reset is not None):
+        print(json.dumps({"status": "error", "message": "one of --check / --apply / --reset / --self-test is required"}))
         return 2
     if not args.config:
         print(json.dumps({"status": "error", "message": "--config is required"}))
@@ -546,6 +878,11 @@ def main() -> int:
         myaml = Path(args.module_yaml) if args.module_yaml else _default_module_yaml()
         if myaml.is_file():
             module_version = _read_version(myaml.read_text(encoding="utf-8"), "module_version")
+
+    if args.reset is not None:
+        result = reset_to_file(config_path, asset_path, module_version, scope=args.reset, write=args.write)
+        print(json.dumps(result, indent=2))
+        return 2 if result["status"] == "error" else 0
 
     if args.apply:
         result = apply_to_file(config_path, asset_path, module_version)

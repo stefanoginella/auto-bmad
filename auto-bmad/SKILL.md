@@ -1,7 +1,7 @@
 ---
 name: auto-bmad
 description: "Run the FULL BMAD story implementation workflow end-to-end for one story at a time. Use when the user says 'auto-bmad', 'run auto-bmad', 'implement the next story', 'auto implement story X-Y', or wants the whole create-story -> dev-story -> code-review (+ TEA + epic-boundary) pipeline driven automatically on a branch with a PR at the end."
-argument-hint: "[--story <id> | setup | reprovision | <overrides…>]"
+argument-hint: "[--story <id> | setup | reprovision | reset-defaults | <overrides…>]"
 ---
 
 # auto-bmad orchestrator
@@ -24,9 +24,16 @@ Before the procedure, handle module registration and delegate provisioning:
   config, and renders the tool-native delegate agents (`.claude/agents/ab-*.md` and/or
   `.codex/agents/ab-*.toml`) for the selected `target_tools`. `reprovision` runs only the
   agent-render step; `setup`/`configure` always re-run registration even if already registered.
+- If invoked with `reset-defaults [scope]`, run the **restore-shipped-defaults** flow in
+  `references/state-and-resume.md` → "reset-defaults": overwrite the asset-sourced
+  `profiles`/`phase_profiles` from the shipped asset (after showing the diff and confirming), then
+  re-render delegates if a profile changed. It needs a BMAD project + an existing `config.yaml`,
+  is **config-only** (report what changed, then **stop** — never start a pipeline), and never
+  touches the `delegation`/`tea`/`git`/`code_review` setup blocks.
 - This requires a BMAD project; if `_bmad/` is absent, the Step 0.1 hard-stop applies.
-- If the user's only intent was `setup`/`configure`/`reprovision`, stop after reporting what was
-  written/rendered — do **not** start a pipeline run. Otherwise continue to the Procedure — but
+- If the user's only intent was `setup`/`configure`/`reprovision`/`reset-defaults`, stop after
+  reporting what was written/rendered — do **not** start a pipeline run. Otherwise continue to the
+  Procedure — but
   if configuration ran **only because it was missing** (a run-intent invocation on a fresh
   project), the Procedure's first-run flow finishes the remaining config and then **stops for a
   fresh session** rather than launching the pipeline (see Step 0.3).
