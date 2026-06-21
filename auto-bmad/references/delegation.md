@@ -116,6 +116,8 @@ It passes the diff and each lens's findings **by path, never by content** — so
 Run `/bmad-review-adversarial-general` in <project_root> with the diff at <diff_file> as the content to
 review. Review ONLY that diff — do NOT open the spec, the story file, or any other project file; your
 value is being unanchored by the spec. Write the skill's findings (its markdown list) to <blind_out>.
+You are NOT done until <blind_out> exists on disk — write it with the Write tool and verify it landed
+before you finish (do not end with the findings only in chat).
 Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 
@@ -123,7 +125,9 @@ Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 Run `/bmad-review-edge-case-hunter` in <project_root> with the diff at <diff_file> as the content to
 review (you may read project files the diff references). Write the skill's JSON-array output to
-<edge_out>. Report ONLY the path you wrote and your finding count — NOT the findings text.
+<edge_out>. You are NOT done until <edge_out> exists on disk — write it with the Write tool and verify
+it landed before you finish (do not end with the findings only in chat).
+Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 
 #### code-review-auditor  (Acceptance Auditor — diff + spec)
@@ -134,8 +138,10 @@ contradictions between spec constraints and actual code. Output findings as a Ma
 finding: one-line title, which AC/constraint it violates, and evidence from the diff.
 
 The diff is at <diff_file>; the spec/story file is <story_file> (load it, plus any docs its `context`
-frontmatter lists). Write your findings to <auditor_out>. Report ONLY the path you wrote and your
-finding count — NOT the findings text.
+frontmatter lists). Write your findings to <auditor_out>. You are NOT done until <auditor_out> exists
+on disk — write it with the Write tool and verify it landed before you finish (do not end with the
+findings only in chat).
+Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 (The first paragraph is the Acceptance Auditor prompt **verbatim** from the `bmad-code-review` skill's `step-02-review.md`. Keep it in lockstep with upstream.)
 
@@ -186,6 +192,17 @@ each such case as a failed/empty layer):
 The diff under review is at <diff_file>; the spec/story file is <story_file>. Do NOT re-review — work
 from those files.
 
+PERSIST DISCIPLINE (read this FIRST — some models exhaust their step budget reading and never write):
+- STEP 1, BEFORE reading the lens files: use the Write/Edit tool to create the `### Review Findings`
+  section (or its `#### Iteration N` subsection) in <story_file> with a single
+  `<!-- triage in progress -->` placeholder line. This guarantees the deliverable exists even if you
+  run out of steps. STEP 2: read the lens files (budget: open ONLY the {lens_files}/security files +
+  <story_file> + <diff_file> — do not wander the codebase). STEP 3: Edit the placeholder into the
+  real bullets per PERSIST below.
+- You are NOT done until <story_file> contains the real `### Review Findings` bullets ON DISK. Before
+  your final message, re-read the section to confirm it persisted; if it didn't, write it now. NEVER
+  put the findings only in your chat reply as a substitute for writing the file.
+
 TRIAGE:
 1. Normalize all findings to a common shape (title, detail, file:line if present, source lens+reviewer).
 2. Deduplicate: merge findings describing the same issue — prefer the one with a concrete file:line,
@@ -196,8 +213,10 @@ TRIAGE:
    security review assigned.
 3. Classify each into exactly one bucket:
    - Decision — an ambiguous choice that needs a human call; the code can't be correctly patched
-     without knowing intent.
-   - Patch — a code issue whose correct fix is unambiguous.
+     without knowing intent. STRICT TEST: if you can state a one-line fix direction for it, it is a
+     **Patch**, NOT a Decision. Use Decision ONLY when you genuinely cannot choose the fix without a
+     human. (If you would write a `Recommended: fix: …`, bucket it as Patch.)
+   - Patch — a code issue whose correct fix is unambiguous (you can state it in one line).
    - Defer — real but pre-existing, not caused by this change; not actionable now.
    - Dismiss — noise / false positive / handled elsewhere. ALSO dismiss any finding whose only locus
      is an obvious non-code file (lockfile, generated, vendored, build artifact).

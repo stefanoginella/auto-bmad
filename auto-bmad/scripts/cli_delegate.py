@@ -99,6 +99,11 @@ TOOL_BINARY = {"claude": "claude", "codex": "codex", "opencode": "opencode"}
 # for the host the orchestrator already runs inside.
 _HOST_TOOL = {"claude-code": "claude", "codex": "codex", "opencode": "opencode"}
 _AUTH_PROBE_TIMEOUT = 20  # seconds — keep short so a wedged probe can't hang preflight
+# Hard wall-clock cap for a single REVIEW delegate (a lens or the triage), applied in the launch_cmd
+# via `timeout`. Bounds the opencode/GLM tool-stream wedge (observed: 20+ min CPU, 0 output, never
+# terminates). Generous vs a real review pass (minutes) but finite. NOT applied to non-review phases
+# (dev_story legitimately runs hours). See resolve() + _build_launch_cmd.
+_REVIEW_DELEGATE_TIMEOUT_SECS = 1200  # 20 min
 # opencode CLI surface (flags/dirs) AND the `run --format json` event schema are verified against
 # this version: extract_opencode_result() targets the verified shape (top-level type=="text" events,
 # part.text concatenated) with defensive fallbacks for any future schema drift.
@@ -427,8 +432,13 @@ def resolve(
         plan["result_field"] = None
         plan["error_field"] = None
 
+    # Hard wall-clock cap for REVIEW delegates only (lenses/triage): bounds the opencode/GLM
+    # tool-stream wedge (observed 20+ min, 0 output). dev_story and other long phases get no cap
+    # (timeout_secs=0) — they legitimately run hours. See _build_launch_cmd.
+    timeout_secs = _REVIEW_DELEGATE_TIMEOUT_SECS if phase.startswith("code_review_review") else 0
+    plan["timeout_secs"] = timeout_secs
     plan["launch_cmd"] = _build_launch_cmd(
-        plan["argv"], root, capture_log, exit_file, prompt_file, plan["prompt_via"]
+        plan["argv"], root, capture_log, exit_file, prompt_file, plan["prompt_via"], timeout_secs
     )
     return plan
 
@@ -440,6 +450,7 @@ def _build_launch_cmd(
     exit_file: str,
     prompt_file: str,
     prompt_via: str,
+    timeout_secs: int = 0,
 ) -> str:
     """The exact ``bash -c`` body the orchestrator backgrounds for a routed delegate.
 
@@ -453,12 +464,18 @@ def _build_launch_cmd(
     """
     q = shlex.quote
     cmd = " ".join(q(a) for a in argv)
+    # Optional hard wall-clock cap. Only set for review delegates (see resolve()) — a wedged
+    # opencode/GLM tool-stream otherwise hangs forever (observed: 20+ min, 0 output). NOT set for
+    # dev_story etc., which legitimately run hours. `timeout -k 30` SIGKILLs 30s after SIGTERM if
+    # the child ignores TERM; the brace-group's `echo $?` then records 124 (timeout) as the
+    # delegate's exit status, which the waiter surfaces as a failed delegation.
+    runner = f"timeout -k 30 {int(timeout_secs)} {cmd}" if timeout_secs and timeout_secs > 0 else cmd
     if prompt_via == "arg":
         # opencode: the prompt is the final positional `message` arg (it does NOT read stdin).
-        inner = f"cd {q(cwd)} && {cmd} \"$(cat {q(prompt_file)})\""
+        inner = f"cd {q(cwd)} && {runner} \"$(cat {q(prompt_file)})\""
     else:
         # claude/codex: the prompt is piped on stdin.
-        inner = f"cd {q(cwd)} && {cmd} < {q(prompt_file)}"
+        inner = f"cd {q(cwd)} && {runner} < {q(prompt_file)}"
     # `echo $?` captures the brace-group's status (the delegate's), AFTER its redirect closes.
     return f"{{ {inner} ; }} > {q(capture_log)} 2>&1 ; echo $? > {q(exit_file)}"
 
