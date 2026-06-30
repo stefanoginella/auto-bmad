@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Verified against BMAD-METHOD 6.9.0.** The new minor ships no change to any skill auto-bmad
   delegates to or any contract it parses; compat markers advanced from 6.8.x.
+- **Code review now reads surrounding code before judging.** The Blind Hunter may inspect the code
+  the diff touches, and triage reads call sites/guards to calibrate severity. Mirrors `bmad-code-review`.
 
 ## [0.25.1] - 2026-06-16
 

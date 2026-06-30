@@ -111,12 +111,15 @@ It passes the diff and each lens's findings **by path, never by content** — so
 - Security stays single-instance off-total exactly as here.
 - The roster shape is identical (`3×R` = blind/edge/auditor per reviewer).
 
-#### code-review-blind  (Blind Hunter — diff only, unanchored)
+#### code-review-blind  (Blind Hunter — diff + code read, blind to spec/intent)
+<!-- Access model mirrors bmad-code-review #2507: the Blind Hunter is blind to INTENT (no
+     spec/context), NOT to the codebase — it may read surrounding code to judge correctness. -->
 ```
 Run `/bmad-review-adversarial-general` in <project_root> with the diff at <diff_file> as the content to
-review. Review ONLY that diff — do NOT open the spec, the story file, or any other project file; your
-value is being unanchored by the spec. Write the skill's findings (its markdown list) to <blind_out>.
-Report ONLY the path you wrote and your finding count — NOT the findings text.
+review. Review that diff — do NOT open the spec or the story file; your value is being unanchored by the
+spec (intent). You MAY read the surrounding code the diff touches to judge whether a change is actually
+correct. Write the skill's findings (its markdown list) to <blind_out>. Report ONLY the path you wrote
+and your finding count — NOT the findings text.
 ```
 
 #### code-review-edge  (Edge Case Hunter — diff + project read)
@@ -128,7 +131,7 @@ review (you may read project files the diff references). Write the skill's JSON-
 
 #### code-review-auditor  (Acceptance Auditor — diff + spec)
 ```
-You are an Acceptance Auditor. Review this diff against the spec and context docs. Check for: violations
+You are an Acceptance Auditor. Review the provided diff against the spec and any loaded context docs. Check for: violations
 of acceptance criteria, deviations from spec intent, missing implementation of specified behavior,
 contradictions between spec constraints and actual code. Output findings as a Markdown list. Each
 finding: one-line title, which AC/constraint it violates, and evidence from the diff.
@@ -137,7 +140,7 @@ The diff is at <diff_file>; the spec/story file is <story_file> (load it, plus a
 frontmatter lists). Write your findings to <auditor_out>. Report ONLY the path you wrote and your
 finding count — NOT the findings text.
 ```
-(The first paragraph is the Acceptance Auditor prompt **verbatim** from the `bmad-code-review` skill's `step-02-review.md`. Keep it in lockstep with upstream.)
+(The first paragraph mirrors the Acceptance Auditor prompt from the `bmad-code-review` skill's `step-02-review.md` — upstream's `{spec_file}`/`{diff_output}` placeholders are resolved by auto-bmad's `<story_file>`/`<diff_file>` in the paragraph below. Keep it in lockstep with upstream.)
 
 #### code-review-auditor (epic)  (Acceptance Auditor — epic diff + epic planning; epic mode Tier B)
 <!-- VARIANT OF code-review-auditor: the upstream-verbatim first paragraph stays the single source —
@@ -184,7 +187,14 @@ each such case as a failed/empty layer):
 {lens_files}
 {security_file_hint}
 The diff under review is at <diff_file>; the spec/story file is <story_file>. Do NOT re-review — work
-from those files.
+from those files; you MAY open the source at a finding's location to calibrate its severity (below), but
+do not redo the lenses' search.
+
+Severity calibration (mirrors `bmad-code-review` step-03, upstream #2523 — but auto-bmad keeps its
+4-level Critical/High/Med/Low scale, NOT upstream's 3-level low/medium/high): before tagging a finding's
+severity, read enough surrounding code at its location — call sites, guards, and validation that live
+OUTSIDE the diff hunk — to judge real reachability. Rate by the real consequence at a real call site,
+not the worst theoretical reading of the diff hunk alone.
 
 TRIAGE:
 1. Normalize all findings to a common shape (title, detail, file:line if present, source lens+reviewer).
@@ -261,7 +271,7 @@ The orchestrator fills `{R}` with the roster size.
 The orchestrator fills `{lens_files}` with one block per roster reviewer, from `prep-diff`'s `lens_paths`:
 - Reviewer `primary`:
   - Blind Hunter (adversarial markdown list): `<lens_paths.primary.blind>`
-  - Edge Case Hunter (JSON array — location / trigger_condition / guard_snippet / potential_consequence): `<lens_paths.primary.edge>`
+  - Edge Case Hunter (JSON array — location / trigger_condition / guard_snippet / potential_consequence; deletion findings add `kind`/`confidence`): `<lens_paths.primary.edge>`
   - Acceptance Auditor (markdown list — title / AC-or-constraint / evidence): `<lens_paths.primary.auditor>`
 - Repeat for `secondary` / `tertiary` when on the roster — list only active slots.
 
