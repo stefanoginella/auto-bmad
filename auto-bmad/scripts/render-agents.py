@@ -311,7 +311,12 @@ def render(
     for out_path, content in outputs:
         if not dry_run:
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(content, encoding="utf-8")
+            # Write LF on every platform. Path.write_text() uses text mode, which on
+            # Windows translates "\n" to "\r\n"; Claude Code's subagent frontmatter parser
+            # does not recognise a CRLF ("---\r") fence, so CRLF-rendered agent files
+            # silently fail to load on Windows. write_bytes performs no newline translation
+            # (and avoids the Python 3.10+-only write_text(newline=...) argument).
+            out_path.write_bytes(content.encode("utf-8"))
         files_written.append(str(out_path))
 
     return {
@@ -345,7 +350,7 @@ def check(
     for out_path, content in outputs:
         if not out_path.exists():
             missing.append(str(out_path))
-        elif out_path.read_text(encoding="utf-8") != content:
+        elif out_path.read_bytes() != content.encode("utf-8"):
             stale.append(str(out_path))
         else:
             ok.append(str(out_path))
@@ -512,6 +517,11 @@ def _run_self_test() -> int:
         for name in PROFILE_NAMES:
             c = (root / f".claude/agents/{name}.md").read_text(encoding="utf-8")
             x = (root / f".codex/agents/{name}.toml").read_text(encoding="utf-8")
+            # Rendered agent files must use LF: a CRLF ("---\r") frontmatter fence is not
+            # recognised by Claude Code's subagent parser, so CRLF agents silently fail to
+            # load on Windows. Regression guard for the write_bytes fix in render().
+            assert b"\r" not in (root / f".claude/agents/{name}.md").read_bytes(), f"{name}.md must be LF, not CRLF"
+            assert b"\r" not in (root / f".codex/agents/{name}.toml").read_bytes(), f"{name}.toml must be LF, not CRLF"
             for meta in ("role_blurb", "status_example"):
                 val = profiles[name][meta]
                 assert val in c, f"{name}.{meta} missing from Claude output: {val!r}"
@@ -544,6 +554,14 @@ def _run_self_test() -> int:
         chk = check(profiles, ["claude-code", "codex", "opencode"], templates_dir, root)
         assert chk["status"] == "fresh" and not chk["needs_reprovision"], chk
         assert len(chk["ok"]) == 15 and not chk["stale"] and not chk["missing"], chk
+        # A pre-fix CRLF render must be flagged stale so upgraders auto-heal:
+        # read_text() would normalise \r\n and hide it, so compare bytes.
+        crlf_path = root / ".claude/agents/ab-deep.md"
+        crlf_path.write_bytes(crlf_path.read_bytes().replace(b"\n", b"\r\n"))
+        chk_crlf = check(profiles, ["claude-code", "codex", "opencode"], templates_dir, root)
+        assert chk_crlf["needs_reprovision"], "CRLF agent file must trigger reprovision"
+        assert any(p.endswith("ab-deep.md") for p in chk_crlf["stale"]), chk_crlf
+        render(profiles, ["claude-code", "codex", "opencode"], templates_dir, root)  # restore LF
 
         # Editing a profile makes that agent's rendered output differ -> stale.
         bumped = json.loads(json.dumps(profiles))  # deep copy

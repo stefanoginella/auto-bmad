@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Delegate agents now load on Windows.** Rendered `ab-*` agent files were written via
+  `Path.write_text`, whose text-mode `\n`→`\r\n` translation produced a `---\r` frontmatter fence
+  that Claude Code's subagent parser silently rejects; they now emit LF on every platform.
+
 ### Changed
 
 - **Verified against BMAD-METHOD 6.9.0.** The new minor ships no change to any skill auto-bmad
