@@ -11,7 +11,7 @@
       "name": "auto-bmad",
       "source": "./",
       "description": "Drive the full BMAD story workflow (create-story -> dev-story -> code-review, plus risk-gated TEA + epic-boundary skills) for one story at a time — or an ENTIRE epic in one run (`/auto-bmad epic`): one branch, commit per step, open a PR, and report. The orchestrator only delegates to model/effort-tuned subagents, with a graceful fallback to general subagents or inline execution on tools that lack them.",
-      "version": "0.25.1",
+      "version": "0.25.2",
       "author": {
         "name": "Stefano Ginella",
         "email": "stefano@stefanoginella.com"
