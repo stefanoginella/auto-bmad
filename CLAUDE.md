@@ -17,6 +17,10 @@ bookkeeping it already holds full pipeline context for. Don't "fix" these into d
 - **Git/PR work** — preflight, branching, per-phase commits, push, PR, and the Phase 9 merge prompt.
 - **Phase 0 project-context probe** — an existence check that only decides whether Phase 2's
   bootstrap sub-step runs (the bootstrap itself is delegated like every other skill call).
+- **Phase 5 sprint-status write-back** — after the feat commit, script the BMAD-status flip to
+  `review` (sprint-status entry + story file) with `story_plan.py --mark-status`, rather than
+  trusting the dev-story delegate's LLM-only step-9 sync (the drift root cause). Same helper and
+  rationale as the Phase 9 `done` flip.
 - **Phase 9 finalize writes** — BMAD-status flip to `done` + the pre-push pipeline-report commit.
 - **Phase 8 deferred-work archive** — at epic-end, after the project-context refresh **and the
   delegated deferred-work reconcile** (a `deferred_reconcile` delegate that marks any ledger item
@@ -49,8 +53,9 @@ bookkeeping it already holds full pipeline context for. Don't "fix" these into d
   orchestrator never inspects code at any tier — keep it that way.**
 
 The mechanics of these live in the reference docs — **don't restate them here**: `git-and-pr.md`
-(branching, push, PR, merge prompt), `pipeline.md` (Phase 0 probe, Phase 7 code-review fan-out, Phase 7
-external-change handling, Phase 8 deferred-work archive, Phase 9 status flip + report commit), and
+(branching, push, PR, merge prompt), `pipeline.md` (Phase 0 probe, Phase 5 sprint-status write-back,
+Phase 7 code-review fan-out, Phase 7 external-change handling, Phase 8 deferred-work archive, Phase 9
+status flip + report commit), and
 `delegation.md` (the code-review fan-out's delegate entries). The only other time the
 orchestrator does delegated step work itself is the `inline` delegation tier (see
 `delegation-runtime.md`), and even then it follows the same phase contract.
@@ -114,8 +119,9 @@ schema, first-run).
   capability registry, and the self-registration/provisioning flow.
 - `auto-bmad/scripts/` — dependency-free helpers, each with a `--self-test` and a self-documenting
   docstring (read the script for exact behavior):
-  - `story_plan.py` — sprint-status reader; `--mark-done` performs the Phase 9 BMAD-status flip
-    (sprint entry + story-file `Status:` → `done`, byte-preserving, idempotent).
+  - `story_plan.py` — sprint-status reader; `--mark-status KEY --to STATUS` scripts the BMAD-status
+    flip (sprint entry + story-file `Status:`, byte-preserving, idempotent) — Phase 5 (→ `review`)
+    and Phase 9 (→ `done`, also via the back-compat `--mark-done` alias).
   - `state_plan.py` — auto-bmad `state/{key}.yaml` reader (resume detection); `--finalize`
     evaluates the Phase 9 draft predicate / clean-completion verdict (`flip_bmad_status`).
   - `state_update.py` — deterministic per-story state/report/retro writer: full-schema state
