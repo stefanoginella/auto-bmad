@@ -9,7 +9,7 @@ Everything auto-bmad persists lives under `{project-root}/_bmad-output/auto-bmad
 ## config.yaml
 ```yaml
 version: 1
-profiles_source_version: "0.25.2"  # abm version whose assets/agents/profiles.yaml seeded the profiles +
+profiles_source_version: "0.26.0"  # abm version whose assets/agents/profiles.yaml seeded the profiles +
                                   # phase_profiles blocks below; re-stamped by the Phase 0 heal (ADDITIVE-only —
                                   # never overwrites user values; see assets/config-defaults.yaml header) or `reprovision`.
 delegation:                # spawn mechanism — host/mode auto-detected each run
