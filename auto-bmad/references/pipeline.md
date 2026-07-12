@@ -142,6 +142,12 @@ Two sub-steps that each carry their own gate; either, both, or neither may run. 
 - Delegate the **`dev-story`** entry with `<story_file>`. Fully autonomous; it runs tests and moves the story to `review`.
 - Capture deviations / deferred work / decisions → retro notes (these feed the commit body); if the agent reports a **breaking change**, capture it → the `feat` commit's `BREAKING CHANGE:` footer (see `git-and-pr.md` → Commits).
 - Commit: `feat(story-{e}-{s}): <one-line summary from the agent>`. (If the dev agent reports it cannot complete — missing secret, external service, manual step — that is `needs-human`: stop and report.)
+- **Scripted sprint-status write-back (REQUIRED — do not rely on the LLM alone).** `bmad-dev-story` step 9 *asks* the agent to sync `sprint-status.yaml` → `review`, but that LLM-only write-back is the root cause of the recurring Epic 12/13 drift (story file at `Status: review` while `sprint-status.yaml` stays `ready-for-dev`). After the feat commit, the **orchestrator** MUST flip both BMAD sources with the same atomic helper Phase 9 uses for `done`:
+  ```
+  python3 {skill-root}/scripts/story_plan.py --mark-status {key} --to review \
+    --sprint-status <impl>/sprint-status.yaml --story-file <impl>/{key}.md
+  ```
+  Fold the resulting sprint-status / story-file touches into the feat commit when still unstaged, or amend only under the amend rules in `git-and-pr.md`. Never skip this call because the delegate "said" it already updated the file — verify with the script (idempotent when already at `review`).
 
 ## Phase 6 — Post-dev TEA  *(only if `tea.enabled` AND `automate ∈ tea_selected`)*  → `tea_per_story`
 - Delegate the **`testarch-automate`** entry with `<story_file>`.

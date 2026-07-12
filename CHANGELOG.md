@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sprint-status no longer drifts from the story file after dev.** Phase 5 now scripts the
+  BMAD-status flip to `review` (both `sprint-status.yaml` and the story file) via
+  `story_plan.py --mark-status`, instead of trusting the dev-story delegate's LLM-only sync — the
+  cause of stories stuck at `ready-for-dev` while the story file already read `review`.
+
 ## [0.25.2] - 2026-06-30
 
 ### Fixed
