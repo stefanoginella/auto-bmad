@@ -119,6 +119,21 @@ profiles:
                        # default model. Agent files are model-only (no portable per-agent effort knob).
       variant: ""      # OPTIONAL, cli_phases route ONLY: --variant high|max|minimal. BLANK => model default.
 
+  ab-verification:
+    description: "auto-bmad delegate for the verification-gap review: a reviewer that traces whether a regression in the story diff's CHANGED behavior would be caught by a test where that behavior is exercised — hunting verification gaps (regression / missing-adoption / broken-verification), not correctness bugs, and grounding every absence claim in an actual symbol/import search. Invoked by the auto-bmad orchestrator; not meant for direct use."
+    role_blurb: "the verification-gap review: for each behavior the diff changes, trace it to the places that observe it, read the covering tests, and ask only whether a regression there would make a test fail. Report verification gaps — regression gaps, missing-adoption gaps, and broken/weak-verification gaps — with concrete file:line evidence and NO severity (the triage step assigns it). Be rigorous, not speculative: read a test before claiming what it covers, and claim a test is absent only when a repo-wide symbol/import search shows it; drop any finding you cannot ground."
+    status_example: "the output-file path you wrote and the count of verification-gap findings — never the findings text, and never a severity (the triage delegate reads the file and assigns severity)"
+    claude:
+      model: opus
+      effort: high
+    codex:
+      model: gpt-5.5
+      reasoning_effort: high
+    opencode:
+      model: ""        # provider/model, e.g. anthropic/claude-opus-4-5. BLANK => inherit your opencode
+                       # default model. Agent files are model-only (no portable per-agent effort knob).
+      variant: ""      # OPTIONAL, cli_phases route ONLY: --variant high|max|minimal. BLANK => model default.
+
 # Phase -> profile mapping. This is the SINGLE source of the phase->profile
 # binding: pipeline.md / delegation.md name these keys, never raw profile names.
 # `render-agents.py` only reads the `profiles:` block above and ignores this one
@@ -131,6 +146,7 @@ phase_profiles:
   code_review_review_secondary: ab-alt-deep # OPTIONAL second parallel reviewer (3 more lenses per pass); blank "" => disabled
   code_review_review_tertiary: ""           # OPTIONAL third parallel reviewer; blank "" => disabled (name a profile to enable)
   code_review_security: ab-security         # dedicated per-story security review (auto-bmad-local; gated by code_review.security_review); blank "" => falls back to the code_review_review (primary) profile
+  code_review_verification: ab-verification # verification-gap review (upstream bmad-review-verification-gap; single-instance like security; gated by code_review.verification_gap); blank "" => falls back to the code_review_review (primary) profile
   code_review_fix: ab-standard              # apply already-identified findings (mechanical vs the hunt)
   tea_triage: ab-alt-standard               # Phase 0 story-risk classification (cheap)
   tea_per_story: ab-standard                # Phase 4 ATDD, Phase 6 automate

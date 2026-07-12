@@ -48,6 +48,8 @@ code_review:
   max_iterations: 2
   security_review: true     # run the dedicated per-story security review inside the Phase 7 loop
                             # (auto-bmad-local; the ab-security delegate, gated here). false => skip it.
+  verification_gap: true    # run the verification-gap review inside the Phase 7 loop (upstream
+                            # bmad-review-verification-gap, single-instance like security). false => skip it.
   epic_review: true         # epic mode: run the Tier-B epic integration review (the heavy adversarial
                             # pass; no halt — decisions auto-resolved). false => skip it (per-story thin review only).
   tier_a_lenses: [auditor, security]  # epic mode: the per-story thin-review lens set (no loop/halt).

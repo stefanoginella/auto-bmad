@@ -215,6 +215,12 @@ def prep_diff(project_root: str, base: str, runner=_default_runner, mkdtemp=temp
         # convergence via open_crit_high), so it is NOT counted in --lenses-total. Reserved only;
         # the security delegate writes it.
         "security_path": os.path.join(review_tmp, "security.md"),
+        # The verification-gap review (upstream bmad-review-verification-gap, run single-instance —
+        # auto-bmad's roster treatment, like security) also gets ONE reserved path outside the lens
+        # grid. It reports verification gaps with NO severity; triage assigns severity, so its
+        # findings gate convergence through the same channel and it too is NOT in --lenses-total.
+        # Reserved only; the verification-gap delegate writes it.
+        "verification_path": os.path.join(review_tmp, "verification.md"),
     }
     result["diff_empty"] = not diff_out.strip()
     result["base"] = base
@@ -434,7 +440,8 @@ def _f(nondef=0, crit_high=0, untagged=0, low=0):
 
 
 _GATE_KEYS = {"action", "convergence_unverified", "clean", "converged", "reason"}
-_PREP_KEYS = {"review_tmp", "diff_file", "lens_paths", "security_path", "diff_empty", "base", "head_sha"}
+_PREP_KEYS = {"review_tmp", "diff_file", "lens_paths", "security_path", "verification_path",
+              "diff_empty", "base", "head_sha"}
 _POST_FIX_KEYS = {"action", "open_patch", "open_decision", "reason"}
 
 
@@ -504,6 +511,14 @@ def _run_self_test():
     check("prep: security_path NOT created", not os.path.exists(res["security_path"]))
     check("prep: security_path distinct from every lens path",
           res["security_path"] not in {p for s in res["lens_paths"].values() for p in s.values()})
+    # The single-instance verification-gap review path: same shape as security — reserved,
+    # outside the lens grid, not created, and distinct from every other reserved path.
+    check("prep: verification_path reserved inside review_tmp",
+          res["verification_path"] == os.path.join(res["review_tmp"], "verification.md"))
+    check("prep: verification_path NOT created", not os.path.exists(res["verification_path"]))
+    check("prep: verification_path distinct from every lens + security path",
+          res["verification_path"] not in (
+              {p for s in res["lens_paths"].values() for p in s.values()} | {res["security_path"]}))
     shutil.rmtree(res["review_tmp"])
 
     # Empty diff: file still written (empty), diff_empty true.
@@ -598,6 +613,9 @@ def _run_self_test():
             check("live: security_path reserved, not created",
                   live["security_path"] == os.path.join(live["review_tmp"], "security.md")
                   and not os.path.exists(live["security_path"]))
+            check("live: verification_path reserved, not created",
+                  live["verification_path"] == os.path.join(live["review_tmp"], "verification.md")
+                  and not os.path.exists(live["verification_path"]))
             shutil.rmtree(live["review_tmp"])
 
         empty = prep_diff(repo, "feature")  # feature...HEAD == nothing

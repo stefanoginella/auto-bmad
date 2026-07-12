@@ -13,18 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Phase 7 code review gains a verification-gap review lens.** Per-story and epic Tier-B reviews now
+  flag changed behavior that could regress without a test catching it, via upstream
+  `bmad-review-verification-gap` — single-instance, gated by the new `code_review.verification_gap`
+  toggle (default on).
+
 ### Fixed
 
 - **Sprint-status no longer drifts from the story file after dev.** Phase 5 now scripts the
   BMAD-status flip to `review` (both `sprint-status.yaml` and the story file) via
   `story_plan.py --mark-status`, instead of trusting the dev-story delegate's LLM-only sync — the
-  cause of stories stuck at `ready-for-dev` while the story file already read `review`.
+  cause of stories stuck at `ready-for-dev` while the story file already read `review`. (Thanks
+  @LuckierTrout, #7.)
 - **CLI-routed code reviews no longer hang forever on a wedged delegate.** Review lens/triage/security
   delegates now get a hard wall-clock cap (`timeout`/`gtimeout`; uncapped, not broken, on hosts
-  without coreutils such as stock macOS), so an opencode/GLM tool-stream stall fails fast.
+  without coreutils such as stock macOS), so an opencode/GLM tool-stream stall fails fast. (Thanks
+  @hugheba, #4.)
 - **CLI review delegates persist findings reliably and halt less spuriously.** Lens/triage prompts
   gained a write-first/verify-on-disk contract and a stricter Patch-vs-Decision rule — fewer empty
-  layers and fewer needless Phase 7 human halts on flaky models.
+  layers and fewer needless Phase 7 human halts on flaky models. (Thanks @hugheba, #4.)
 
 ## [0.25.2] - 2026-06-30
 
@@ -32,7 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Delegate agents now load on Windows.** Rendered `ab-*` agent files were written via
   `Path.write_text`, whose text-mode `\n`→`\r\n` translation produced a `---\r` frontmatter fence
-  that Claude Code's subagent parser silently rejects; they now emit LF on every platform.
+  that Claude Code's subagent parser silently rejects; they now emit LF on every platform. (Thanks
+  @rthunborg, #5.)
 
 ### Changed
 

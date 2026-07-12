@@ -68,7 +68,7 @@ from pathlib import Path
 # The SHIPPED profile set (what the default phase_profiles mapping names). The renderer
 # renders every `ab-*` profile in the source — shipped AND user-added custom — but a
 # shipped name missing from the source is worth a warning, so the set stays pinned here.
-PROFILE_NAMES = ("ab-deep", "ab-standard", "ab-alt-deep", "ab-alt-standard", "ab-security")
+PROFILE_NAMES = ("ab-deep", "ab-standard", "ab-alt-deep", "ab-alt-standard", "ab-security", "ab-verification")
 
 # Custom profile names must carry this prefix: --check's extra-file scan (and every doc
 # that talks about cleaning up generated agents) tracks `ab-*` files only, so an agent
@@ -420,6 +420,9 @@ def _run_self_test() -> int:
     assert "dedicated per-story security review" in profiles["ab-security"]["description"]
     assert profiles["ab-security"]["claude"]["model"] == "opus"
     assert profiles["ab-security"]["claude"]["effort"] == "xhigh"
+    assert "verification-gap review" in profiles["ab-verification"]["description"]
+    assert profiles["ab-verification"]["claude"]["model"] == "opus"
+    assert profiles["ab-verification"]["claude"]["effort"] == "high"
 
     # Inline-flow-map parsing.
     inline = parse_profiles(
@@ -527,11 +530,11 @@ def _run_self_test() -> int:
                 assert val in c, f"{name}.{meta} missing from Claude output: {val!r}"
                 assert val in x, f"{name}.{meta} missing from Codex output: {val!r}"
 
-        # All four profiles produce distinct bodies (catches a regression where
+        # Every shipped profile produces a distinct body (catches a regression where
         # role_blurb or status_example silently fail to substitute and every
         # agent ends up identical).
         bodies = {name: (root / f".claude/agents/{name}.md").read_text(encoding="utf-8") for name in PROFILE_NAMES}
-        assert len(set(bodies.values())) == 5, "agent bodies not distinct across profiles"
+        assert len(set(bodies.values())) == len(PROFILE_NAMES), "agent bodies not distinct across profiles"
 
         # Codex output must be valid TOML.
         try:
@@ -547,13 +550,13 @@ def _run_self_test() -> int:
             # Older Python: fall back to a structural sanity check.
             assert codex_deep.count('"""') == 2, "developer_instructions block malformed"
 
-        # All five profiles rendered for all three tools => 15 files.
-        assert len(result["files_written"]) == 15, result["files_written"]
+        # Every shipped profile rendered for all three tools (claude/codex/opencode).
+        assert len(result["files_written"]) == len(PROFILE_NAMES) * 3, result["files_written"]
 
         # --check: right after a render, everything is fresh.
         chk = check(profiles, ["claude-code", "codex", "opencode"], templates_dir, root)
         assert chk["status"] == "fresh" and not chk["needs_reprovision"], chk
-        assert len(chk["ok"]) == 15 and not chk["stale"] and not chk["missing"], chk
+        assert len(chk["ok"]) == len(PROFILE_NAMES) * 3 and not chk["stale"] and not chk["missing"], chk
         # A pre-fix CRLF render must be flagged stale so upgraders auto-heal:
         # read_text() would normalise \r\n and hide it, so compare bytes.
         crlf_path = root / ".claude/agents/ab-deep.md"
@@ -609,7 +612,7 @@ def _run_self_test() -> int:
             rootc = Path(tdc)
             rc = render(custom, ["claude-code", "codex", "opencode"], templates_dir, rootc)
             assert not rc["warnings"], rc["warnings"]
-            assert len(rc["files_written"]) == 18, rc["files_written"]  # 6 profiles x 3 tools
+            assert len(rc["files_written"]) == (len(PROFILE_NAMES) + 1) * 3, rc["files_written"]  # shipped + 1 custom, x 3 tools
             cu = (rootc / ".claude/agents/ab-ultradeep.md").read_text(encoding="utf-8")
             assert "model: opus" in cu and "effort: max" in cu, cu[:200]
             assert "truly hard problems" in cu and "@@" not in cu, cu[:400]
@@ -618,7 +621,7 @@ def _run_self_test() -> int:
             # Fresh right after the render; removing the custom profile from the source
             # leaves its files flagged 'extra' (informational), like a dropped tool.
             chk_c = check(custom, ["claude-code", "codex", "opencode"], templates_dir, rootc)
-            assert chk_c["status"] == "fresh" and len(chk_c["ok"]) == 18, chk_c
+            assert chk_c["status"] == "fresh" and len(chk_c["ok"]) == (len(PROFILE_NAMES) + 1) * 3, chk_c
             chk_drop = check(profiles, ["claude-code", "codex", "opencode"], templates_dir, rootc)
             assert chk_drop["status"] == "fresh", chk_drop
             assert sum(1 for p in chk_drop["extra"] if "ab-ultradeep" in p) == 3, chk_drop["extra"]
@@ -639,7 +642,7 @@ def _run_self_test() -> int:
         with tempfile.TemporaryDirectory() as tdm:
             rmis = render(partial, ["claude-code"], templates_dir, Path(tdm))
             assert any("ab-alt-standard" in w and "missing" in w for w in rmis["warnings"]), rmis["warnings"]
-            assert len(rmis["files_written"]) == 4, rmis["files_written"]
+            assert len(rmis["files_written"]) == len(PROFILE_NAMES) - 1, rmis["files_written"]
 
         # dry-run writes nothing new.
         with tempfile.TemporaryDirectory() as td2:
@@ -649,7 +652,7 @@ def _run_self_test() -> int:
         # --check on a never-rendered root: everything missing -> needs reprovision.
         with tempfile.TemporaryDirectory() as td3:
             fresh_chk = check(profiles, ["claude-code"], templates_dir, Path(td3))
-            assert fresh_chk["needs_reprovision"] and len(fresh_chk["missing"]) == 5, fresh_chk
+            assert fresh_chk["needs_reprovision"] and len(fresh_chk["missing"]) == len(PROFILE_NAMES), fresh_chk
 
     print("SELF-TEST PASSED (all assertions)")
     return 0

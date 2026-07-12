@@ -127,9 +127,10 @@ f. **Tier A — thin single review + fix (NO loop, NO convergence gate, NO halt)
      - The whole-epic diff is Tier B's job.
    - **Fan out only the `tier_a_lenses`** at the **primary** profile (`code_review_review`):
      - the **`code-review-auditor`** (the per-story AC check);
-     - **+ `code-review-security`** if `code_review.security_review`.
+     - **+ `code-review-security`** if `security` is in `tier_a_lenses` and `code_review.security_review`.
+     - **+ `code-review-verification-gap`** if `verification` is in `tier_a_lenses` and `code_review.verification_gap` — **NOT in the default `[auditor, security]` set** (Tier A stays thin; add `verification` explicitly to opt this story-scoped lens in).
      - NOT blind/edge — because their payoff is the whole-epic diff in Tier B.
-   - **Delegate `code-review-triage`** (primary profile; `{R}=1`, only the auditor file in the lens list, `{security_file_hint}` if security ran).
+   - **Delegate `code-review-triage`** (primary profile; `{R}=1`, only the auditor file in the lens list, `{security_file_hint}` if security ran, `{verification_file_hint}` if the verification-gap lens ran).
      - It persists the `### Review Findings` section to **`<story_file>`** verbatim, as in a per-story run.
      - Apply the **same reconciliation gate** (`review_findings.py … --story-file <story_file>`; one triage re-run on non-persist, else `needs-human`).
    - **Auto-resolve `[Review][Decision]` items with the triage's recommendation** — no halt to ask. Each open Decision carries a `Recommended resolutions:` channel from the triage (`delegation.md` → `code-review-triage`, auto-bmad-local). Apply it as if a human picked it — a direct findings-file write the orchestrator already owns, never a code read:
@@ -185,8 +186,9 @@ The heavy adversarial pass over the **whole epic diff**, run **once** after all 
    - Build the epic diff with `review_loop.py prep-diff --project-root <project_root> --base {base}` — everything the epic branch changed.
    - Fan out, per roster profile (`code_review_review` + the optional secondary/tertiary), the **`code-review-blind`**, **`code-review-edge`**, and **`code-review-auditor (epic)`** lenses (`3×R` total — identical roster shape to per-story Phase 7).
    - **`code-review-security` stays single-instance, off the `3×R` total, severity-gated** — exactly as per story.
+   - **`code-review-verification-gap` stays single-instance too, off the `3×R` total** (gated by `code_review.verification_gap`) — exactly as per story.
    - All in parallel.
-2. **Persist to the epic findings file.** Delegate **`code-review-triage (epic)`** (primary profile), handed all the lens files + (if security ran) `<security_path>` + the epic diff + the story-file list.
+2. **Persist to the epic findings file.** Delegate **`code-review-triage (epic)`** (primary profile), handed all the lens files + (if security ran) `<security_path>` + (if the verification-gap lens ran) `<verification_path>` + the epic diff + the story-file list.
    - It writes the `### Review Findings` section to **`<impl>/epic-{e}-review-findings.md`**.
    - It copies `[Review][Defer]` items to `<impl>/deferred-work.md` under `## Deferred from: epic review of epic-{e}`.
    - Apply the **same reconciliation gate** as Phase 7 step 1 against that file (`review_findings.py --story-file <impl>/epic-{e}-review-findings.md … --story-key epic-{e}`; one triage re-run on non-persist, else `needs-human`).
@@ -212,7 +214,7 @@ The heavy adversarial pass over the **whole epic diff**, run **once** after all 
    **Pass `--convergence-unverified true` whenever the epic anchor already holds the sticky flag** — any one of:
    - a Tier-A story aggregated a Crit/High (E5f); **or**
    - a Crit/High decision was just auto-resolved this pass (above); **or**
-   - this iteration's security pass failed.
+   - this iteration's security **or** verification-gap pass failed.
 
    The gate's `convergence_unverified` is **sticky** — it preserves a `true` even on a clean exit and never clears it (`review_loop.py`). So passing the flag here is what keeps the caveat from being overwritten when you persist the gate's output to state. Obey its `action`.
 4. **No halt — auto-continue (epic mode runs unattended).** Unlike per-story Phase 7 step 4, E_review does **not** open `AskUserQuestion` on loop exit — because there is no human to pause for, and no external-change re-review (no human pause produced changes to review).

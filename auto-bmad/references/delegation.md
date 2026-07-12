@@ -33,7 +33,7 @@ Prompt-authoring rules:
 - `<project_root>` — absolute cwd.
 - `<impl>` — the `implementation_artifacts` dir; `<planning>` — the planning dir.
 - `<story_file>` — absolute path `<impl>/{key}.md` (from `story_plan.py`).
-- `<review_tmp>` — the throwaway dir `review_loop.py prep-diff` creates **outside the work tree** for the code-review fan-out, holding `<diff_file>` (the branch diff), one set of three lens-output paths per reviewer slot (`lens_paths.{primary|secondary|tertiary}.{blind|edge|auditor}`), and the single `security_path` (the dedicated security review's output). In the lens prompts below, `<blind_out>` / `<edge_out>` / `<auditor_out>` mean *the running reviewer slot's* reserved paths, and `<security_out>` is the `security_path`. Never under `<impl>` or the repo — it must not be committable. Deleted (`rm -rf`) once the iteration's reconciliation gate passes; on a `needs-human` exit it is kept and its path surfaced for debugging.
+- `<review_tmp>` — the throwaway dir `review_loop.py prep-diff` creates **outside the work tree** for the code-review fan-out, holding `<diff_file>` (the branch diff), one set of three lens-output paths per reviewer slot (`lens_paths.{primary|secondary|tertiary}.{blind|edge|auditor}`), the single `security_path` (the dedicated security review's output), and the single `verification_path` (the verification-gap review's output). In the lens prompts below, `<blind_out>` / `<edge_out>` / `<auditor_out>` mean *the running reviewer slot's* reserved paths, `<security_out>` is the `security_path`, and `<verification_out>` is the `verification_path`. Never under `<impl>` or the repo — it must not be committable. Deleted (`rm -rf`) once the iteration's reconciliation gate passes; on a `needs-human` exit it is kept and its path surfaced for debugging.
 
 ---
 
@@ -94,6 +94,12 @@ It passes the diff and each lens's findings **by path, never by content** — so
 - It is therefore **not** counted in the gate's `3×R` `--lenses-total`.
 - Handling its run/failure is `pipeline.md` Phase 7 step 1: a successful 0-finding pass is clean; only a genuine delegate failure forces a draft.
 
+**Plus a verification-gap review.** When `code_review.verification_gap` is true (default), each iteration ALSO fans out one `code-review-verification-gap` delegate. This lens IS upstream (`bmad-review-verification-gap`, a default layer in `bmad-code-review` since #2535); running it **single-instance off-total** is auto-bmad's roster *treatment* of it (like security), NOT a claim that the lens is auto-bmad-local.
+- It is **single-instance** — one per iteration at the `code_review_verification` profile, NOT per reviewer — and writes to `<verification_out>`.
+- A blank `code_review_verification` profile falls back to the `code_review_review` (primary) profile.
+- It reports verification gaps with **NO severity**; `code-review-triage` assigns each one a severity (its severity-calibration step), so its findings gate convergence through the SAME findings-severity channel — it is **not** counted in the gate's `3×R` `--lenses-total`.
+- Handling its run/failure is `pipeline.md` Phase 7 step 1, identical to security: a successful 0-finding pass is clean; only a genuine delegate failure forces a draft.
+
 **Keep that invariant real for the three lenses.** When you append the shared autonomy directive to a lens prompt, bind its structured result so finding content stays out of chat:
 - The lens's `Outcome` is just its output-file path + finding count.
 - Its `Deferred work` / `Retro notes` are `none`.
@@ -108,7 +114,7 @@ It passes the diff and each lens's findings **by path, never by content** — so
 **Epic mode (Tier B)** reuses this exact fan-out over the **whole-epic** diff (`prep-diff --base {base}`). Flow: `epic-pipeline.md` E_review.
 - Swap the auditor/triage/fix entries for their `(epic)` variants below.
 - Persist to `<impl>/epic-{e}-review-findings.md`.
-- Security stays single-instance off-total exactly as here.
+- Security **and** verification-gap stay single-instance off-total exactly as here.
 - The roster shape is identical (`3×R` = blind/edge/auditor per reviewer).
 
 #### code-review-blind  (Blind Hunter — diff + code read, blind to spec/intent)
@@ -185,6 +191,26 @@ Bind the structured result like the three lenses, so finding content stays out o
 - `Deferred work` / `Retro notes` are `none`.
 - Only `code-review-triage` reads `<security_out>`.
 
+#### code-review-verification-gap  (Verification Gap Reviewer — diff + test read; single-instance)
+<!-- Mirrors upstream bmad-code-review's verification-gap layer (#2535). The lens is upstream; running
+     it single-instance off-total is auto-bmad's roster treatment (like security) — do NOT reconcile
+     the delegated skill away, and do NOT fence it as auto-bmad-local. -->
+```
+Run `/bmad-review-verification-gap` in <project_root> with the diff at <diff_file> as the content to
+review. Its one question is whether a regression in the CHANGED behavior would be caught by a test where
+that behavior is actually exercised — it hunts verification gaps, NOT correctness bugs. You may (and must)
+read the surrounding code and the covering tests the diff references to trace reachability and check what
+the tests actually assert. Report gaps with NO severity (the triage step assigns severity). Write the
+skill's findings (its markdown blocks, or its single "No verification gaps found." line) to <verification_out>.
+You are NOT done until <verification_out> exists on disk — write it with the Write tool and verify it
+landed before you finish (do not end with the findings only in chat).
+Report ONLY the path you wrote and your finding count — NOT the findings text.
+```
+Bind the structured result like the three lenses, so finding content stays out of chat:
+- The `Outcome` is the output path + finding count.
+- `Deferred work` / `Retro notes` are `none`.
+- Only `code-review-triage` reads `<verification_out>`.
+
 #### code-review-triage  (triage + persist — the only code-review delegate that writes findings)
 ```
 Triage a code review of story {key}. The same three review lenses ran independently under each of
@@ -192,6 +218,7 @@ Triage a code review of story {key}. The same three review lenses ran independen
 each such case as a failed/empty layer):
 {lens_files}
 {security_file_hint}
+{verification_file_hint}
 The diff under review is at <diff_file>; the spec/story file is <story_file>. Do NOT re-review — work
 from those files; you MAY open the source at a finding's location to calibrate its severity (below), but
 do not redo the lenses' search.
@@ -216,12 +243,14 @@ PERSIST DISCIPLINE (read this FIRST — some models exhaust their step budget re
 
 TRIAGE:
 1. Normalize all findings to a common shape (title, detail, file:line if present, source lens+reviewer).
-2. Deduplicate: merge findings describing the same issue — prefer the one with a concrete file:line,
-   fold in the others' detail, mark the merged source (e.g. blind@primary+edge@secondary). Expect
-   heavy overlap ACROSS reviewers AND with the security review (independent models on the same diff):
-   same-issue findings are duplicates to merge, never separate bullets. On merge, the merged severity
-   is the MAXIMUM across the merged findings — a non-security lens can never lower a severity the
-   security review assigned.
+2. Deduplicate (mirrors upstream #2555): merge ONLY findings with the same claim AND the same required
+   action — prefer the one with a concrete file:line, fold in the others' detail, mark the merged source
+   (e.g. blind@primary+edge@secondary). Expect heavy overlap ACROSS reviewers AND with the security /
+   verification-gap reviews (independent models on the same diff): same-claim-and-action findings are
+   duplicates to merge, never separate bullets; two findings about the same location that need DIFFERENT
+   fixes are NOT duplicates. On merge, the merged severity is the MAXIMUM across the merged findings — a
+   non-security lens can never lower a severity the security review assigned. Then evaluate each surviving
+   finding INDEPENDENTLY — never reject one because a related finding was rejected.
 3. Classify each into exactly one bucket:
    - Decision — an ambiguous choice that needs a human call; the code can't be correctly patched
      without knowing intent. STRICT TEST: if you can state a one-line fix direction for it, it is a
@@ -299,6 +328,10 @@ The orchestrator fills `{security_file_hint}` from `code_review.security_review`
 - When true, inject: `A dedicated security review also ran (auto-bmad-local); its findings (severity HIGH/MEDIUM/LOW per the prompt) are at <security_out> — may be empty or absent.`
 - When off, `{security_file_hint}` is empty.
 
+The orchestrator fills `{verification_file_hint}` from `code_review.verification_gap`:
+- When true, inject: `A verification-gap review also ran (bmad-review-verification-gap); its findings are verification gaps carrying NO severity — YOU assign each a severity during calibration above — at <verification_out>, and may be empty or absent (its clean line is "No verification gaps found.").`
+- When off, `{verification_file_hint}` is empty.
+
 ### code-review-triage (epic)
 <!-- VARIANT OF code-review-triage: the TRIAGE 1–4 block (incl. the auto-bmad-local security map +
      Low keep/drop test) and the REPORT contract stay the single source — do NOT re-paste them (keep
@@ -310,7 +343,7 @@ Identical to **`code-review-triage`** above (same TRIAGE steps 1–4 including t
 - **REPORT** is unchanged except `Findings persisted` / `Deferrals logged` count against the epic findings file + the `epic-{e}` heading.
 
 Fill the remaining placeholders exactly as the base entry:
-- `{lens_files}` / `{security_file_hint}` are filled from the epic roster's `prep-diff` paths.
+- `{lens_files}` / `{security_file_hint}` / `{verification_file_hint}` are filled from the epic roster's `prep-diff` paths.
 - `{R}` = the epic roster size.
 - In the chunked large-diff path, the orchestrator hands ONE triage call the lens files from every chunk — `epic-pipeline.md` E_review.
 

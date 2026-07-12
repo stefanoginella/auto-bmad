@@ -39,8 +39,9 @@ git:
 code_review:
   max_iterations: 2
   security_review: true    # run the dedicated per-story security review inside the Phase 7 loop (auto-bmad-local; ab-security delegate). false => skip it. Absent => orchestrator defaults to true
+  verification_gap: true   # run the verification-gap review inside the Phase 7 loop (upstream bmad-review-verification-gap, single-instance like security; ab-verification delegate). false => skip it. Absent => defaults to true
   epic_review: true        # epic mode: run the Tier-B epic integration review (heavy adversarial pass; no halt — decisions auto-resolved, unconverged ships a draft). false => per-story thin review only. Absent => defaults to true
-  tier_a_lenses: [auditor, security]  # epic mode: the per-story thin-review lens set (one pass, no loop/halt); security gated by security_review. Absent => defaults to [auditor, security]
+  tier_a_lenses: [auditor, security]  # epic mode: the per-story thin-review lens set (one pass, no loop/halt); security gated by security_review; add `verification` to opt the verification-gap lens in (gated by verification_gap). Absent => defaults to [auditor, security]
   epic_diff_chunk_threshold_lines: 6000  # epic mode: chunk the Tier-B review when the epic diff exceeds this many lines (per-story sub-diffs + joint triage); 0 => never. Absent => defaults to 6000
 # profiles + phase_profiles complete the file — single source: assets/agents/profiles.yaml
 # (first run copies it in verbatim; edit it or this copy, then `/auto-bmad reprovision`;
@@ -58,6 +59,7 @@ phase_profiles: {…}        # create_story, dev_story, code_review_review, code
                            #   code_review_review_tertiary (the two extra reviewer slots are OPTIONAL —
                            #   blank "" => disabled; secondary ships on, tertiary ships blank),
                            #   code_review_security (dedicated security review; blank "" => primary profile),
+                           #   code_review_verification (verification-gap review; blank "" => primary profile),
                            #   code_review_fix, tea_triage, tea_per_story, tea_epic, tea_epic_audit,
                            #   retrospective, project_context, uat (git/PR work runs in the orchestrator
                            #   directly — no delegate profile). Values may name ANY profile in the
