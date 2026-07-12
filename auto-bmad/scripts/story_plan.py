@@ -9,14 +9,17 @@ Output is a single JSON object on stdout so the orchestrator never has to parse
 YAML with an LLM. Dependency-free: the ``development_status`` block is a flat
 ``key: value`` map, so we read it line by line and preserve file order.
 
-A second mode, ``--mark-done KEY``, performs the Phase 9 BMAD-status flip
-(``pipeline.md`` Phase 9): it rewrites KEY's ``development_status`` value to
-``done`` as a line-level edit — leading whitespace, the key, and any inline
-``#`` comment are preserved, every other line byte-identical — and, with
-``--story-file``, also flips the story file's status line (``Status: x`` /
-``**Status:** x`` / ``status: x``, key case-insensitive, first match wins,
-only the value replaced). Idempotent: a target already at ``done`` is not
-rewritten (``already_done`` true when nothing needed writing). Lookup
+A second mode, ``--mark-status KEY --to STATUS`` (with ``--mark-done KEY`` kept
+as an alias for ``--to done``), scripts a BMAD-status flip — Phase 5 write-back
+to ``review`` and the Phase 9 flip to ``done`` (``pipeline.md``): it rewrites
+KEY's ``development_status`` value to STATUS as a line-level edit — leading
+whitespace, the key, and any inline ``#`` comment are preserved, every other
+line byte-identical — and, with ``--story-file``, also flips the story file's
+status line (``Status: x`` / ``**Status:** x`` / ``status: x``, key
+case-insensitive, first match wins, only the value replaced). STATUS must be one
+of ``backlog|ready-for-dev|in-progress|review|done``. Idempotent: a target
+already at STATUS is not rewritten (``already_at_status`` true when nothing
+needed writing, and ``already_done`` when that status is ``done``). Lookup
 validation happens before any write; the write phase then renders both new
 contents, stages each as a temp file in its target's directory, and commits
 with back-to-back atomic ``os.replace`` calls — so a staging failure (e.g. an
@@ -36,6 +39,7 @@ is set when the epic is unknown/empty or already ``done``.
 Usage:
     story_plan.py --sprint-status PATH [--story 1-3|1-3-slug] [--impl-dir DIR]
     story_plan.py --epic N --sprint-status PATH [--impl-dir DIR]
+    story_plan.py --mark-status KEY --to STATUS --sprint-status PATH [--story-file PATH]
     story_plan.py --mark-done KEY --sprint-status PATH [--story-file PATH]
     story_plan.py --self-test
 """
@@ -375,23 +379,45 @@ def _stage_write(path, content):
     return tmp
 
 
-def mark_done(sprint_status_path, key, story_file=None):
-    """Flip KEY's sprint-status entry (and the story file's status line) to
-    ``done``. Returns (result, exit_code). Lookup failures (exit 1) happen
-    before any write; writes stage both temp files first and commit with
-    back-to-back atomic ``os.replace`` calls, so a write failure (exit 1,
-    JSON ``error``) leaves every uncommitted target byte-identical — only
-    the instant between the two replaces can observe a half-flip, and the
-    ``*_updated`` flags report exactly what was committed."""
+# BMAD development_status values the orchestrator may script. LLM-only write-backs
+# (bmad-dev-story step 9) are the root cause of recurring ready-for-dev↔review drift.
+# Derived from ACTION_FOR_STATUS (the canonical status vocabulary) so a new or
+# renamed status can't drift the two lists apart.
+_ALLOWED_MARK_STATUSES = frozenset(ACTION_FOR_STATUS)
+
+
+def mark_status(sprint_status_path, key, status, story_file=None):
+    """Flip KEY's sprint-status entry (and optionally the story file's Status
+    line) to ``status``. Returns (result, exit_code).
+
+    Lookup failures (exit 1) happen before any write; writes stage both temp
+    files first and commit with back-to-back atomic ``os.replace`` calls, so a
+    write failure (exit 1, JSON ``error``) leaves every uncommitted target
+    byte-identical — only the instant between the two replaces can observe a
+    half-flip, and the ``*_updated`` flags report exactly what was committed.
+
+    Used by Phase 5 (→ ``review`` / ``in-progress``) and Phase 9 (→ ``done``)
+    so sprint-status write-back is scripted, not LLM-instruction-only.
+    """
+    target = (status or "").strip().lower()
     result = {
         "key": key,
+        "target_status": target,
         "previous_status": None,
         "sprint_updated": False,
         "story_previous_status": None,
         "story_file_updated": False,
-        "already_done": False,
+        "already_at_status": False,
         "error": None,
     }
+    # Backward-compat alias used by older Phase-9 callers / self-tests.
+    result["already_done"] = False
+
+    if target not in _ALLOWED_MARK_STATUSES:
+        result["error"] = (
+            f"invalid status '{status}' — allowed: {sorted(_ALLOWED_MARK_STATUSES)}"
+        )
+        return result, 1
 
     if not os.path.isfile(sprint_status_path):
         result["error"] = f"sprint-status file not found: {sprint_status_path}"
@@ -405,7 +431,7 @@ def mark_done(sprint_status_path, key, story_file=None):
         result["error"] = f"key '{key}' not found in development_status of {sprint_status_path}"
         return result, 1
     result["previous_status"] = sprint_m.group(2)
-    sprint_needs_write = sprint_m.group(2).strip().lower() != "done"
+    sprint_needs_write = sprint_m.group(2).strip().lower() != target
 
     story_lines = None
     story_idx = None
@@ -426,7 +452,7 @@ def mark_done(sprint_status_path, key, story_file=None):
             result["error"] = f"no Status line found in {story_file}"
             return result, 1
         result["story_previous_status"] = story_m.group(2)
-        story_needs_write = story_m.group(2).strip().lower() != "done"
+        story_needs_write = story_m.group(2).strip().lower() != target
 
     # All targets validated — write only what actually changes (idempotent).
     # Stage BOTH new contents as temp files first (any I/O error here aborts
@@ -435,10 +461,14 @@ def mark_done(sprint_status_path, key, story_file=None):
     staged = []  # (temp_path, final_path, result flag) in commit order
     try:
         if sprint_needs_write:
-            _rewrite_line(sprint_lines, sprint_idx, sprint_m.group(1) + "done" + (sprint_m.group(3) or ""))
+            _rewrite_line(
+                sprint_lines,
+                sprint_idx,
+                sprint_m.group(1) + target + (sprint_m.group(3) or ""),
+            )
             staged.append((_stage_write(sprint_status_path, "".join(sprint_lines)), sprint_status_path, "sprint_updated"))
         if story_needs_write:
-            _rewrite_line(story_lines, story_idx, story_m.group(1) + "done")
+            _rewrite_line(story_lines, story_idx, story_m.group(1) + target)
             staged.append((_stage_write(story_file, "".join(story_lines)), story_file, "story_file_updated"))
         for tmp, final_path, flag in staged:
             os.replace(tmp, final_path)
@@ -450,8 +480,16 @@ def mark_done(sprint_status_path, key, story_file=None):
         result["error"] = f"write failed: {exc} (the sprint_updated/story_file_updated flags report what was committed)"
         return result, 1
 
-    result["already_done"] = not (result["sprint_updated"] or result["story_file_updated"])
+    already = not (result["sprint_updated"] or result["story_file_updated"])
+    result["already_at_status"] = already
+    result["already_done"] = already and target == "done"
     return result, 0
+
+
+def mark_done(sprint_status_path, key, story_file=None):
+    """Flip KEY to ``done`` — Phase 9 BMAD-status flip. Thin wrapper over
+    ``mark_status`` kept for backward-compatible CLI / callers."""
+    return mark_status(sprint_status_path, key, "done", story_file)
 
 
 # --------------------------------------------------------------------------- #
@@ -476,6 +514,8 @@ development_status:
 
 
 def _run_self_test():
+    import contextlib
+    import io
     import stat
 
     failures = []
@@ -709,6 +749,70 @@ development_status:
         os.rmdir(wr_dir)
         os.rmdir(ro_dir)
 
+    # ---- mark-status mode (generalized flip, non-done targets) ------------ #
+    # A non-done target flips both sources; already_done stays False (not done).
+    sp = fresh(mark_fixture, ".yaml")
+    st = fresh("Status: done\n", ".md")
+    res, code = mark_status(sp, "1-2-account-management", "in-progress", st)
+    check("mark-status flip: exit 0", code == 0)
+    check("mark-status flip: target echoed", res["target_status"] == "in-progress")
+    check("mark-status flip: sprint flipped", res["sprint_updated"] is True)
+    check("mark-status flip: story flipped", res["story_file_updated"] is True)
+    check("mark-status flip: not already_at_status", res["already_at_status"] is False)
+    check("mark-status flip: already_done stays False (non-done target)", res["already_done"] is False)
+    check("mark-status flip: value-only sprint edit", slurp(sp) == mark_fixture.replace(
+        "  1-2-account-management: review  # awaiting final pass",
+        "  1-2-account-management: in-progress  # awaiting final pass",
+    ))
+    check("mark-status flip: value-only story edit", slurp(st) == "Status: in-progress\n")
+
+    # Idempotent at a non-done status: no write, exit 0, already_at_status True
+    # while already_done stays False.
+    sp = fresh(mark_fixture, ".yaml")
+    res, code = mark_status(sp, "1-2-account-management", "review")
+    check("mark-status idempotent: exit 0", code == 0)
+    check("mark-status idempotent: already_at_status", res["already_at_status"] is True)
+    check("mark-status idempotent: already_done False (target review)", res["already_done"] is False)
+    check("mark-status idempotent: sprint not updated", res["sprint_updated"] is False)
+    check("mark-status idempotent: file untouched", slurp(sp) == mark_fixture)
+
+    # Invalid target => exit 1, error names the bad status, sprint file untouched
+    # (validate-before-write).
+    sp = fresh(mark_fixture, ".yaml")
+    res, code = mark_status(sp, "1-2-account-management", "shipped")
+    check("mark-status invalid: exit 1", code == 1)
+    check("mark-status invalid: error names bad status", "shipped" in (res["error"] or ""))
+    check("mark-status invalid: sprint untouched", slurp(sp) == mark_fixture)
+
+    # done via mark_status matches the mark_done wrapper: already_done tracks target.
+    sp = fresh(mark_fixture, ".yaml")
+    res, code = mark_status(sp, "1-1-user-authentication", "done")
+    check("mark-status done: already_at_status", res["already_at_status"] is True)
+    check("mark-status done: already_done True (target done)", res["already_done"] is True)
+
+    # CLI guards (main-level): --to targets a status, so it is rejected everywhere
+    # except --mark-status — closing the footgun where `--mark-done KEY --to review`
+    # silently flipped to done. Bad combos exit 2 (argparse usage error).
+    sp = fresh(mark_fixture, ".yaml")
+
+    def _main_exit(argv):
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                return main(argv)
+        except SystemExit as exc:  # parser.error -> exit 2
+            return exc.code
+
+    check("cli: --mark-done rejects --to", _main_exit(
+        ["--sprint-status", sp, "--mark-done", "1-3-plant-data-model", "--to", "review"]) == 2)
+    check("cli: --mark-done + --to leaves sprint untouched", slurp(sp) == mark_fixture)
+    check("cli: --mark-done and --mark-status mutually exclusive", _main_exit(
+        ["--sprint-status", sp, "--mark-done", "1-3-plant-data-model",
+         "--mark-status", "1-3-plant-data-model", "--to", "review"]) == 2)
+    check("cli: --mark-status requires --to", _main_exit(
+        ["--sprint-status", sp, "--mark-status", "1-3-plant-data-model"]) == 2)
+    check("cli: bare --to without a mark flag rejected", _main_exit(
+        ["--sprint-status", sp, "--to", "review"]) == 2)
+
     for p in tmp_paths:
         os.unlink(p)
 
@@ -726,7 +830,17 @@ def main(argv=None):
     parser.add_argument("--epic", metavar="N", help="enumerate all stories in epic N (N or epic-N), for the epic pipeline")
     parser.add_argument("--impl-dir", default="", help="implementation_artifacts dir (for absolute story_file)")
     parser.add_argument("--mark-done", metavar="KEY", help="flip KEY's development_status entry to done (Phase 9 BMAD-status flip)")
-    parser.add_argument("--story-file", help="with --mark-done: also flip this story file's Status line to done")
+    parser.add_argument(
+        "--mark-status",
+        metavar="KEY",
+        help="flip KEY's development_status entry to --to STATUS (Phase 5 review write-back; preferred over LLM-only sync)",
+    )
+    parser.add_argument(
+        "--to",
+        metavar="STATUS",
+        help="with --mark-status: target status (backlog|ready-for-dev|in-progress|review|done)",
+    )
+    parser.add_argument("--story-file", help="with --mark-done/--mark-status: also flip this story file's Status line")
     parser.add_argument("--self-test", action="store_true", help="run built-in fixtures and exit")
     args = parser.parse_args(argv)
 
@@ -737,18 +851,34 @@ def main(argv=None):
         parser.error("--sprint-status is required (or use --self-test)")
 
     if args.epic is not None:
-        if args.mark_done or args.story or args.story_file:
-            parser.error("--epic cannot be combined with --story/--mark-done/--story-file")
+        if args.mark_done or args.mark_status or args.story or args.story_file:
+            parser.error("--epic cannot be combined with --story/--mark-done/--mark-status/--story-file")
         result = build_epic_result(args.sprint_status, args.epic, args.impl_dir)
         print(json.dumps(result, indent=2))
         return 0
+
+    if args.mark_done and args.mark_status:
+        parser.error("--mark-done and --mark-status are mutually exclusive")
+
+    if args.mark_status:
+        if not args.to:
+            parser.error("--mark-status requires --to STATUS")
+        result, code = mark_status(args.sprint_status, args.mark_status, args.to, args.story_file)
+        print(json.dumps(result, indent=2))
+        return code
+
+    # --to targets a status, which only --mark-status honours. Reject it before the
+    # --mark-done branch so `--mark-done KEY --to review` can't silently flip to done
+    # (that branch ignores --to) — error out instead of surprising the caller.
+    if args.to:
+        parser.error("--to is only valid with --mark-status")
 
     if args.mark_done:
         result, code = mark_done(args.sprint_status, args.mark_done, args.story_file)
         print(json.dumps(result, indent=2))
         return code
     if args.story_file:
-        parser.error("--story-file is only valid with --mark-done")
+        parser.error("--story-file is only valid with --mark-done or --mark-status")
 
     result = build_result(args.sprint_status, args.story, args.impl_dir)
     print(json.dumps(result, indent=2))

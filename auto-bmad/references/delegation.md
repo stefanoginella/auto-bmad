@@ -111,11 +111,14 @@ It passes the diff and each lens's findings **by path, never by content** — so
 - Security stays single-instance off-total exactly as here.
 - The roster shape is identical (`3×R` = blind/edge/auditor per reviewer).
 
-#### code-review-blind  (Blind Hunter — diff only, unanchored)
+#### code-review-blind  (Blind Hunter — diff + code read, blind to spec/intent)
+<!-- Access model mirrors bmad-code-review #2507: the Blind Hunter is blind to INTENT (no
+     spec/context), NOT to the codebase — it may read surrounding code to judge correctness. -->
 ```
 Run `/bmad-review-adversarial-general` in <project_root> with the diff at <diff_file> as the content to
-review. Review ONLY that diff — do NOT open the spec, the story file, or any other project file; your
-value is being unanchored by the spec. Write the skill's findings (its markdown list) to <blind_out>.
+review. Review that diff — do NOT open the spec or the story file; your value is being unanchored by the
+spec (intent). You MAY read the surrounding code the diff touches to judge whether a change is actually
+correct. Write the skill's findings (its markdown list) to <blind_out>.
 You are NOT done until <blind_out> exists on disk — write it with the Write tool and verify it landed
 before you finish (do not end with the findings only in chat).
 Report ONLY the path you wrote and your finding count — NOT the findings text.
@@ -132,7 +135,7 @@ Report ONLY the path you wrote and your finding count — NOT the findings text.
 
 #### code-review-auditor  (Acceptance Auditor — diff + spec)
 ```
-You are an Acceptance Auditor. Review this diff against the spec and context docs. Check for: violations
+You are an Acceptance Auditor. Review the provided diff against the spec and any loaded context docs. Check for: violations
 of acceptance criteria, deviations from spec intent, missing implementation of specified behavior,
 contradictions between spec constraints and actual code. Output findings as a Markdown list. Each
 finding: one-line title, which AC/constraint it violates, and evidence from the diff.
@@ -143,7 +146,7 @@ on disk — write it with the Write tool and verify it landed before you finish 
 findings only in chat).
 Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
-(The first paragraph is the Acceptance Auditor prompt **verbatim** from the `bmad-code-review` skill's `step-02-review.md`. Keep it in lockstep with upstream.)
+(The first paragraph mirrors the Acceptance Auditor prompt from the `bmad-code-review` skill's `step-02-review.md` — upstream's `{spec_file}`/`{diff_output}` placeholders are resolved by auto-bmad's `<story_file>`/`<diff_file>` in the paragraph below. Keep it in lockstep with upstream.)
 
 #### code-review-auditor (epic)  (Acceptance Auditor — epic diff + epic planning; epic mode Tier B)
 <!-- VARIANT OF code-review-auditor: the upstream-verbatim first paragraph stays the single source —
@@ -190,15 +193,23 @@ each such case as a failed/empty layer):
 {lens_files}
 {security_file_hint}
 The diff under review is at <diff_file>; the spec/story file is <story_file>. Do NOT re-review — work
-from those files.
+from those files; you MAY open the source at a finding's location to calibrate its severity (below), but
+do not redo the lenses' search.
+
+Severity calibration (mirrors `bmad-code-review` step-03, upstream #2523 — but auto-bmad keeps its
+4-level Critical/High/Med/Low scale, NOT upstream's 3-level low/medium/high): before tagging a finding's
+severity, read enough surrounding code at its location — call sites, guards, and validation that live
+OUTSIDE the diff hunk — to judge real reachability. Rate by the real consequence at a real call site,
+not the worst theoretical reading of the diff hunk alone.
 
 PERSIST DISCIPLINE (read this FIRST — some models exhaust their step budget reading and never write):
 - STEP 1, BEFORE reading the lens files: use the Write/Edit tool to create the `### Review Findings`
   section (or its `#### Iteration N` subsection) in <story_file> with a single
   `<!-- triage in progress -->` placeholder line. This guarantees the deliverable exists even if you
-  run out of steps. STEP 2: read the lens files (budget: open ONLY the {lens_files}/security files +
-  <story_file> + <diff_file> — do not wander the codebase). STEP 3: Edit the placeholder into the
-  real bullets per PERSIST below.
+  run out of steps. STEP 2: read the lens output files listed above, plus the security output if the
+  security lens ran, and <story_file> + <diff_file>. Beyond the targeted severity-calibration reads
+  noted above, do not wander the codebase. STEP 3: Edit the placeholder into the real bullets per
+  PERSIST below.
 - You are NOT done until <story_file> contains the real `### Review Findings` bullets ON DISK. Before
   your final message, re-read the section to confirm it persisted; if it didn't, write it now. NEVER
   put the findings only in your chat reply as a substitute for writing the file.
@@ -280,7 +291,7 @@ The orchestrator fills `{R}` with the roster size.
 The orchestrator fills `{lens_files}` with one block per roster reviewer, from `prep-diff`'s `lens_paths`:
 - Reviewer `primary`:
   - Blind Hunter (adversarial markdown list): `<lens_paths.primary.blind>`
-  - Edge Case Hunter (JSON array — location / trigger_condition / guard_snippet / potential_consequence): `<lens_paths.primary.edge>`
+  - Edge Case Hunter (JSON array — location / trigger_condition / guard_snippet / potential_consequence; deletion findings add `kind`/`confidence`): `<lens_paths.primary.edge>`
   - Acceptance Auditor (markdown list — title / AC-or-constraint / evidence): `<lens_paths.primary.auditor>`
 - Repeat for `secondary` / `tertiary` when on the roster — list only active slots.
 
