@@ -99,6 +99,12 @@ TOOL_BINARY = {"claude": "claude", "codex": "codex", "opencode": "opencode"}
 # for the host the orchestrator already runs inside.
 _HOST_TOOL = {"claude-code": "claude", "codex": "codex", "opencode": "opencode"}
 _AUTH_PROBE_TIMEOUT = 20  # seconds — keep short so a wedged probe can't hang preflight
+# Hard wall-clock cap for a single REVIEW delegate (a lens, the triage, or the security pass),
+# applied in the launch_cmd via GNU `timeout`/`gtimeout` when one is on PATH (else uncapped — stock
+# macOS has neither). Bounds the opencode/GLM tool-stream wedge (observed: 20+ min CPU, 0 output,
+# never terminates). Generous vs a real review pass (minutes) but finite. NOT applied to non-review
+# phases (dev_story legitimately runs hours). See resolve() + _build_launch_cmd.
+_REVIEW_DELEGATE_TIMEOUT_SECS = 1200  # 20 min
 # opencode CLI surface (flags/dirs) AND the `run --format json` event schema are verified against
 # this version: extract_opencode_result() targets the verified shape (top-level type=="text" events,
 # part.text concatenated) with defensive fallbacks for any future schema drift.
@@ -427,8 +433,23 @@ def resolve(
         plan["result_field"] = None
         plan["error_field"] = None
 
+    # Hard wall-clock cap for REVIEW delegates only: bounds the opencode/GLM tool-stream wedge
+    # (observed 20+ min, 0 output). dev_story and other long phases get no cap (timeout_secs=0) —
+    # they legitimately run hours. Both the fan-out lenses/triage (`code_review_review*`) and the
+    # single security delegate (`code_review_security*`) route the same flaky path, so both are
+    # capped. See _build_launch_cmd.
+    caps_phase = phase.startswith(("code_review_review", "code_review_security"))
+    timeout_secs = _REVIEW_DELEGATE_TIMEOUT_SECS if caps_phase else 0
+    # `timeout(1)` is GNU coreutils — absent on stock macOS (Homebrew ships it as `gtimeout`).
+    # Resolve the binary here; if neither is on PATH we run UNCAPPED rather than emit a bare
+    # `timeout` that dies with 127 and dooms every routed review on that host. Uncapped is exactly
+    # what every non-review phase already does — strictly better than a guaranteed 127.
+    timeout_bin = (shutil.which("timeout") or shutil.which("gtimeout")) if timeout_secs else None
+    plan["timeout_secs"] = timeout_secs
+    plan["timeout_bin"] = timeout_bin
     plan["launch_cmd"] = _build_launch_cmd(
-        plan["argv"], root, capture_log, exit_file, prompt_file, plan["prompt_via"]
+        plan["argv"], root, capture_log, exit_file, prompt_file, plan["prompt_via"],
+        timeout_secs, timeout_bin,
     )
     return plan
 
@@ -440,6 +461,8 @@ def _build_launch_cmd(
     exit_file: str,
     prompt_file: str,
     prompt_via: str,
+    timeout_secs: int = 0,
+    timeout_bin: "str | None" = None,
 ) -> str:
     """The exact ``bash -c`` body the orchestrator backgrounds for a routed delegate.
 
@@ -453,12 +476,23 @@ def _build_launch_cmd(
     """
     q = shlex.quote
     cmd = " ".join(q(a) for a in argv)
+    # Optional hard wall-clock cap. Only set for review delegates (see resolve()) — a wedged
+    # opencode/GLM tool-stream otherwise hangs forever (observed: 20+ min, 0 output). NOT set for
+    # dev_story etc., which legitimately run hours. `timeout_bin` is the resolved GNU
+    # `timeout`/`gtimeout` path, or None when neither is on PATH (e.g. stock macOS) — in which case
+    # we run UNCAPPED rather than a bare `timeout` that would fail 127 and doom the delegate.
+    # `-k 30` SIGKILLs 30s after SIGTERM if the child ignores TERM; the brace-group's `echo $?` then
+    # records 124 (timeout) as the delegate's exit status, which the waiter surfaces as a failure.
+    if timeout_secs and timeout_secs > 0 and timeout_bin:
+        runner = f"{q(timeout_bin)} -k 30 {int(timeout_secs)} {cmd}"
+    else:
+        runner = cmd
     if prompt_via == "arg":
         # opencode: the prompt is the final positional `message` arg (it does NOT read stdin).
-        inner = f"cd {q(cwd)} && {cmd} \"$(cat {q(prompt_file)})\""
+        inner = f"cd {q(cwd)} && {runner} \"$(cat {q(prompt_file)})\""
     else:
         # claude/codex: the prompt is piped on stdin.
-        inner = f"cd {q(cwd)} && {cmd} < {q(prompt_file)}"
+        inner = f"cd {q(cwd)} && {runner} < {q(prompt_file)}"
     # `echo $?` captures the brace-group's status (the delegate's), AFTER its redirect closes.
     return f"{{ {inner} ; }} > {q(capture_log)} 2>&1 ; echo $? > {q(exit_file)}"
 
@@ -992,6 +1026,49 @@ def _run_self_test() -> int:
     # A space in the cwd is shell-quoted, not split, so the cd survives.
     spaced = resolve("dev_story", cfg, "/tmp/my proj", story_key="k")
     assert "cd '/tmp/my proj'" in spaced["launch_cmd"], spaced["launch_cmd"]
+
+    # --- review-delegate wall-clock cap: resolve() phase-gating + _build_launch_cmd (macOS-safe) ---
+    cfg_to = (
+        "delegation:\n"
+        "  cli_phases:\n"
+        "    code_review_review_primary: codex\n"
+        "    code_review_security: codex\n"
+        "    dev_story: codex\n"
+        "profiles:\n"
+        "  ab-deep:\n"
+        "    codex:\n"
+        "      model: gpt-5.5\n"
+        "      reasoning_effort: high\n"
+        "phase_profiles:\n"
+        "  code_review_review_primary: ab-deep\n"
+        "  code_review_security: ab-deep\n"
+        "  dev_story: ab-deep\n"
+    )
+    rv = resolve("code_review_review_primary", cfg_to, "/proj", story_key="k")
+    sec = resolve("code_review_security", cfg_to, "/proj", story_key="k")
+    dv = resolve("dev_story", cfg_to, "/proj", story_key="k")
+    assert not rv["errors"] and not sec["errors"] and not dv["errors"], (rv, sec, dv)
+    # Both the fan-out lenses/triage AND the single security pass are capped; dev_story never is.
+    assert rv["timeout_secs"] == _REVIEW_DELEGATE_TIMEOUT_SECS, rv
+    assert sec["timeout_secs"] == _REVIEW_DELEGATE_TIMEOUT_SECS, sec
+    assert dv["timeout_secs"] == 0, dv
+    # _build_launch_cmd wraps ONLY when a timeout binary was resolved; otherwise it runs UNCAPPED —
+    # no bare `timeout`, so a coreutils-less macOS host still runs the review instead of failing 127.
+    _a = ["opencode", "run"]
+    capped = _build_launch_cmd(_a, "/proj", "/t/c.log", "/t/c.exit", "/t/c.prompt", "arg",
+                               _REVIEW_DELEGATE_TIMEOUT_SECS, "/usr/bin/timeout")
+    assert "/usr/bin/timeout -k 30 1200 " in capped, capped
+    uncapped = _build_launch_cmd(_a, "/proj", "/t/c.log", "/t/c.exit", "/t/c.prompt", "arg",
+                                 _REVIEW_DELEGATE_TIMEOUT_SECS, None)
+    assert "timeout" not in uncapped and "-k 30" not in uncapped, uncapped
+    # Homebrew `gtimeout` is honored too, and a space-y binary path is shell-quoted.
+    gcapped = _build_launch_cmd(_a, "/proj", "/t/c.log", "/t/c.exit", "/t/c.prompt", "arg",
+                                _REVIEW_DELEGATE_TIMEOUT_SECS, "/opt/home brew/bin/gtimeout")
+    assert "'/opt/home brew/bin/gtimeout' -k 30 1200 " in gcapped, gcapped
+    # dev_story parity: even if a timeout binary exists, secs=0 means no wrapper.
+    noncap = _build_launch_cmd(_a, "/proj", "/t/c.log", "/t/c.exit", "/t/c.prompt", "arg",
+                               0, "/usr/bin/timeout")
+    assert "timeout" not in noncap, noncap
 
     # --- extract_opencode_result: validated against a REAL opencode 1.16.2 `run --format json`
     # capture (OpenCode Zen / MiMo V2.5; opaque IDs abbreviated, structure verbatim). Assistant
