@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   BMAD-status flip to `review` (both `sprint-status.yaml` and the story file) via
   `story_plan.py --mark-status`, instead of trusting the dev-story delegate's LLM-only sync — the
   cause of stories stuck at `ready-for-dev` while the story file already read `review`.
+- **CLI-routed code reviews no longer hang forever on a wedged delegate.** Review lens/triage/security
+  delegates now get a hard wall-clock cap (`timeout`/`gtimeout`; uncapped, not broken, on hosts
+  without coreutils such as stock macOS), so an opencode/GLM tool-stream stall fails fast.
+- **CLI review delegates persist findings reliably and halt less spuriously.** Lens/triage prompts
+  gained a write-first/verify-on-disk contract and a stricter Patch-vs-Decision rule — fewer empty
+  layers and fewer needless Phase 7 human halts on flaky models.
 
 ## [0.25.2] - 2026-06-30
 
