@@ -383,6 +383,22 @@ def _default_templates_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "assets" / "agents"
 
 
+def _unresolved_path_error(named_paths: list) -> str:
+    """Return an error message if any path argument still holds a literal
+    ``{project-root}`` token, else "". That token is meaningful only inside
+    config values; filesystem path arguments must be resolved by the caller.
+    Failing loudly beats silently rendering agents into a junk directory.
+    """
+    for name, value in named_paths:
+        if value and "{project-root}" in str(value):
+            return (
+                f"Unresolved '{{project-root}}' token in {name} path: {value!r}. "
+                "Resolve '{project-root}' to the actual project root before running "
+                "this script — it is a filesystem path, not a config value."
+            )
+    return ""
+
+
 def _run_self_test() -> int:
     templates_dir = _default_templates_dir()
     profiles_file = templates_dir / "profiles.yaml"
@@ -654,6 +670,15 @@ def _run_self_test() -> int:
             fresh_chk = check(profiles, ["claude-code"], templates_dir, Path(td3))
             assert fresh_chk["needs_reprovision"] and len(fresh_chk["missing"]) == len(PROFILE_NAMES), fresh_chk
 
+    # An unresolved '{project-root}' token in any path arg is rejected, never
+    # written through (it would render agents into a junk '{project-root}/' dir).
+    assert _unresolved_path_error([("--project-root", "{project-root}")])
+    assert _unresolved_path_error([("--project-root", "{project-root}/sub")])
+    assert _unresolved_path_error([("--profiles", "/real"), ("--templates-dir", "{project-root}/t")])
+    # Resolved / absent paths pass cleanly.
+    assert not _unresolved_path_error([("--project-root", "/tmp/real"), ("--profiles", None)])
+    assert not _unresolved_path_error([("--project-root", "/tmp/has{braces}/ok")])
+
     print("SELF-TEST PASSED (all assertions)")
     return 0
 
@@ -675,6 +700,17 @@ def main() -> int:
 
     if args.self_test:
         return _run_self_test()
+
+    unresolved = _unresolved_path_error(
+        [
+            ("--project-root", args.project_root),
+            ("--profiles", args.profiles),
+            ("--templates-dir", args.templates_dir),
+        ]
+    )
+    if unresolved:
+        print(json.dumps({"status": "error", "message": unresolved}))
+        return 2
 
     if not args.project_root:
         print(json.dumps({"status": "error", "message": "--project-root is required"}))
