@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Vendored BMAD setup scripts re-synced with upstream and now carry provenance.**
+  `merge-help-csv.py` and `merge-config.py` record their bmad-builder origin, sync SHA, and MIT
+  attribution, so a future re-sync can't silently revert a local fix. (Thanks @hugheba, #8.)
+
+### Fixed
+
+- **Setup scripts no longer create a junk `{project-root}/` directory.** An unresolved
+  `{project-root}` token in a path argument now fails loudly instead of being written through
+  (`merge-help-csv.py`, `merge-config.py`, `render-agents.py`). (Thanks @hugheba, #8.)
+
 ## [0.26.0] - 2026-07-12
 
 ### Added
