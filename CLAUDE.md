@@ -154,6 +154,12 @@ schema, first-run).
     (`validate-module.py` requires the file to exist); auto-bmad **does not invoke it**. abm never
     writes the installer-owned central BMAD config (see the TOML-layout fact below) — its real
     config is the runtime `{output_folder}/auto-bmad/config.yaml`. Don't reintroduce a call to it.
+  - **Both of the above are VENDORED**, not ours: verbatim copies from
+    `bmad-code-org/bmad-builder` (`skills/bmad-module-builder/assets/standalone-module-template/`),
+    MIT © BMad Code, LLC. Each carries a provenance header with its origin, sync SHA, and local-delta
+    list — **record every local edit there**, or the next re-sync silently reverts it. Prefer fixing
+    a bug upstream and re-syncing over diverging. Note the upstream lives in `bmad-builder`, a
+    *separate* repo from `BMAD-METHOD`.
 - **Repo-root tooling, NOT shipped in the skill:** `CHANGELOG.md` (hand-maintained),
   `scripts/bump-version.py` (release helper — see "Releasing"), `skills/reports/` (tracked
   module-validation snapshots), `docs/` (placeholder).
