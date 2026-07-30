@@ -13,7 +13,7 @@ one once it ships (with a CHANGELOG note) or is judged a permanent non-fit.
 
 ## Open
 
-### `bmad-dev-auto` native unattended dev loop (parallel approach, not a building block)
+### `bmad-build-auto` native unattended dev loop (parallel approach, not a building block)
 
 - **What it is:** `bmad-method` 6.9.1-next.1 (PR #2500) adds `bmad-dev-auto` — a
   single skill that runs *"one iteration of an unattended development loop"*:
@@ -37,6 +37,26 @@ one once it ships (with a CHANGELOG note) or is judged a permanent non-fit.
   lightweight/freeform non-story lane — at which point delegating to it could be a
   real fit instead of a wholesale replacement.
 - **First noted:** 2026-06-23 compat check (BMAD `6.9.1-next.1`, PR #2500).
+- **Re-confirmed:** 2026-07-30 compat check (BMAD `6.10.1-next.34`) — the trigger
+  fired *partially*, and the lane around it moved a lot. `bmad-quick-dev` was
+  promoted to BMAD's **official Phase 4 implementation method** and renamed
+  **`bmad-build`** (PRs #2637, #2651); `bmad-dev-auto` renamed to
+  **`bmad-build-auto`**. `bmad-create-story` / `bmad-dev-story` are now **deprecated
+  in place** (PR #2641): moved under `src/bmm-skills/v6-shims/`, description swapped
+  to *"Only use this when explicitly invoked by name"*, and dropped from
+  `module-help.csv` — but **retained in full** (templates/checklists byte-identical),
+  with removal explicitly riding the **v7 cut, never a 6.x minor**. auto-bmad
+  invokes both by name, which is exactly the path the shim preserves, so the story
+  lane is safe for all of 6.x. The deferral **stands**: `bmad-build-auto` is still
+  prerelease-only and still has no TEA gate, git/PR, retro, epic mode, or
+  code-review fan-out — adopting it would still replace Phases 2–7 wholesale. What
+  changed is the clock, not the fit.
+- **Also watch:** `bmad-build-auto` now **hard-requires `uv`** (its SKILL.md HALTs
+  when `uv` is unavailable). No skill auto-bmad delegates has converted — see the
+  `uv run` entry below, whose trigger has **not** fired.
+- **Revisit sooner if:** BMAD announces a v7 timeline, or any `bmad-build*` gains
+  TEA / git-PR / epic integration — the first would put a removal date on the lane
+  auto-bmad rides, the second would make delegation a real fit.
 
 ### Consume upstream `action_items` (sprint-status.yaml)
 
