@@ -13,7 +13,10 @@
 # Copyright (c) 2025 BMad Code, LLC — MIT License.
 # Full text: https://github.com/bmad-code-org/bmad-builder/blob/main/LICENSE
 #
-# Local deltas from upstream: none (verbatim copy).
+# Local deltas from upstream:
+#   - HEADER columns 9-10: "after"/"before" -> "preceded-by"/"followed-by", matching every
+#     real module-help.csv. Upstream bug, reported as bmad-builder#102; drop this delta once
+#     that lands and re-sync.
 # Record EVERY local edit above, or the next re-sync silently reverts it.
 # ---------------------------------------------------------------------------
 """Merge module help entries into shared _bmad/module-help.csv.
@@ -46,8 +49,8 @@ HEADER = [
     "action",
     "args",
     "phase",
-    "after",
-    "before",
+    "preceded-by",
+    "followed-by",
     "required",
     "output-location",
     "outputs",

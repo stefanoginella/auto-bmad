@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Help-CSV fallback header no longer emits two misnamed columns.** `merge-help-csv.py`'s
+  `HEADER` constant now uses `preceded-by`/`followed-by`, matching every real `module-help.csv`.
+  (Thanks @hugheba, #8.)
+
 - **Setup scripts no longer create a junk `{project-root}/` directory.** An unresolved
   `{project-root}` token in a path argument now fails loudly instead of being written through
   (`merge-help-csv.py`, `merge-config.py`, `render-agents.py`). (Thanks @hugheba, #8.)
