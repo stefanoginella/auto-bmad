@@ -193,8 +193,12 @@ For iteration `i` (1-based):
       - **CLI-routed lenses (`cli_phases`) run in parallel too** — background OS processes, not in-tool subagents (`delegation-runtime.md`).
       - Collect each lens's reported path + count; track genuine delegate failures now. A successful lens with 0 findings and its canonical
         artifact (`No findings.` for Markdown, `[]` for JSON) is a **completed clean layer**, NOT a
-        failure. After triage, add any absent, unreadable, or malformed artifact it reports in
-        `Failed layers`; the resulting failed-lens count spans ALL reviewers. The orchestrator consumes
+        failure. After triage, **union** its reported `Failed layers` (absent, unreadable, or neither a
+        finding list nor the clean marker — a blank file is not the clean marker) with the delegate
+        failures you tracked here: the gate's count is the size of that union **by layer**, never a sum
+        — a layer that failed both ways is ONE failure, and double-counting it trips `review_loop.py`'s
+        `0..{lenses-total}` validator (usage error, rc 2). The union spans ALL reviewers. On a triage
+        re-run (the reconciliation gate below), use the successful run's list. The orchestrator consumes
         only that metadata and never reads a lens artifact itself.
       - **Plus, if `code_review.security_review` (default true): spawn the single `code-review-security` delegate in the same parallel batch**, writing to `<security_path>` (from prep-diff). Track its run separately from the lens count:
         - A successful pass that finds **0** issues is a clean security pass (NOT a failure).
@@ -202,7 +206,7 @@ For iteration `i` (1-based):
       - **Plus, if `code_review.verification_gap` (default true): spawn the single `code-review-verification-gap` delegate in the same parallel batch**, writing to `<verification_path>` (from prep-diff). Track it exactly like the security pass — a 0-finding pass is clean, only a genuine delegate failure feeds the convergence-unverified clause in step 3 (and never adds to `--lenses-failed`).
    c. **Capture the persistence baseline, then triage + persist.**
       - First run `python3 {skill-root}/scripts/review_findings.py --story-file <story_file>` and note its `total` as `{B}` — the section's bullet count BEFORE this pass (0 on a fresh story; on iteration ≥ 2 it holds the earlier passes' bullets). The reconciliation gate below subtracts it, so a prior pass's bullets can never vacuously satisfy this pass's persistence claim.
-      - Then delegate the **`code-review-triage`** entry (always the primary profile), handed ALL the roster's lens paths (3×R files, grouped by reviewer) + (if security_review on) `<security_path>` via `{security_file_hint}` + (if verification_gap on) `<verification_path>` via `{verification_file_hint}` + `<diff_file>` + `<story_file>` + the failed-layer list. The triage delegate:
+      - Then delegate the **`code-review-triage`** entry (always the primary profile), handed ALL the roster's lens paths (3×R files, grouped by reviewer) + (if security_review on) `<security_path>` via `{security_file_hint}` + (if verification_gap on) `<verification_path>` via `{verification_file_hint}` + `<diff_file>` + `<story_file>` + the delegate-failure list from step 1b (it reports back the union — see step 1b). The triage delegate:
         - dedupes (across reviewers and the security + verification-gap passes — parallel models overlap heavily);
         - maps security severities;
         - applies the Low keep/drop test;

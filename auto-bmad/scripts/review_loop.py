@@ -41,10 +41,11 @@ Four modes, each emitting ONE JSON object on stdout:
   per configured reviewer (primary + optional secondary/tertiary), so
   ``--lenses-total`` is 3, 6 or 9 and ``--lenses-failed`` counts genuinely
   failed lenses across ALL reviewers: an errored / ``needs-human`` delegate,
-  or an absent, unreadable, or malformed artifact. A successful canonical
-  zero-finding artifact is a completed lens, not a failure. Decision table
-  (``i`` = 1-based
-  ``--iteration``; cap = ``i`` reaching ``--max-iterations``; ``M`` =
+  or an artifact that is absent, unreadable, or neither a finding list nor
+  the canonical clean marker (a blank file is not the marker). A well-formed
+  zero-finding artifact is a completed lens, not a failure. It is a count of
+  DISTINCT lenses — a lens failing two ways is one. Decision table (``i`` =
+  1-based ``--iteration``; cap = ``i`` reaching ``--max-iterations``; ``M`` =
   ``--lenses-total``):
 
   | # | i   | lenses-failed | findings            | cap? | action           | convergence_unverified |
@@ -953,9 +954,10 @@ def main(argv=None):
     p_gate.add_argument("--iteration", type=int, required=True, help="1-based review iteration i")
     p_gate.add_argument("--max-iterations", type=int, required=True, help="code_review.max_iterations")
     p_gate.add_argument("--lenses-failed", type=int, required=True,
-                        help="how many lenses genuinely failed (delegate error/needs-human or absent, "
-                             "unreadable, malformed artifact), across ALL reviewers (0..total); "
-                             "a successful canonical zero-finding artifact is not failed")
+                        help="how many DISTINCT lenses genuinely failed (delegate error/needs-human, "
+                             "or an artifact that is absent, unreadable, or neither a finding list nor "
+                             "the canonical clean marker), across ALL reviewers (0..total); a "
+                             "well-formed zero-finding artifact is not failed")
     p_gate.add_argument("--lenses-total", type=int, required=True,
                         help="total lenses this pass fanned out: 3 per configured reviewer (3|6|9)")
     p_gate.add_argument("--convergence-unverified", type=_parse_bool, default=False,
