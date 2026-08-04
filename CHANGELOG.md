@@ -15,11 +15,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Verified against BMAD 6.10.1-next.49 and the new TEA 1.21 line.** Both compat markers advanced;
+  the delegate prompts below were adjusted for what those releases changed.
+
+- **Project-context delegate no longer names a specific artifact file.** It now runs headless and
+  refreshes whichever context system exists in place, so it works before and after BMAD's rewrite.
+
+- **Epic-end TEA test review runs headless with the epic's story files as context.** TEA 1.21 added an
+  interactive context prompt this delegate has no human to answer.
+
+- **Retrospective delegate no longer assumes a persona-meeting simulation.** BMAD 6.10.1 replaced it
+  with an evidence engine whose team discussion is off by default; the prompt now just forbids blocking.
+
 - **Vendored BMAD setup scripts re-synced with upstream and now carry provenance.**
   `merge-help-csv.py` and `merge-config.py` record their bmad-builder origin, sync SHA, and MIT
   attribution, so a future re-sync can't silently revert a local fix. (Thanks @hugheba, #8.)
 
 ### Fixed
+
+- **Phase 0 now detects BMAD 6.10.1's new project-context shape.** `preflight.py` recognizes a
+  `kernel.md` + bundle as well as `project-context.md`, so Phase 2 can't re-bootstrap on every run.
+
+- **NFR audit asks for the domains TEA actually scores.** The fourth domain is `scalability`, not
+  `maintainability` — corrected upstream in TEA 1.21.0.
 
 - **Zero-finding review lenses no longer force non-convergence.** A clean lens now counts as a completed
   layer; only delegate or artifact failures make a review incomplete. (Thanks @chgross89, #9.)

@@ -33,6 +33,7 @@ Prompt-authoring rules:
 - `<project_root>` — absolute cwd.
 - `<impl>` — the `implementation_artifacts` dir; `<planning>` — the planning dir.
 - `<story_file>` — absolute path `<impl>/{key}.md` (from `story_plan.py`).
+- `{story_files}` — the epic's implemented story files, comma-separated (each `<impl>/{key}.md`, from `story_plan.py`). Epic-scoped entries only.
 - `<review_tmp>` — the throwaway dir `review_loop.py prep-diff` creates **outside the work tree** for the code-review fan-out, holding `<diff_file>` (the branch diff), one set of three lens-output paths per reviewer slot (`lens_paths.{primary|secondary|tertiary}.{blind|edge|auditor}`), the single `security_path` (the dedicated security review's output), and the single `verification_path` (the verification-gap review's output). In the lens prompts below, `<blind_out>` / `<edge_out>` / `<auditor_out>` mean *the running reviewer slot's* reserved paths, `<security_out>` is the `security_path`, and `<verification_out>` is the `verification_path`. Never under `<impl>` or the repo — it must not be committable. Deleted (`rm -rf`) once the iteration's reconciliation gate passes; on a `needs-human` exit it is kept and its path surfaced for debugging.
 
 ---
@@ -420,25 +421,58 @@ so they are visible at review time — do NOT block, remediate, or open a gate; 
 (The blocking quality gate stays at epic end — see `tea-policy.md` → "Long-epic trace advisory".)
 
 ### testarch-nfr (epic gate)
+<!-- The four domains match TEA's own parallel subagent split. TEA 1.21.0 corrected the
+     fourth from "maintainability" to "scalability"; naming the real four keeps the
+     delegate from auditing a domain the skill has no evidence rubric for. -->
 ```
 Run `/bmad-testarch-nfr` in <project_root> for epic {e}. Audit NFR evidence
-(performance/security/reliability/maintainability) for the work completed in this epic.
+(security/performance/reliability/scalability) for the work completed in this epic.
 ```
 
 ### testarch-test-review (epic gate)
+<!-- TEA 1.21.0 gave this workflow a first-class headless contract. Its step-01 now ASKS
+     which story/test-design/source applies when `context_files` is empty and `headless`
+     is false (the default) — a question this delegate has no human to answer. Passing
+     both inputs is what keeps the run deterministic; without them two runs over the same
+     files can be judged against different context. -->
 ```
 Run `/bmad-testarch-test-review` in <project_root> with suite scope (the tests added across
-epic {e}). Report quality findings + score.
+epic {e}), headless — on TEA 1.21+ set `headless: true`; regardless of version, never ask a
+question or wait for input (there is no human in this session).
+Pass epic {e}'s story files as the read-only context set (TEA 1.21+ `context_files`):
+{story_files}. Context is read to judge the tests against their acceptance criteria — it is
+never itself reviewed or scored, and never waives a finding.
+Report quality findings + score.
 ```
 
 ### generate-project-context
+<!-- Invoke by the LEGACY name on purpose. It is the only id present on every 6.x
+     line: BMAD ≤ 6.10.0 owns the workflow itself, and 6.10.1+ ships it as a
+     deprecation shim that forwards to `bmad-project-context` with ingest intent
+     (carrying our text through verbatim). Invoking `/bmad-project-context`
+     directly would hard-fail on stable. Revisit at the v7 cut. -->
 ```
-Run `/bmad-generate-project-context` in <project_root>. {bootstrap_intent}
-Use sensible defaults for any prompt.
+Run `/bmad-generate-project-context` in <project_root>, non-interactively. {bootstrap_intent}
+Run headless — pass `--auto` and take every decision yourself; NEVER ask a question or wait
+for input (there is no human in this session). Use sensible defaults throughout.
+Report ONLY the artifact paths you wrote and a one-line summary — NOT the context content.
 ```
-The orchestrator fills `{bootstrap_intent}` from the calling phase:
-- Phase 2 bootstrap (no `project-context.md` exists yet): `Create project context for the first time`
-- Phase 8 refresh (epic-end, file already exists): `Update project-context.md to reflect the current stack, patterns, and conventions after epic {e}. BEFORE rewriting, read the accumulated retro notes at _bmad-output/auto-bmad/retro-notes/epic-{e}.md (and scan <impl>/deferred-work.md for any DURABLE constraint).`
+The orchestrator fills `{bootstrap_intent}` from the calling phase and Phase 0's
+`project_context.kind` (`legacy` = a `project-context.md`; `kernel` = a
+`bmad-project-context` kernel + bundle; `null` = nothing yet):
+- **Phase 2 bootstrap** (`kind` is `null`): `Create the project context for the first time.`
+- **Phase 8 refresh** (`kind` is `legacy` or `kernel`): `Refresh the existing project context so it reflects the current stack, patterns, and conventions after epic {e}. BEFORE rewriting, read the accumulated retro notes at _bmad-output/auto-bmad/retro-notes/epic-{e}.md (and scan <impl>/deferred-work.md for any DURABLE constraint). Update the context system that already exists at <context_path> in place — do NOT start a second one alongside it.`
+
+**Artifact shape is the host BMAD's business, not ours.** Two shapes exist, and the
+prompt above names neither so it stays correct on both: a single `project-context.md`
+(≤ 6.10.0), or `bmad-project-context`'s `kernel.md` + knowledge bundle (6.10.1+, which
+also demotes any existing `project-context.md` to a mining source). `<context_path>` is
+Phase 0's `project_context.path`; omit that sentence when `kind` is `null`.
+
+**On 6.10.1+ the delegate needs `uv` on PATH** — `bmad-project-context` shells its
+mechanics through `uv run`. Missing `uv` fails the delegate, not the pipeline: record
+the failure and continue (context is advisory input to create-story, never a gate).
+auto-bmad's own scripts stay stdlib-only `python3` and never gain this dependency.
 
 ### deferred-reconcile
 This is **not** a `/bmad-*` skill call — it is a reconciliation pass (an inline prompt, like the code-review lenses).
@@ -485,11 +519,19 @@ Pin the marker vocabulary above to what `deferred_ledger.py` recognizes — `✅
 - A marker it can't read silently no-ops — safe, because the entry is simply kept.
 
 ### retrospective
+<!-- Wording spans both upstream shapes. BMAD ≤ 6.10.0 simulates a persona meeting and
+     asks the facilitator's questions inline; 6.10.1+ (#2612) replaced that with an
+     evidence engine whose team discussion is opt-in, OFF by default, and delegated to
+     `bmad-party-mode` — so the prompt must not assume questions will be asked, only
+     that nothing may block on a human. `-H {e}` is 6.10.1+'s stable orchestrator
+     interface; on older lines it reads as harmless prose alongside the epic number. -->
 ```
-Run `/bmad-retrospective` in <project_root> for epic {e}.
-You are the sole facilitator AND participant — answer all party-mode questions yourself using
-the accumulated notes at _bmad-output/auto-bmad/retro-notes/epic-{e}.md plus the story files and
-sprint-status. Produce the full retrospective document and mark the epic retrospective `done`.
+Run `/bmad-retrospective` in <project_root> for epic {e}, headless — on BMAD 6.10.1+ that is
+the `-H {e}` interface. Take every decision yourself from the accumulated notes at
+_bmad-output/auto-bmad/retro-notes/epic-{e}.md plus the story files, the epic diff, and
+sprint-status; answer any question the skill puts to a facilitator rather than waiting on one,
+and do NOT open a team discussion (there is no human in this session).
+Produce the full retrospective document and mark the epic retrospective `done`.
 In the structured result, add a `Planning drift` line: if the retro surfaced planning assumptions
 the epic proved wrong (PRD / architecture / epic scope that no longer matches what was actually
 built), list each as one line — the artifact, what drifted, and whether it is detail-level or

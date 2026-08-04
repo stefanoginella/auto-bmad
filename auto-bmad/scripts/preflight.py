@@ -22,10 +22,14 @@ Encoded rules (the normative definitions live in the reference docs):
     (``refs/remotes/origin/`` prefix stripped), else the current branch.
   - ``mode``: ``remote`` iff ``gh --version`` works AND ``gh auth status`` exits 0
     AND ``git remote -v`` shows a github.com remote — else ``local``.
-* **project_context** (pipeline.md Phase 0 → project-context probe): primary
-  ``<output-folder>/project-context.md``; fallback walks ``--project-root`` for any
-  ``project-context.md``, pruning ``node_modules``/``.venv``/``.git`` in-place;
-  first hit wins.
+* **project_context** (pipeline.md Phase 0 → project-context probe): finds EITHER
+  upstream artifact shape and reports which as ``kind``. ``kernel`` =
+  ``bmad-project-context``'s ``kernel.md`` + bundle (primary
+  ``<project-knowledge>/``); ``legacy`` = ``bmad-generate-project-context``'s
+  ``project-context.md`` (primary ``<output-folder>/``). Kernel wins wherever both
+  exist, primaries before the fallback walk of ``--project-root`` (pruning
+  ``node_modules``/``.venv``/``.git`` in-place); among same-kind hits the first in
+  walk order wins. A bare ``kernel.md`` never counts — see ``_KERNEL_MARKERS``.
 * **ci.workflows_present**: any ``*.yml``/``*.yaml`` under ``.github/workflows``,
   or a ``.gitlab-ci.yml`` at the project root.
 * **skills**: each ``--require-skills`` name is present iff a directory of that
@@ -51,7 +55,8 @@ injected probe results (``classify(...)`` takes a ``run`` callable) + a real
 and one real temp-git-repo end-to-end case.
 
 Usage:
-    preflight.py --project-root DIR --output-folder DIR [--expected-branch NAME]
+    preflight.py --project-root DIR --output-folder DIR [--project-knowledge DIR]
+                 [--expected-branch NAME]
                  [--require-skills CSV --skills-dirs CSV] [--detect-framework-ci]
     preflight.py --self-test
 
@@ -65,7 +70,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Iterable, Sequence
 
 _PROBE_TIMEOUT = 20  # seconds — keep short so a wedged probe can't hang preflight
 
@@ -73,6 +78,12 @@ _PROBE_TIMEOUT = 20  # seconds — keep short so a wedged probe can't hang prefl
 Runner = Callable[[Sequence[str]], tuple[int, str, str]]
 
 _WALK_EXCLUDES = {"node_modules", ".venv", ".git"}
+
+# A `bmad-project-context` bundle is `kernel.md` plus one of these siblings:
+# `.memlog.md` (init'd on every run of that skill) or `index.md` (the bundle index
+# it writes before validating). Requiring the pair keeps an unrelated `kernel.md`
+# from reading as project context.
+_KERNEL_MARKERS = {".memlog.md", "index.md"}
 
 _FRAMEWORK_PREFIXES = (
     "playwright.config.",
@@ -161,17 +172,55 @@ def classify_git(run: Runner) -> dict:
     }
 
 
-def find_project_context(project_root: Path, output_folder: Path) -> dict:
-    """Primary ``<output-folder>/project-context.md``; else walk ``project_root``
-    (pruning node_modules/.venv/.git in-place) and report the first hit."""
+def _is_kernel_bundle(filenames: Iterable[str]) -> bool:
+    """True iff these sibling filenames form a ``bmad-project-context`` bundle:
+    ``kernel.md`` PLUS a corroborating marker (see ``_KERNEL_MARKERS``). A bare
+    ``kernel.md`` is far too common a filename to trust on its own."""
+    names = set(filenames)
+    return "kernel.md" in names and bool(names & _KERNEL_MARKERS)
+
+
+def _dir_names(d: Path) -> list[str]:
+    """Filenames directly under ``d``; empty when it isn't a readable directory."""
+    try:
+        return [p.name for p in d.iterdir()]
+    except (OSError, ValueError):
+        return []
+
+
+def find_project_context(
+    project_root: Path,
+    output_folder: Path,
+    project_knowledge: Path | None = None,
+) -> dict:
+    """Locate an existing project-context artifact in EITHER shape and report which.
+
+    ``kind`` is ``kernel`` for ``bmad-project-context``'s kernel+bundle system and
+    ``legacy`` for a ``bmad-generate-project-context`` ``project-context.md``. The
+    kernel outranks legacy wherever both exist — upstream demotes the legacy file to
+    a mining source once a project migrates, so a bundle anywhere means the project
+    HAS migrated and Phase 2/8 must not be handed the old vocabulary. Primaries
+    first (``<project-knowledge>`` then ``<output-folder>``), else walk
+    ``project_root`` (pruning node_modules/.venv/.git in-place). The walk runs to
+    completion rather than stopping at the first hit, so a bundle in a
+    later-sorting directory still beats an earlier ``project-context.md``; among
+    same-kind hits the first in walk order wins."""
+    if project_knowledge is not None and _is_kernel_bundle(_dir_names(project_knowledge)):
+        return {"found": True, "path": str(project_knowledge / "kernel.md"), "kind": "kernel"}
     primary = output_folder / "project-context.md"
     if primary.is_file():
-        return {"found": True, "path": str(primary)}
+        return {"found": True, "path": str(primary), "kind": "legacy"}
+    legacy: Path | None = None
     for dirpath, dirnames, filenames in os.walk(project_root):
         dirnames[:] = sorted(d for d in dirnames if d not in _WALK_EXCLUDES)
-        if "project-context.md" in filenames:
-            return {"found": True, "path": str(Path(dirpath) / "project-context.md")}
-    return {"found": False, "path": None}
+        here = Path(dirpath)
+        if _is_kernel_bundle(filenames):
+            return {"found": True, "path": str(here / "kernel.md"), "kind": "kernel"}
+        if legacy is None and "project-context.md" in filenames:
+            legacy = here / "project-context.md"
+    if legacy is not None:
+        return {"found": True, "path": str(legacy), "kind": "legacy"}
+    return {"found": False, "path": None, "kind": None}
 
 
 def detect_ci(project_root: Path) -> dict:
@@ -263,6 +312,7 @@ def preflight(
     require_skills: Sequence[str] = (),
     skills_dirs: Sequence[Path] = (),
     detect_framework_ci: bool = False,
+    project_knowledge: Path | None = None,
     run: Runner | None = None,
 ) -> dict:
     """Assemble the full preflight JSON object (pure given ``run`` + a filesystem)."""
@@ -274,7 +324,7 @@ def preflight(
     hard_stop, reasons = classify_hard_stop(git, skills, expected_branch)
     return {
         "git": git,
-        "project_context": find_project_context(project_root, output_folder),
+        "project_context": find_project_context(project_root, output_folder, project_knowledge),
         "ci": ci,
         "skills": skills,
         "framework": detect_framework(project_root, ci["workflows_present"]) if detect_framework_ci else None,
@@ -394,19 +444,39 @@ def _run_self_test() -> int:
         out.mkdir()
 
         # project_context: nothing anywhere.
-        assert find_project_context(root, out) == {"found": False, "path": None}
+        assert find_project_context(root, out) == {"found": False, "path": None, "kind": None}
         # Excluded dirs are pruned — a hit inside node_modules does NOT count.
         nm = root / "node_modules" / "pkg"; nm.mkdir(parents=True)
         (nm / "project-context.md").write_text("x")
         (root / ".venv").mkdir(); (root / ".venv" / "project-context.md").write_text("x")
         assert find_project_context(root, out)["found"] is False
-        # Fallback walk finds a nested legit copy.
+        # A BARE kernel.md is not a bundle — too common a filename to trust.
+        bare = root / "kernel-docs"; bare.mkdir(); (bare / "kernel.md").write_text("x")
+        assert find_project_context(root, out)["found"] is False
+        # Fallback walk finds a nested legit legacy copy.
         sub = root / "docs"; sub.mkdir(); (sub / "project-context.md").write_text("x")
         pc = find_project_context(root, out)
         assert pc["found"] and pc["path"] == str(sub / "project-context.md"), pc
-        # Primary location wins over the fallback.
+        assert pc["kind"] == "legacy", pc
+        # kernel.md + a bundle marker DOES count, and outranks a legacy hit.
+        (bare / "index.md").write_text("x")
+        pc = find_project_context(root, out)
+        assert pc["kind"] == "kernel" and pc["path"] == str(bare / "kernel.md"), pc
+        # `.memlog.md` is the other accepted marker.
+        (bare / "index.md").unlink(); (bare / ".memlog.md").write_text("x")
+        assert find_project_context(root, out)["kind"] == "kernel"
+        # Primary output_folder location wins over the fallback walk.
         (out / "project-context.md").write_text("x")
-        assert find_project_context(root, out)["path"] == str(out / "project-context.md")
+        pc = find_project_context(root, out)
+        assert pc["path"] == str(out / "project-context.md") and pc["kind"] == "legacy", pc
+        # ...but an explicit project_knowledge bundle outranks even that: upstream
+        # demotes project-context.md to a mining source once a project migrates.
+        pk = root / "knowledge"; pk.mkdir()
+        (pk / "kernel.md").write_text("x"); (pk / ".memlog.md").write_text("x")
+        pc = find_project_context(root, out, pk)
+        assert pc["kind"] == "kernel" and pc["path"] == str(pk / "kernel.md"), pc
+        # A project_knowledge dir that isn't a bundle (or doesn't exist) falls through.
+        assert find_project_context(root, out, root / "nope")["kind"] == "legacy"
 
         # ci: none -> .gitlab-ci.yml -> workflows yml/yaml.
         assert detect_ci(root) == {"workflows_present": False}
@@ -507,6 +577,7 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true", help="Run internal tests and exit.")
     parser.add_argument("--project-root", help="Project root (cwd for git probes; walk root).")
     parser.add_argument("--output-folder", help="BMAD output_folder (primary project-context.md location).")
+    parser.add_argument("--project-knowledge", help="BMAD project_knowledge dir (primary kernel.md + bundle location); optional.")
     parser.add_argument("--expected-branch", help="The story branch a dirty tree is allowed on (resume case).")
     parser.add_argument("--require-skills", default="", help="CSV of required skill dir names; any miss is a hard stop.")
     parser.add_argument("--skills-dirs", default="", help="CSV of skills dirs to search (host-appropriate, orchestrator-supplied).")
@@ -538,6 +609,7 @@ def main() -> int:
         require_skills=require_skills,
         skills_dirs=skills_dirs,
         detect_framework_ci=args.detect_framework_ci,
+        project_knowledge=Path(args.project_knowledge) if args.project_knowledge else None,
     )
     print(json.dumps(result, indent=2))
     return 1 if result["hard_stop"] else 0

@@ -388,7 +388,7 @@ This template is the **single home** for the file portion's fields, heading orde
 
 **Deferred work:** <numbered list, one per line — anything intentionally postponed (also appended to the durable cross-story `<impl>/deferred-work.md` ledger; cross-link it when items landed there); on the last story of an epic, add a line from Phase 8 covering the reconcile + archive (e.g. "marked 2 missed-completions; archived 6 resolved → deferred-work-resolved.md"; name each reconcile-marked item with its one-line evidence; omit the note if nothing was marked or moved); "(none)" if empty — keep the heading>.
 
-**Planning drift:** <epic-end only — planning assumptions the retrospective proved wrong + the recommended re-sync (document-project → generate-project-context → /bmad-prd update; /bmad-correct-course if structural); non-blocking, never auto-run; "(none)" if clean or not epic-end>.
+**Planning drift:** <epic-end only — planning assumptions the retrospective proved wrong + the recommended re-sync (generate-project-context → /bmad-prd update; /bmad-correct-course if structural); non-blocking, never auto-run; "(none)" if clean or not epic-end>.
 
 **⚠️ Needs human:** <numbered list of blockers / manual actions. On a caveated completion these are required before the story can be considered done (it was left at `review`); on a clean completion the story is already `done` — list only genuine optional follow-ups (e.g. merging the open PR, on the human's own time) and never imply the merge gates `done`; "(none)" if clean>.
 

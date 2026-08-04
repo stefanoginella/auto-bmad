@@ -77,6 +77,14 @@ one once it ships (with a CHANGELOG note) or is judged a permanent non-fit.
   the `action_items` shape, **or** if we rework the epic-transition forward-feed /
   epic-mode prep (`delegation.md` retro feed, `epic-pipeline.md`) for other reasons
   — at which point consuming the structured field becomes nearly free.
+- **Re-confirmed:** 2026-08-04 compat check (BMAD `6.10.1-next.49`, PR #2612) — the
+  trigger fired: the evidence-based retrospective rework gives each item a stable
+  `id` (`epic-<N>-retro-item-<n>-<slug>`) and a `ref` back to the retro document,
+  explicitly *"so an orchestrator can dedupe items across re-runs and dispatch each
+  one to its full, sourced finding"*. That is a materially better feed than prose
+  mining — but it lands only on 6.10.1+, while auto-bmad still supports 6.10.0,
+  so consuming it means carrying both paths. Deferral stands until the 6.10.1 line
+  is the floor. Track alongside the retro `verdict` entry below, which lands with it.
 - **First noted:** 2026-06-18 compat check (BMAD `6.8.1-next.14`).
 - **Re-confirmed:** 2026-06-21 compat check (BMAD `6.8.1-next.17`, PR #2465) — the
   revisit trigger fired (the `action_items` write/transition rules were hardened and
@@ -104,3 +112,56 @@ one once it ships (with a CHANGELOG note) or is judged a permanent non-fit.
   makes `uv` a hard install gate — at which point weigh a README "Install/Updating"
   note. Cross-check CLAUDE.md "Known platform facts" (BMAD install/update channels).
 - **First noted:** 2026-06-22 compat check (BMAD `6.9.0`, PR #2495).
+- **TRIGGER FIRED:** 2026-08-04 compat check (BMAD `6.10.1-next.49`) — the prerelease
+  line now has delegated skills whose *mechanics* run through `uv run`:
+  `bmad-retrospective` (rewritten with `sprint_status.py` / `git_evidence.py`, PR
+  #2612), `bmad-sprint-planning` (PR #2659), and the new `bmad-project-context`
+  (PR #2674). `bmad-create-story`, `bmad-dev-story`, and `bmad-code-review` are still
+  `uv`-free, so the core story lane is unaffected — but the epic-end closing phase
+  is not. The `generate-project-context` delegate entry now states the dependency and
+  its failure mode; **still open** is the README "Install/Updating" note, which should
+  land when 6.10.1 goes stable rather than while it is prerelease-only.
+
+### Gate the epic on the retrospective's machine-readable `verdict`
+
+- **What it is:** `bmad-method` 6.10.1-next.x (PR #2612) rewrote `bmad-retrospective`
+  as an evidence engine that opens its document with YAML frontmatter carrying
+  `verdict: accepted | accepted-with-open-items | rejected`. Its `retro-document.md`
+  states the intent outright — *"an epic gate or orchestrator keys off `verdict` to
+  decide whether to hold the next epic"* — and warns that sprint-status alone
+  **cannot** tell a rejected epic from an accepted one, because the retro key reads
+  `done` either way (`done` means *the retrospective ran*, not *the epic passed*).
+- **Why nice:** epic mode currently closes an epic on Phase 8 completion and only
+  surfaces a prose `Planning drift` line. A rejected verdict is exactly the signal
+  that should halt the run before the next epic, and it costs one frontmatter read.
+- **Why deferred:** it exists only on 6.10.1+, and auto-bmad still supports 6.10.0
+  where the field is absent — so shipping it means a new halt that silently never
+  fires on half the supported range, plus new state/report fields
+  (`state-and-resume.md`, `state_update.py`) and an epic-mode decision about whether
+  a `rejected` epic blocks or warns. That is a pipeline-behavior change, not a
+  prompt fix, so it wants its own change rather than riding a compat pass.
+- **Revisit when:** BMAD 6.10.1 ships **stable** (making the field reliably present),
+  **or** we touch Phase 8 / `E8b` closing for other reasons. Land it together with
+  the structured `action_items` entry above — same rework, same release floor.
+- **First noted:** 2026-08-04 compat check (BMAD `6.10.1-next.49`, PR #2612).
+
+### `tea-test-review` CLI as a headless review runner
+
+- **What it is:** TEA 1.20.0 ships a `tea-test-review` binary — a headless runner for
+  the `bmad-testarch-test-review` skill with per-vendor agent adapters (`claude`,
+  `codex`), pinned review models, changed-test scoping from a PR diff, waivers with
+  expiry, minimum-evidence floors, strict report validation, and CI exit codes.
+- **Why nice:** it is the same "drive a skill headlessly and parse a structured
+  verdict" shape as auto-bmad's `delegation.cli_phases` external-CLI route, with
+  real gate semantics already built.
+- **Why deferred:** it is built to be a *required PR gate in CI*, not a pipeline step
+  — it brings its own filesystem isolation, its own agent/model resolution, and its
+  own waiver vocabulary, all of which duplicate or fight the delegation tiers
+  (`delegation-runtime.md`). Phase 8's in-tool delegate already gets the same skill at
+  the profile's tuned model. Adopting it would mean auto-bmad shelling to a TEA-owned
+  runner that re-implements the routing auto-bmad exists to own.
+- **Revisit when:** auto-bmad grows a CI-gate mode (running as a PR check rather than
+  an interactive pipeline), **or** TEA ships an equivalent headless runner for the
+  *blocking* `bmad-testarch-trace` gate — at which point a structured trace verdict
+  from a CLI would beat parsing a delegate's prose return.
+- **First noted:** 2026-08-04 compat check (TEA `1.21.3`, PRs from the 1.20.0 line).

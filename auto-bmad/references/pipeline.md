@@ -93,9 +93,10 @@ Runs during Step 1 of the SKILL procedure (before any commit).
 - **Provisioning freshness (custom-subagents hosts):** run `render-agents.py --check`. See `delegation-runtime.md` → "Resolving host & mode".
   - Delegate agents missing or stale (module updated / profiles edited) → auto-reprovision and note it in the preflight echo + final report.
   - Not a human stop.
-- **Project-context probe (orchestrator):** read the preflight JSON's `project_context.found` (pass `<output_folder>` from `_bmad/bmm/config.yaml` as `--output-folder`; discovery internals live in `preflight.py`).
+- **Project-context probe (orchestrator):** read the preflight JSON's `project_context` (pass `<output_folder>` from `_bmad/bmm/config.yaml` as `--output-folder`, and `project_knowledge` from the same config as `--project-knowledge` when that key exists; discovery internals live in `preflight.py`).
   - `found: false` → record `needs_project_context_bootstrap: true`; Phase 2 will bootstrap it before create-story.
   - `found: true` → record the flag `false` (Phase 8 still refreshes it on the last story of the epic).
+  - Also carry `project_context.kind` (`legacy` | `kernel` | `null`) and `.path` — they pick the delegate's fill in Phases 2 and 8 (`delegation.md` → `generate-project-context`). The probe finds **either** upstream artifact shape; the orchestrator never needs to know which is "current", only to hand the delegate what exists.
   - Like every Phase-0 decision, this rides in Phase 1's `init --json` (no state file exists yet).
 - **Triage (only if `tea.enabled`; delegated to `tea_triage`):**
   - Classify the story `low | med | high` and choose the per-story TEA set using `tea-policy.md`.
@@ -120,7 +121,7 @@ Two sub-steps that each carry their own gate; either, both, or neither may run. 
 - If both gates were false, Phase 2 is a no-op, recorded as skipped.
 
 1. **Project-context bootstrap** *(only if `needs_project_context_bootstrap` from Phase 0)* → `project_context`
-   - Delegate the **`generate-project-context`** entry with its Phase 2 `{bootstrap_intent}` fill — write `project-context.md` from scratch rather than refresh an existing file (`delegation.md`).
+   - Delegate the **`generate-project-context`** entry with its Phase 2 `{bootstrap_intent}` fill — create the context from scratch rather than refresh an existing one (`delegation.md`).
    - Commit: `docs(project-context): bootstrap`.
    - Flip `needs_project_context_bootstrap` to `false` in state so re-invocations don't double-run.
    - Gate is independent of `is_first_in_epic` / `tea.enabled`.
@@ -399,6 +400,7 @@ Run the five sub-steps below in order.
 2. **Project context:** delegate the **`generate-project-context`** entry via the `project_context` profile.
    - The Phase 8 refresh is fed the epic's accumulated retro notes (+ durable items from the deferred-work ledger).
    - The notes are the source — NOT the retro doc, which doesn't exist until step 4.
+   - Fill `{bootstrap_intent}` from Phase 0's `project_context.kind`/`.path` so the delegate refreshes the context system that exists **in place** instead of starting a second one.
    - See `delegation.md` → `generate-project-context`.
 3. **Reconcile missed completions** *(delegated — `deferred_reconcile`; runs BEFORE the archive).*
    - **Why:** the archive (step 4) judges each ledger entry on its OWN text only. A deferred item whose work actually landed during the epic but whose entry was never updated stays open forever, and create-story keeps re-folding finished work. This pass closes that gap.
@@ -429,7 +431,7 @@ Run the five sub-steps below in order.
    - Record it in state (`planning_drift`) and surface it in the report's **Planning drift** field.
    - It is **non-blocking** and **never auto-acted**.
    - Recommend the upstream re-sync, but do **not** run it — it changes planning scope and is the user's call:
-     - refresh the codebase docs (`/bmad-document-project` only if `docs/` is stale, then `/bmad-generate-project-context`);
+     - refresh the project context (`/bmad-generate-project-context`; on BMAD 6.10.1+ that and `/bmad-document-project` both forward to `/bmad-project-context`, which subsumes the old "re-document `docs/` first" step);
      - then `/bmad-prd` (update intent) to reconcile the PRD in place;
      - for **structural** drift, `/bmad-correct-course` instead.
    - `none` ⇒ omit.
