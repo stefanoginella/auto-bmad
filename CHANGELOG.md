@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Zero-finding review lenses no longer force non-convergence.** A clean lens now counts as a completed
+  layer; only delegate or artifact failures make a review incomplete. (Thanks @chgross89, #9.)
+
 - **Help-CSV fallback header no longer emits two misnamed columns.** `merge-help-csv.py`'s
   `HEADER` constant now uses `preceded-by`/`followed-by`, matching every real `module-help.csv`.
   (Thanks @hugheba, #8.)
