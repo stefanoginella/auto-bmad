@@ -1,7 +1,7 @@
 code: abm
 name: "Auto-BMAD Orchestrator"
 description: "Drive the full BMAD story workflow end-to-end — for one story at a time, or a whole epic in one run (`/auto-bmad epic`) — delegating each step to model- and effort-tuned subagents on Claude Code, Codex, or opencode."
-module_version: 0.26.0
+module_version: 0.26.1
 default_selected: false
 module_greeting: >
   auto-bmad is installed. Run `/auto-bmad` in a BMAD project to drive the next story

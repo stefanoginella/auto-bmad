@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-08-04
+
 ### Changed
 
 - **Verified against BMAD 6.10.1-next.49 and the new TEA 1.21 line.** Both compat markers advanced;
@@ -908,7 +910,8 @@ First tagged release — the matching `v0.1.1` git tag for the module already pu
 - **Distribution** via the BMAD installer (custom Git source) and a Claude plugin `marketplace.json`,
   plus a README "Updating" section, `CHANGELOG.md`, and the `scripts/bump-version.py` release helper.
 
-[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/stefanoginella/auto-bmad/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/stefanoginella/auto-bmad/compare/v0.25.2...v0.26.0
 [0.25.2]: https://github.com/stefanoginella/auto-bmad/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/stefanoginella/auto-bmad/compare/v0.25.0...v0.25.1
