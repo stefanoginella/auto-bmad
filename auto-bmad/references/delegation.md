@@ -219,8 +219,10 @@ Bind the structured result like the three lenses, so finding content stays out o
 Triage a code review of story {key}. The same three review lenses ran independently under each of
 {R} reviewer model(s); their raw findings are in these files. A successful zero-finding artifact
 (`No findings.` for Markdown, `[]` for JSON) is a completed clean layer. Mark a layer failed ONLY
-when its delegate errored / returned `needs-human`, or its artifact is absent, unreadable, or malformed
-— NEVER because its finding count is zero:
+when its delegate errored / returned `needs-human`, or its artifact is absent, unreadable, or is
+neither a well-formed finding list NOR that canonical clean marker — a blank or whitespace-only file
+is NOT the clean marker, so it IS a failure. NEVER mark a layer failed because a well-formed
+artifact's finding count is zero:
 {lens_files}
 {security_file_hint}
 {verification_file_hint}
