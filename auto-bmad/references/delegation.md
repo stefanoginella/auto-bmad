@@ -149,10 +149,10 @@ contradictions between spec constraints and actual code. Output findings as a Ma
 finding: one-line title, which AC/constraint it violates, and evidence from the diff.
 
 The diff is at <diff_file>; the spec/story file is <story_file> (load it, plus any docs its `context`
-frontmatter lists). Write your findings to <auditor_out>. You are NOT done until <auditor_out> exists
-on disk — write it with the Write tool and verify it landed before you finish (do not end with the
-findings only in chat). If there are no findings, write exactly `No findings.` to <auditor_out>
-instead of leaving it empty.
+frontmatter lists). Write your findings to <auditor_out>.
+If there are no findings, write exactly `No findings.` to <auditor_out> instead of leaving it empty.
+You are NOT done until <auditor_out> exists on disk — write it with the Write tool and verify it
+landed before you finish (do not end with the findings only in chat).
 Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 (The first paragraph mirrors the Acceptance Auditor prompt from the `bmad-code-review` skill's `step-02-review.md` — upstream's `{spec_file}`/`{diff_output}` placeholders are resolved by auto-bmad's `<story_file>`/`<diff_file>` in the paragraph below. Keep it in lockstep with upstream.)
@@ -186,8 +186,9 @@ finding you are <70% confident is a real, reachable issue. "Exploitable only und
 MEDIUM — report it, do not drop it.
 
 The diff is at <diff_file>; you may read project files the diff references for reachability. Write
-findings as a Markdown list to <security_out>. Report ONLY the path you wrote and your finding count
-(by severity) — NOT the findings text.
+findings as a Markdown list to <security_out>. If there are no findings, write exactly `No findings.`
+to <security_out> instead of leaving it empty.
+Report ONLY the path you wrote and your finding count (by severity) — NOT the findings text.
 ```
 Bind the structured result like the three lenses, so finding content stays out of chat:
 - The `Outcome` is the output path + per-severity count.
@@ -333,11 +334,11 @@ The orchestrator fills `{lens_files}` with one block per roster reviewer, from `
 - Repeat for `secondary` / `tertiary` when on the roster — list only active slots.
 
 The orchestrator fills `{security_file_hint}` from `code_review.security_review`:
-- When true, inject: `A dedicated security review also ran (auto-bmad-local); its findings (severity HIGH/MEDIUM/LOW per the prompt) are at <security_out> — may be empty or absent.`
+- When true, inject: `A dedicated security review also ran (auto-bmad-local); its findings (severity HIGH/MEDIUM/LOW per the prompt) are at <security_out> — it may report no findings (its clean line is "No findings."), or be absent.`
 - When off, `{security_file_hint}` is empty.
 
 The orchestrator fills `{verification_file_hint}` from `code_review.verification_gap`:
-- When true, inject: `A verification-gap review also ran (bmad-review-verification-gap); its findings are verification gaps carrying NO severity — YOU assign each a severity during calibration above — at <verification_out>, and may be empty or absent (its clean line is "No verification gaps found.").`
+- When true, inject: `A verification-gap review also ran (bmad-review-verification-gap); its findings are verification gaps carrying NO severity — YOU assign each a severity during calibration above — at <verification_out>; it may report no gaps (its clean line is "No verification gaps found."), or be absent.`
 - When off, `{verification_file_hint}` is empty.
 
 ### code-review-triage (epic)
