@@ -191,7 +191,11 @@ For iteration `i` (1-based):
       - Each lens writes to its own slot's temp file (the primary's lenses → the `primary` paths, and so on).
       - Spawn them **all in parallel** on every host (across reviewers too): Claude Code via parallel Agent calls; Codex by naming all the agents in one request (it spawns concurrently and consolidates); opencode via concurrent task delegations — `delegation-runtime.md`.
       - **CLI-routed lenses (`cli_phases`) run in parallel too** — background OS processes, not in-tool subagents (`delegation-runtime.md`).
-      - Collect each lens's reported path + count; note any empty/failed layer — the failed-lens count spans ALL reviewers.
+      - Collect each lens's reported path + count; track genuine delegate failures now. A successful lens with 0 findings and its canonical
+        artifact (`No findings.` for Markdown, `[]` for JSON) is a **completed clean layer**, NOT a
+        failure. After triage, add any absent, unreadable, or malformed artifact it reports in
+        `Failed layers`; the resulting failed-lens count spans ALL reviewers. The orchestrator consumes
+        only that metadata and never reads a lens artifact itself.
       - **Plus, if `code_review.security_review` (default true): spawn the single `code-review-security` delegate in the same parallel batch**, writing to `<security_path>` (from prep-diff). Track its run separately from the lens count:
         - A successful pass that finds **0** issues is a clean security pass (NOT a failure).
         - Only a genuine delegate failure (errored / no parseable output) is a security-pass failure — it does **not** add to `--lenses-failed`, but feeds the convergence-unverified clause in step 3.
@@ -260,7 +264,7 @@ For iteration `i` (1-based):
    **Drive the loop — tool call, not prose.** Pipe the gate-time `review_findings.py` JSON to the gate. Use the **post-decision, PRE-fix** capture from the top of this step, never the post-fix re-run.
    ```
    python3 {skill-root}/scripts/review_loop.py gate --findings-json - --iteration {i} \
-     --max-iterations {cap} --lenses-failed {failed-layer count from step 1b} --lenses-total {3×R}
+     --max-iterations {cap} --lenses-failed {genuinely failed-layer count from step 1b} --lenses-total {3×R}
    ```
    - Add `--convergence-unverified true` in either case:
      - state already holds the sticky flag; or
@@ -271,7 +275,7 @@ For iteration `i` (1-based):
    **OBEY the gate's `action` and `convergence_unverified`:**
    - `continue` → run iteration `i+1` (same roster).
    - `exit-clean`/`exit-unconverged` → exit the loop, persist `convergence_unverified` to state (`true` ⇒ Phase 9 ships a **draft** — `git-and-pr.md` draft predicate), and enter step 4 (whose skip gate reads that same flag).
-   - `needs-human` → stop and report `needs-human` ("code review incomplete — 0/M lenses produced findings"), keeping `<review_tmp>` for debugging.
+   - `needs-human` → stop and report `needs-human` ("code review incomplete — 0/M lenses completed successfully"), keeping `<review_tmp>` for debugging.
 
    Carry the gate's `reason` (it includes any "incomplete review (only N/M lenses ran)" caveat) into the report and the step-4 halt summary.
 
@@ -279,7 +283,7 @@ For iteration `i` (1-based):
 
    | # | i | lenses-failed | findings | cap (i==max)? | action | convergence_unverified |
    |---|---|---|---|---|---|---|
-   | 1 | any | M (all) | — | — | needs-human ("0/M lenses produced findings") | input value (unchanged) |
+   | 1 | any | M (all) | — | — | needs-human ("0/M lenses completed successfully") | input value (unchanged) |
    | 2 | 1 | 0 | clean | — | exit-clean (only first-pass early exit) | false (or input true) |
    | 3 | 1 | 0 | not clean | no | continue (second opinion mandatory — a Low-only first pass included) | false/input |
    | 4 | 1 | 1..M-1 | any (even 0 findings — untrustworthy) | no | continue | false/input |

@@ -125,6 +125,7 @@ Run `/bmad-review-adversarial-general` in <project_root> with the diff at <diff_
 review. Review that diff — do NOT open the spec or the story file; your value is being unanchored by the
 spec (intent). You MAY read the surrounding code the diff touches to judge whether a change is actually
 correct. Write the skill's findings (its markdown list) to <blind_out>.
+If there are no findings, write exactly `No findings.` to <blind_out> instead of leaving it empty.
 You are NOT done until <blind_out> exists on disk — write it with the Write tool and verify it landed
 before you finish (do not end with the findings only in chat).
 Report ONLY the path you wrote and your finding count — NOT the findings text.
@@ -134,8 +135,9 @@ Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 Run `/bmad-review-edge-case-hunter` in <project_root> with the diff at <diff_file> as the content to
 review (you may read project files the diff references). Write the skill's JSON-array output to
-<edge_out>. You are NOT done until <edge_out> exists on disk — write it with the Write tool and verify
-it landed before you finish (do not end with the findings only in chat).
+<edge_out>. If there are no findings, write exactly `[]` to <edge_out> instead of leaving it empty.
+You are NOT done until <edge_out> exists on disk — write it with the Write tool and verify it landed
+before you finish (do not end with the findings only in chat).
 Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 
@@ -149,7 +151,8 @@ finding: one-line title, which AC/constraint it violates, and evidence from the 
 The diff is at <diff_file>; the spec/story file is <story_file> (load it, plus any docs its `context`
 frontmatter lists). Write your findings to <auditor_out>. You are NOT done until <auditor_out> exists
 on disk — write it with the Write tool and verify it landed before you finish (do not end with the
-findings only in chat).
+findings only in chat). If there are no findings, write exactly `No findings.` to <auditor_out>
+instead of leaving it empty.
 Report ONLY the path you wrote and your finding count — NOT the findings text.
 ```
 (The first paragraph mirrors the Acceptance Auditor prompt from the `bmad-code-review` skill's `step-02-review.md` — upstream's `{spec_file}`/`{diff_output}` placeholders are resolved by auto-bmad's `<story_file>`/`<diff_file>` in the paragraph below. Keep it in lockstep with upstream.)
@@ -214,8 +217,10 @@ Bind the structured result like the three lenses, so finding content stays out o
 #### code-review-triage  (triage + persist — the only code-review delegate that writes findings)
 ```
 Triage a code review of story {key}. The same three review lenses ran independently under each of
-{R} reviewer model(s); their raw findings are in these files (any may be empty or absent — note
-each such case as a failed/empty layer):
+{R} reviewer model(s); their raw findings are in these files. A successful zero-finding artifact
+(`No findings.` for Markdown, `[]` for JSON) is a completed clean layer. Mark a layer failed ONLY
+when its delegate errored / returned `needs-human`, or its artifact is absent, unreadable, or malformed
+— NEVER because its finding count is zero:
 {lens_files}
 {security_file_hint}
 {verification_file_hint}
@@ -310,7 +315,8 @@ items (a human call — `pipeline.md` Phase 7); (auto-bmad-local — NOT upstrea
 asking — `epic-pipeline.md` E5f / E_review; `none` if no open Decision items); `Findings persisted:
 <N>` = total `[Review][*]` bullets
 you wrote to <story_file>; `Deferrals logged: <W>` = bullets you added under this story's
-`## Deferred from:` heading in <impl>/deferred-work.md; `Failed layers: <list or none>`;
+`## Deferred from:` heading in <impl>/deferred-work.md; `Failed layers: <list or none>` — list only
+the genuine delegate/artifact failures defined above, never a canonical zero-finding result;
 `Dismissed (noise): <D>` = Low/noise findings you dropped, with a one-line category each (cosmetic /
 hypothetical / already-guarded) so the human can pull any back. Do NOT change
 the story's Status field, sync sprint-status.yaml, or halt for input — the orchestrator owns those.

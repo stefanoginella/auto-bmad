@@ -39,8 +39,11 @@ Four modes, each emitting ONE JSON object on stdout:
   findings are ALL Low severity, any count (an untagged finding is treated as
   Critical/High — conservative). A review pass fans out the three lenses once
   per configured reviewer (primary + optional secondary/tertiary), so
-  ``--lenses-total`` is 3, 6 or 9 and ``--lenses-failed`` counts failed/empty
-  lenses across ALL reviewers. Decision table (``i`` = 1-based
+  ``--lenses-total`` is 3, 6 or 9 and ``--lenses-failed`` counts genuinely
+  failed lenses across ALL reviewers: an errored / ``needs-human`` delegate,
+  or an absent, unreadable, or malformed artifact. A successful canonical
+  zero-finding artifact is a completed lens, not a failure. Decision table
+  (``i`` = 1-based
   ``--iteration``; cap = ``i`` reaching ``--max-iterations``; ``M`` =
   ``--lenses-total``):
 
@@ -65,7 +68,7 @@ Four modes, each emitting ONE JSON object on stdout:
     single-pass review, so the lone pass is judged by the final-iteration
     rules 6/7/9 — a converged pass with all lenses exits clean; only an
     unconverged or lens-incomplete one exits as an unverified draft.
-  - Row 7: a converged pass with a failed/empty lens is the same flavor of
+  - Row 7: a converged pass with a genuinely failed lens is the same flavor of
     unverified-ness as a cap exit — its ``reason`` carries the "incomplete
     review (only N/M lenses ran)" caveat for the report and halt summary.
   - On an exit-* action the OUTPUT ``convergence_unverified`` alone decides
@@ -297,7 +300,7 @@ def decide_gate(
 
     if lenses_failed >= lenses_total:  # row 1
         action = "needs-human"
-        reason = (f"code review incomplete — 0/{lenses_total} lenses produced findings; "
+        reason = (f"code review incomplete — 0/{lenses_total} lenses completed successfully; "
                   "the review did not actually happen, never count it as clean")
     elif iteration == 1 and clean and lenses_failed == 0:  # row 2
         action = "exit-clean"
@@ -633,7 +636,7 @@ def _run_self_test():
     # row 1 — ALL lenses failed: hard stop, sticky flag passes through unchanged.
     o = decide_gate(_f(0), 1, 2, 3, 3)
     check("row1: needs-human", o["action"] == "needs-human")
-    check("row1: reason names 0/3 lenses", "0/3 lenses produced findings" in o["reason"])
+    check("row1: reason names 0/3 lenses", "0/3 lenses completed successfully" in o["reason"])
     check("row1: unverified unchanged (false in)", o["convergence_unverified"] is False)
     o = decide_gate(_f(5, 2, 0), 2, 2, 3, 3, convergence_unverified=True)
     check("row1: unverified unchanged (true in)",
@@ -644,7 +647,7 @@ def _run_self_test():
 
     # row 2 — perfectly clean first pass: the only first-pass early exit.
     o = decide_gate(_f(0), 1, 2, 0, 3)
-    check("row2: exit-clean", o["action"] == "exit-clean")
+    check("row2: successful zero-finding lenses exit clean", o["action"] == "exit-clean")
     check("row2: unverified false", o["convergence_unverified"] is False)
     check("row2: clean+converged flags", o["clean"] is True and o["converged"] is True)
     o = decide_gate(_f(0), 1, 1, 0, 3)  # max_iterations == 1, perfectly clean
@@ -950,7 +953,9 @@ def main(argv=None):
     p_gate.add_argument("--iteration", type=int, required=True, help="1-based review iteration i")
     p_gate.add_argument("--max-iterations", type=int, required=True, help="code_review.max_iterations")
     p_gate.add_argument("--lenses-failed", type=int, required=True,
-                        help="how many lenses failed or returned empty, across ALL reviewers (0..total)")
+                        help="how many lenses genuinely failed (delegate error/needs-human or absent, "
+                             "unreadable, malformed artifact), across ALL reviewers (0..total); "
+                             "a successful canonical zero-finding artifact is not failed")
     p_gate.add_argument("--lenses-total", type=int, required=True,
                         help="total lenses this pass fanned out: 3 per configured reviewer (3|6|9)")
     p_gate.add_argument("--convergence-unverified", type=_parse_bool, default=False,
