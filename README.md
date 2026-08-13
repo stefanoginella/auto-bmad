@@ -2,6 +2,18 @@
 
 [![license: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE) [![Version](https://img.shields.io/badge/version-0.26.1-blue.svg)](https://github.com/stefanoginella/auto-bmad) [![BMAD-METHOD](https://img.shields.io/badge/BMAD--METHOD-module-8A2BE2.svg)](https://github.com/bmad-code-org/BMAD-METHOD) [![Tested with BMAD 6.10.x](https://img.shields.io/badge/tested%20with%20BMAD-6.10.x-8A2BE2.svg)](https://github.com/bmad-code-org/BMAD-METHOD) [![Tested with TEA 1.21.x](https://img.shields.io/badge/tested%20with%20TEA-1.21.x-8A2BE2.svg)](https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise) [![Works best with: Claude Code | Codex | opencode](https://img.shields.io/badge/works%20best%20with-Claude%20Code%20%7C%20Codex%20%7C%20opencode-00A3A3.svg)](#install) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
+> ## 🗄️ This project is winding down
+>
+> `auto-bmad` targets the **BMAD v6 skill line** and **will not be compatible with BMAD v7** when it
+> is released. There is no v7 port planned, and this repo will be archived.
+>
+> **Use the official alternative instead: [bmad-loop](https://github.com/bmad-code-org/bmad-loop)** —
+> maintained by the BMAD team.
+>
+> auto-bmad still works on BMAD 6.10.x today, so existing v6 projects can keep using it as-is.
+>
+> MIT-licensed. Feel free to **fork it and carry it forward** if you want to keep it alive or port it to v7 and beyond.
+
 A **BMAD module** that runs the **full [BMAD](https://github.com/bmad-code-org/BMAD-METHOD) story implementation workflow end-to-end — one story at a time, or an [entire epic in one run](#run-a-whole-epic)**, on **Claude Code, Codex, or opencode**, with **[human-in-the-loop checkpoints](#human-in-the-loop-stops)** at the decisions that matter.
 
 `auto-bmad` chains the core BMM skills (`create-story` → `dev-story` → `code-review`) and the optional TEA (Test Architect) skills into a single resumable pipeline. It detects the next story from `sprint-status.yaml` (or takes one as an argument), runs every step in an isolated git branch with conventional-commit checkpoints, opens a PR, and finishes with a report of the PR link, open questions, deferred work, and anything that needs your attention — then stops so **you** decide when to start the next story. Or run a **whole epic at once** with [`/auto-bmad epic`](#run-a-whole-epic) — the same pipeline looped over the epic's stories, trimmed for wall-clock and capped with one integration review + one PR.

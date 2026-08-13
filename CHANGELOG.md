@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- **auto-bmad is winding down and will not support BMAD v7.** The README now points users to the
+  official [bmad-loop](https://github.com/bmad-code-org/bmad-loop); v6 projects keep working as-is.
+
 ## [0.26.1] - 2026-08-04
 
 ### Changed
