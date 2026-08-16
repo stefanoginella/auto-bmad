@@ -63,8 +63,8 @@ Blockers: <what a human must do, one per line; or `none` — required when Outco
 - `<base>` = the runtime config's `git.base_branch` (`git-and-pr.md` → "Mode detection"); `<sprint_plan_script>` = `skills.sprint_plan_script` from the preflight JSON.
 - `<spec_path>` — this story's build-auto spec (`<impl>/spec-{e}-{s}-<slug>.md`), read from state (`spec_path`, set by `story_plan.py --find-spec` in Phase 3).
 - `{spec_paths}` — the epic's spec files, comma-separated (one `--find-spec` per landed / `done` story). Epic-scoped entries only.
-- `{carry_over_block}` — the previous epic's open action items, wrapped in `<carry_over_context>` … `</carry_over_context>` tags (see `build-plan`); empty when none.
-- `{epic_test_files}` — the git-only test-file list for epic {e} (see `testarch-test-review (epic gate)`).
+- `{carry_over_block}` — the previous epic's open action items, wrapped in `<carry_over_context>` … `</carry_over_context>` tags (`build-plan` below); empty when none.
+- `{epic_test_files}` — the git-only test-file list for epic {e} (`testarch-test-review (epic gate)` below).
 - `{test_artifacts}` — TEA's configured `test_artifacts` dir (`_bmad/tea/config.yaml`; default `<output_folder>/test-artifacts`). The orchestrator never reads it (no YAML read) and never resolves it into a prompt — prose/expectation notes only; delegates report actual artifact paths in Files changed.
 
 ---
@@ -259,7 +259,7 @@ Run condition:
 The orchestrator records the result in state and the report; the delegate's ledger edits land in the same epic-end `docs(epic-{e})` commit as the archive that follows.
 
 Pin the marker vocabulary above to what `deferred_ledger.py` recognizes — a leading `✅` / `RESOLVED` / "resolved in" / "closed" / "addressed in" / "done in", and no remainder signal ("remainder", "still open", "portion", "owned by", "partially").
-- A marker it can't read silently no-ops — safe, because the entry is simply kept.
+- A marker it can't read silently no-ops — safe: the entry is simply kept.
 
 ### retrospective  (Phase 8.5 / E8b → profile `retrospective`)
 ```

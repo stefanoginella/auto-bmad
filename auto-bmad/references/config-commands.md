@@ -12,7 +12,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
    - `delegation.host` / `delegation.mode` = `auto`; `delegation.cli_phases: {}`.
    - Copy the `profiles` + `phase_profiles` blocks VERBATIM from `{skill-root}/assets/profiles.yaml`.
    - Seed `code_review.followup: recommended`, `code_review.security_layer: true`, `build.spec_approval: false`.
-   - **Env-detect `code_review.cross_model_layer`:** the FIRST of `codex`, `claude`, `opencode` that is on PATH AND is not the detected host; else `""`. (A setup answer, not a shipped default — the heal never touches it; a user who wants a different tool sets it in the Full interview or in `config.yaml`.)
+   - **Env-detect `code_review.cross_model_layer`:** the FIRST of `codex`, `claude`, `opencode` that is on PATH AND is not the detected host; else `""`. (A setup answer, not a shipped default — the heal never touches it; change it in the Full interview or in `config.yaml`.)
    - **Probe (once, both depths, headless too):** resolve host + tier per `delegation-runtime.md` → "Resolving host & mode" (config absent ⇒ pure detection), then run
      ```
      python3 {skill-root}/scripts/preflight.py --project-root <project_root> --host <host> --tier <tier> --detect-framework-ci
@@ -26,7 +26,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
    - Default "no" if absent — don't offer yes when absent.
    - If enabled, resolve `framework_ci` from the step-0 probe's `framework.configs` / `framework.ci_present` (no second command):
      - Both present → `framework_ci: done` silently.
-     - Missing → **ask** to run the one-time `/bmad-testarch-framework` + `/bmad-testarch-ci` now (delegate the `testarch-framework + testarch-ci` entry in `delegation.md` at the `tea_per_story` profile's model; on success write `framework_ci: done`) or `skip` — never auto-run unasked, because it is heavy, infra-choosing setup. Offer it only when the step-2 detection found BOTH skill dirs (`bmad-testarch-framework`, `bmad-testarch-ci`); either missing ⇒ no offer, `framework_ci: skip` + the TEA install hint.
+     - Missing → **ask** to run the one-time `/bmad-testarch-framework` + `/bmad-testarch-ci` now (delegate the `testarch-framework + testarch-ci` entry in `delegation.md` at the `tea_per_story` profile's model; on success write `framework_ci: done`) or `skip` — never auto-run unasked. Offer it only when the step-2 detection found BOTH skill dirs (`bmad-testarch-framework`, `bmad-testarch-ci`); either missing ⇒ no offer, `framework_ci: skip` + the TEA install hint.
 3. **Full only — extra prefs** (each prefilled with the seeded default):
    - `git.mode` (auto | remote | local; default auto) and `git.branch_prefix` (default `story/`).
    - **Follow-up review pass** — `code_review.followup`: *recommended (default)* / *always* / *never*.
@@ -41,7 +41,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
      python3 {skill-root}/scripts/build_auto_custom.py --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml --apply
      ```
      Surface its JSON (`layers`, `warnings`; `errors` / exit 2 ⇒ report the message — nothing was written — and still stop).
-   - **Then stop — do not start the pipeline this session** (it would waste the context window that just did setup). Report what was configured, then: "start a fresh session and run `/auto-bmad`".
+   - **Then stop — do not start the pipeline this session.** Report what was configured, then: "start a fresh session and run `/auto-bmad`".
 
 ## reset-defaults — restore shipped profile defaults
 `/auto-bmad reset-defaults [scope]` discards retunes in `config.yaml` and re-seeds the **asset-sourced** blocks from `{skill-root}/assets/profiles.yaml`.
@@ -51,14 +51,13 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
 **Scope** (the optional arg; bare = both asset blocks):
 - *(omitted)* — both `profiles` and `phase_profiles`.
 - `profiles` — every profile block.
-  - Also **prunes** a profile present in the config but absent from the asset — the renamed/dropped remedy; pruned names return on `removed_profiles`. Stale per-profile sub-keys (the persona strings of the removed-keys note) are dropped too (`would_change` entries with `default: null`).
+  - Also **prunes** a profile present in the config but absent from the asset; pruned names return on `removed_profiles`. Stale per-profile sub-keys (the persona strings of the removed-keys note) are dropped too (`would_change` entries with `default: null`).
   - Doesn't touch `phase_profiles` — so a *custom* mapping pointing at a pruned profile dangles (bare scope resets both; a bare/`phase_profiles` reset also drops stale mappings).
 - `<profile-name>` (e.g. `standard`) — that one profile. Never prunes — a user-added profile is left intact.
 - `phase_profiles` — the phase→profile mapping only.
 
 **Boundary (state it to the user).** reset-defaults touches **only** `profiles`, `phase_profiles`, and the `profiles_source_version` stamp.
-- It touches **never** `delegation`/`tea`/`git`/`code_review`/`build` — because those are setup answers, not shipped defaults, and reset *overwrites* where the Phase 0 heal only *appends*, so it would clobber them.
-- Redoing those is `setup`/`configure`.
+- It **never** touches `delegation`/`tea`/`git`/`code_review`/`build` — those are setup answers, not shipped defaults; redo them with `setup`/`configure`.
 
 **Flow:**
 1. Require `config.yaml` to exist. Absent → "Nothing to reset — run `/auto-bmad setup` first." and stop.
@@ -84,7 +83,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
 
 ## config-check — preview pending config/profile updates (and optionally apply them)
 `/auto-bmad config-check` reports how `config.yaml` differs from the shipped defaults — what an update would **add**, **everything you've changed**, and the heal-immune setup answers — then offers to bring the config up to date. **Read-only until you confirm.**
-- Run it before a story/epic to see the new profiles/settings an update shipped and decide whether to retune *before* they take effect, or to update the config on demand. The same drift data drives the automatic Phase 0 / E0 **pre-run pause** (`pipeline.md`) — this command is the on-demand pull; the pause is the automatic push.
+- Run it before a story/epic to see the new profiles/settings an update shipped and decide whether to retune *before* they take effect. The same drift data drives the automatic Phase 0 / E0 **pre-run pause** (`pipeline.md`).
 - **Config-only:** report (and, if you confirm, apply), then stop — never start a pipeline.
 
 **Flow:**

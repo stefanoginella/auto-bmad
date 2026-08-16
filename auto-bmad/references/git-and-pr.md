@@ -2,13 +2,13 @@
 
 - All git work is performed by the **orchestrator directly** — never delegated ("Ownership" below).
 - Nothing ever lands on the base branch.
-- **Never rewrite or discard work the orchestrator did not author** — no `git push --force`/`--force-with-lease`, `git reset --hard`, `git checkout -- .`/`git restore` on files it did not write, `git clean`, `--no-verify`: runs are unattended on a shared branch and unfamiliar dirty files may be a human's in-progress work. The documented hard-stop is the recovery — stop and report, and let the human decide.
+- **Never rewrite or discard work the orchestrator did not author** — no `git push --force`/`--force-with-lease`, `git reset --hard`, `git checkout -- .`/`git restore` on files it did not write, `git clean`, `--no-verify`: unfamiliar dirty files may be a human's in-progress work. The documented hard-stop is the recovery — stop and report, and let the human decide.
 - Every phase is its own commit — so the pipeline is resumable and reviewable.
 - **`bmad-build-auto` authors every code commit** (the Phase 5 build run and every Phase 7 review pass commit their own diff on the current branch and never push). The orchestrator commits everything else — spec/plan artifacts, TEA artifacts, sprint-status flips, state, reports — and **never** makes a `feat` commit of story code.
 
 ## Ownership
 
-This file is the single source for everything the orchestrator owns directly (does not delegate) — other docs link here by name instead of restating the list.
+This file is the single source for everything the orchestrator owns directly (does not delegate).
 
 Orchestrator-owned, never delegated:
 
@@ -25,7 +25,7 @@ Orchestrator-owned, never delegated:
 - the Phase 7 **HITL-halt handling** (`pipeline.md` Phase 7 step 3) — the git-only external-change detection (never a code read), its `fix(story-{e}-{s}): external review changes` commit, and re-opening the halt ONCE; the **re-review of those changes is delegated** (one more `followup-review` build-auto pass at `followup_review`), NOT orchestrator-owned.
 - **epic mode** (`/auto-bmad epic`) owns the same git set at **epic scope** — one `epic/{e}-{slug}` branch, the E0 base-readiness guard (git-only), the per-story commits on that branch, the batch BMAD-status flip (E8b pre-retro / E_final) and the epic-anchor finalize ("Epic mode" below + `epic-pipeline.md`). Epic mode has **no review halt** — every story's follow-up pass auto-continues (`hitl_halt: auto-continued (epic — no halt)`), and an unverified review ships a draft (no `AskUserQuestion`).
 
-These stay orchestrator-owned because it already holds the full pipeline context. The **only** exception is the `inline` delegation tier (host with no subagent mechanism — `delegation-runtime.md`), where the orchestrator runs *every* step itself.
+The **only** exception is the `inline` delegation tier (host with no subagent mechanism — `delegation-runtime.md`), where the orchestrator runs *every* step itself.
 
 ## Mode detection (Phase 0)
 
@@ -34,8 +34,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
 - Config `git.mode`: `auto` (default) ⇒ the detection below; `remote`/`local` force the mode. The `git_mode local` override forces `local` for the run.
 - The rules below are the normative definition the script implements:
 
-- **Is it a git repo?** `git rev-parse --is-inside-work-tree`.
-  - Not a repo → hard-stop (suggest `git init`).
+- **Is it a git repo?** `git rev-parse --is-inside-work-tree`; not a repo → hard-stop (suggest `git init`).
 - **Base branch** — the runtime config's `git.base_branch` is authoritative once set; preflight's `git.base_branch` only **seeds** that key at first run (`config-commands.md`). Every `<base_branch>`/`<base>` placeholder here, in `pipeline.md`, `epic-pipeline.md` and `delegation.md` means the **config** value. Preflight's detection:
   - the remote HEAD if present (`git symbolic-ref refs/remotes/origin/HEAD`);
   - else the current branch at start (commonly `main`/`master`) — a first-run seed only, never the run-time base (on a resume that would be the story/epic branch itself).
@@ -46,7 +45,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - dirty AND on the base branch or an unrelated branch → hard-stop ("commit or stash first").
   - dirty on the correct story/epic branch during a resume (`--expected-branch` = the state's `branch`) → fine; the in-flight phase (or the clean-tree gate) will commit it.
   - tree state unknown (status probe failed) → hard-stop, never read as clean.
-- **Detached/unknown HEAD** → hard-stop even on a clean tree (branching and the PR base need a branch).
+- **Detached/unknown HEAD** → hard-stop even on a clean tree.
 
 ## Branching (Phase 1 / epic E1)
 - **Story branch:** `{git.branch_prefix}{e}-{s}-{slug}` (default prefix `story/`), e.g. `story/1-2-user-auth`.
@@ -61,11 +60,11 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - On resume → `git switch <branch>` if it already exists.
 
 ## Commits (between phases)
-- Use Conventional Commits, **in full** — never subject-only (see "Message body"):
+- Use Conventional Commits, **in full** — never subject-only ("Message body" below):
   - a `type(scope): subject` line;
   - **plus a body** (required on every commit).
-- Scope is the story or epic: `story-{e}-{s}` (`{s}` incl. any split suffix, e.g. `story-2-6a`) or `epic-{e}`.
-- **Per-phase subjects** are inline in `pipeline.md` (per phase) and `epic-pipeline.md` (per E-step) — the normative strings live there. The two clean-tree-gate subjects below are the exception: this file executes them.
+- Scope is the story or epic: `story-{e}-{s}` (e.g. `story-2-6a`) or `epic-{e}`.
+- **Per-phase subjects** are inline in `pipeline.md` / `epic-pipeline.md` — the normative strings live there; the two clean-tree-gate subjects below are this file's.
 - **Who commits what:**
   - **build-auto** commits its own diff inside the Phase 5 build run and every Phase 7 review pass (implement → review → finalize; never pushes). The plan run (Phase 3) commits nothing — the orchestrator's `plan spec` commit carries the untracked spec.
   - the **orchestrator** commits bookkeeping only. It never commits story code as its own work — the sole cases where non-bookkeeping files ride in an orchestrator commit are (a) stragglers build-auto left uncommitted (swept into the `mark review` commit with a warning), (b) a human's edits (`external review changes`, `spec edits (human)`), and (c) a `blocked` build-auto run's leftovers (`… blocked (<blocking condition>)`).
@@ -90,7 +89,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
 - **Orchestrator commits — sha-lag rule.** Recording a commit's own sha can't happen inside that same commit — so do **not** chase it with a second commit. Append the just-made commit's short sha to `commits[]` on the **next** folded-in state write (Phase 9's finalize write closes out the last one).
 - **build-auto's own commits — ONE rule for every invocation** (plan run, build run, each follow-up / re-review pass): immediately before the invocation (after the clean-tree gate) capture `head_before = git rev-parse HEAD` (session memory); right after it returns record `commits[] += git log --format=%h <head_before>..HEAD` (empty for the plan run).
   - Never use the spec's `baseline_revision` for this — a done-spec re-review keeps the ORIGINAL `baseline_revision`, so `baseline_revision..HEAD` would re-append Phase 5's and the orchestrator's commits.
-- `commits[]` feeds the report only — resume keys off `completed_phases`, which the folded write keeps current — so a one-phase lag in `commits[]` is harmless.
+- `commits[]` feeds the report only, so a one-phase lag is harmless.
 
 ### Message body
 - **Subject** — keep it imperative and ≤ ~72 chars; the strings in `pipeline.md` / `epic-pipeline.md` are fixed.
@@ -116,7 +115,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
 - Before anything: no dirty tree other than auto-bmad's own writes (`pipeline.md` Phase 7 step 3 exclusion set — here a pending Phase 7/8 folded state write, or a Phase 0 auto-applied heal / layers regen on a resume that entered at Phase 8/9; those fold into the report commit) ⇒ any other dirty file is a hard-stop `unexpected uncommitted changes before finalize: <files>`.
 - Push: `git push -u origin <branch>`.
 - Open PR: `gh pr create --base <base_branch> --head <branch> --title "<title>" --body "<body>"`.
-- **Push/PR failure** — a non-zero `git push` or `gh pr create` (rejected push, expired `gh auth`, protected branch) ⇒ hard-stop: report `needs-human` with the command's error verbatim under "Needs attention", leave the commits on the branch, and retry nothing automatically. A rejected push is resolved by the human (see the no-force rule at the top of this file), never by a force-push.
+- **Push/PR failure** — a non-zero `git push` or `gh pr create` (rejected push, expired `gh auth`, protected branch) ⇒ hard-stop: report `needs-human` with the command's error verbatim under "Needs attention", leave the commits on the branch, and retry nothing automatically. A rejected push is resolved by the human, never by a force-push.
 - Add `--draft` if **any** clause of the **draft predicate** holds (clauses 1–4 below):
   - Evaluated deterministically by `scripts/state_plan.py --state-dir <state-dir> --story-key {key} --finalize` from the story's state file.
   - Run it **twice** in Phase 9:
@@ -128,9 +127,9 @@ These stay orchestrator-owned because it already holds the full pipeline context
   **Draft predicate (clauses 1–4):**
   1. a blocker was recorded (`blockers` non-empty);
   2. `review_unverified` is `true` — any of (Phase 7):
-     - the `skip code-review` override — or a phase-7 skip normalized to it — no follow-up pass ran, see `overrides.md`;
+     - the `skip code-review` override — or a phase-7 skip normalized to it — no follow-up pass ran (`overrides.md`);
      - **or** the spec's `followup_review_recommended` is still `true` after Phase 7's last pass (incl. `code_review.followup: never`, where build-auto's own recommendation was never acted on);
-     - (a post-halt re-review that still recommends a follow-up leaves it `true` — the human's "Continue — ship as ready" sets `no_pr_draft` instead of clearing it — see `pipeline.md` Phase 7 step 3);
+     - (a post-halt re-review that still recommends a follow-up leaves it `true` — the human's "Continue — ship as ready" sets `no_pr_draft` instead of clearing it — `pipeline.md` Phase 7 step 3);
   3. `gate_decision` is `WAIVED` (Phase 8: the epic trace gate did not pass and the user — or the trace skill — chose to ship despite the coverage gaps);
   4. **CI is red or timed out** when the CI wait below resolves — a required check failed, or the wait cap was hit with checks still running.
      - This condition can only be evaluated *after* the push.
@@ -142,7 +141,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - `state_plan.py --finalize` emits both verdicts coupled in one JSON — `draft` and `clean_completion`/`flip_bmad_status`.
   - It is the *predicate* that decides, NOT the PR's actual draft flag: the `no_pr_draft` override (`--no-pr-draft`) forces only `draft` false and never touches `clean_completion`.
   - Keep the two coupled if you edit it.
-- Title: a conventional summary of the story, e.g. `feat(story-1-2): user authentication` (`{s}` incl. any split suffix).
+- Title: a conventional summary of the story, e.g. `feat(story-1-2): user authentication`.
 - Body must include:
   - one-paragraph summary of what the story delivered;
   - a link to the spec (`<spec_path>` as a repo-relative path);
@@ -152,12 +151,12 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - a `## Needs attention` checklist of open questions, deferred work, human-action items, and the `⚠️ Retrospective verdict: rejected — <doc>` line when it applies (empty section omitted);
 - Capture the returned PR URL into state (`pr_url`) for the **chat** report (chat-only artifact).
 - **CI link & wait:**
-  - The push/PR triggers a run when the repo has CI workflows (preflight already reports `ci.workflows_present`; a hand probe uses `find .github/workflows -name '*.yml' -o -name '*.yaml'` or `test -d` — never a bare glob).
-  - **When to wait:** only if the merge prompt is effectively enabled this run — `git.offer_merge: true` AND no `skip merge-prompt` — AND clauses 1–3 have not already made the run caveated (the PR is then already a draft, so the merge prompt can't fire). Otherwise don't wait: link the run and leave `ci_status: unknown`.
+  - The push/PR triggers a run when the repo has CI workflows (preflight reports `ci.workflows_present`; a hand probe uses `find .github/workflows -name '*.yml' -o -name '*.yaml'` or `test -d` — no bare globs).
+  - **When to wait:** only if the merge prompt is effectively enabled this run — `git.offer_merge: true` AND no `skip merge-prompt` — AND clauses 1–3 have not already made the run caveated. Otherwise don't wait: link the run and leave `ci_status: unknown`.
   - **How to wait:** one deterministic call — `python3 {skill-root}/scripts/ci_wait.py --pr <pr-number> --cap-minutes <git.ci_wait_minutes> --resolve-run-url --branch <branch> --head-sha <sha>` — then read `ci_status` and `ci_run_url` from its single JSON object.
     - Store the returned `ci_run_url` in state; `null` ⇒ fall back to the branch's Actions tab (`<repo_url>/actions?query=branch:<branch>`).
     - The script owns the poll cadence, cap, registration grace and output discipline. Exit 2 means it couldn't evaluate CI (gh missing/errored) — leave `ci_status: unknown`, never `failed`.
-  - **Outcomes** — record in state as `ci_status`; this list is normative, and `ci_wait.py` pins these exact values:
+  - **Outcomes** — record in state as `ci_status` (normative; `ci_wait.py` pins these exact values):
     - `passed` — every required check is `success` (or `neutral`/`skipped`).
     - `failed` — any required check is `failure`/`cancelled`/`timed_out`/`action_required`.
     - `timeout` — cap reached with checks still running.
@@ -174,22 +173,22 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - AND mode is `remote` and a PR was opened.
 
 - **Prompt** (`AskUserQuestion`, 4 options, in this order — first is the default):
-  - **Merge commit (recommended)** *(default — it preserves every per-phase commit)* / Rebase and merge / Squash and merge / Don't merge.
+  - **Merge commit (recommended)** *(default)* / Rebase and merge / Squash and merge / Don't merge.
   - When the epic retrospective verdict is `rejected` (Phase 8 / E8b), the prompt text carries the line `⚠️ Retrospective verdict: rejected — <doc>` first.
   - If a merge style is chosen → **ask a second question**: Delete branch? Yes / No.
 - **Execute** (only if the user picked a merge style):
   - `gh pr merge <pr-number> --merge` *(or `--rebase` / `--squash`)* `[--delete-branch]`.
   - On success → `git switch <base_branch>` then `git pull --ff-only`, so the local tree matches `origin/<base_branch>` post-merge.
   - **Pending-checks fallback** — the merge fails because required checks are pending/expected on the head SHA (the finalize push superseded the CI-validated commit — the "inherent lag" above):
-    - retry **once** with `--auto` added — the user already chose to merge, and auto-merge completes it when the checks pass; tell them that's what happened ("merge queued; completes when checks pass").
+    - retry **once** with `--auto` added, and tell them that's what happened ("merge queued; completes when checks pass").
     - if the `--auto` retry also fails (e.g. auto-merge disabled in the repo) → fall through to the failure handling below.
   - On failure (branch protection, required reviews, conflict, CI required check missing, etc.):
     - don't retry, don't error out.
     - capture the `gh` stderr verbatim into the report under "Needs attention" ("PR merge failed: …; merge manually at `<pr_url>`") and leave the PR open.
-    - the pipeline still ends `done` (the BMAD-status flip already happened) — a failed user-elected merge doesn't invalidate the completion.
+    - the pipeline still ends `done` — the BMAD-status flip already happened.
 - **Record** in state: `pr_merged: true|false`, `merge_method: squash|merge|rebase|null`, `branch_deleted: true|false` — written without a commit (the finalize commit is already pushed).
   - Surface the outcome in the **chat** report, one line: "Merged via merge commit; branch deleted." / "PR left open at user's request." / "Merge attempted but failed (`<reason>`); merge manually."
-  - A *failed* merge also lands in the file's "⚠️ Needs human" — it's a genuine follow-up, not just an artifact echo.
+  - A *failed* merge also lands in the file's "⚠️ Needs human".
 
 - When the prompt is **off** for this run (`git.offer_merge: false` or `skip merge-prompt` override) → Phase 9 ends after the finalize bookkeeping; PR stays open for the human.
 
@@ -204,7 +203,7 @@ Epic mode produces **one** of each artifact for a whole epic (`epic-pipeline.md`
   - If that check holds → **ASK** before branching (`epic-pipeline.md` E0):
     - proceed off base — that story's work won't be in this epic's PR;
     - or stop and merge it first.
-  - The same git-only `merge-base --is-ancestor` check runs in `epic-pipeline.md` E0 step 7 on the `branch` of any in-flight per-story state: resume that story in E5 only when it is the epic branch or already merged into `<base>`; else ASK Skip / Stop.
+  - The same check also decides in-flight per-story state at `epic-pipeline.md` E0 step 7.
 - **Commit taxonomy:**
   - Per-story commits keep their `story-{e}-{s}` scopes and subjects — they land on the epic branch unchanged (incl. the clean-tree gate commits and build-auto's own commits, recorded per the `commits[]` rule).
   - Epic-scoped subjects (`epic-{e}` scope) are inline in `epic-pipeline.md`, per E-step. Body rules are unchanged.

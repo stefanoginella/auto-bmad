@@ -26,7 +26,7 @@ Parse the invocation text into the **normalized override set** below, **echo the
 - `skip: [...]` — any of: a phase number/name, or the features `pr`, `tea`, `code-review`, `retrospective`, `branch`, `merge-prompt`, `trace-advisory`, `config-pause`, `retro-gate`.
 - `spec_approval: true` — from `approve spec`: pause after Phase 3 for a human OK on the spec (same as `build.spec_approval: true`, this run only). Per-story only — rejected in epic mode.
 - `git_mode: local` — force local mode (no push/PR), regardless of detection.
-- `no_pr_draft: true` — open a normal (non-draft) PR even if caveats were recorded. (Also set mid-run by the Phase 7 halt's **Continue — ship as ready** option — see `pipeline.md`.)
+- `no_pr_draft: true` — open a normal (non-draft) PR even if caveats were recorded. (Also set mid-run by the Phase 7 halt's **Continue — ship as ready** option — `pipeline.md` Phase 7 step 3.)
 - `dry_run: true` — run only Phase 0's **read-only** steps (no `--apply`, no `AskUserQuestion`, no delegate/`tea-triage`, no commit — drift / status-mismatch / retro-gate facts print as notes), print the plan (resolved target story, phase window/skips, per-phase profiles), then stop before Phase 1 (`pipeline.md` Phase 0 step 0). Epic mode: same rule at E0, stopping before E1.
 
 ## Not supported on the build lane (hard-stop)
@@ -51,15 +51,13 @@ Parse the invocation text into the **normalized override set** below, **echo the
   - The Phase 7 halt still opens (its **Continue — ship as ready** option sets `no_pr_draft` interactively) and the Phase 7 tail (trace advisory, deferred harvest) still runs.
   - ⚠️ The second-model quality gate is removed — flag prominently. build-auto's built-in review still ran in Phase 5.
 - **skip retrospective:** skip only Phase 8's retrospective sub-step **and** its pre-retro BMAD-status flip (the entry then flips at Phase 9 as usual).
-- **skip trace-advisory:** suppress only the Phase 7 tail per-story trace advisory for this run, even when its conditions hold (see `tea-policy.md` §3).
+- **skip trace-advisory:** suppress only the Phase 7 tail per-story trace advisory for this run, even when its conditions hold (`tea-policy.md` §3).
   - The epic-end trace gate is unaffected.
 - **skip config-pause:** suppress the Phase 0 (epic: E0) config-drift **review pause** for this run.
-  - When an update shipped new config/profiles, auto-apply the additive heal + show the non-blocking echo (the pre-pause behaviour) instead of pausing to review.
-  - For unattended runs that don't want to stop on the first post-update invocation.
+  - When an update shipped new config/profiles, auto-apply the additive heal + show the non-blocking echo instead of pausing to review.
   - The heal still runs — only the pause is skipped; nothing is reset and no customisation is touched (it stays append-only).
 - **skip retro-gate:** suppress the Phase 0 (epic: E0) ask that fires when the previous epic's newest retrospective verdict is `rejected`. The run proceeds as if the human answered **Proceed**.
 - **skip branch:** stay on the current branch (do not create `story/...`).
-  - Only sensible with a clean intent like a dry run, or when the user is already on the right branch.
   - **Hard-stop** when `git.current_branch == git.base_branch` (preflight JSON) unless `dry_run` is also set — `git-and-pr.md`: nothing ever lands on base. Message: `` `skip branch` on the base branch would commit story work to `<base_branch>` — switch to a story branch first or drop `skip branch` ``.
   - Off-base: warn only.
 - **skip merge-prompt:** same shape as `git.offer_merge: false`, just for this run.
@@ -95,7 +93,7 @@ Overrides that **do NOT map** — reject in epic mode with a precise message:
 - Phase-number `skip`s.
 - `approve spec` — epic mode never halts between plan and build.
 - `skip branch` — E1 always creates the epic branch.
-- Reason: the phase map above is per-**story**-run; epic mode runs **E-steps** (`epic-pipeline.md`), a different axis, unattended between E0 and E_final.
+- Reason: the phase map above is per-**story**-run; epic mode runs **E-steps** (`epic-pipeline.md`), a different axis.
 
 Resume an interrupted epic with `/auto-bmad epic --epic N` — the epic anchor drives where it picks up.
 
@@ -108,7 +106,7 @@ Starting mid-pipeline requires the earlier outputs to already exist. Before skip
   - Entering Phase 7 with no Phase 5 result (this override, or the status-mismatch guard's `review` ⇒ Phase 7 route) is handled by `pipeline.md` Phase 7's "Entry at Phase 7 without a Phase 5 result" rule — the `build.*` seed, the one unconditional pass, and the `skip code-review` precedence.
 - start at **9 (finalize)** → there must be commits on the story branch to push.
 
-Prefer the normal resume path (`state-and-resume.md`) over `start_phase` when a state file exists. Use `start_phase` for deliberate manual control.
+Prefer the normal resume path (`state-and-resume.md`) over `start_phase` when a state file exists.
 
 ## Echo format (always show before executing)
 

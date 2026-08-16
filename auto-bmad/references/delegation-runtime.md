@@ -2,15 +2,15 @@
 
 `delegation.md` says **what** to tell a delegate (the self-contained, tool-agnostic prompt); this file says **how** to spawn it on the current host and degrade gracefully.
 
-Config fields that drive everything — `delegation.host`, `delegation.mode`, `delegation.cli_phases`, `phase_profiles`, `profiles`. Values, defaults and the ten phase keys: `state-and-resume.md` → "config.yaml". The legacy `delegation.mode` value `custom-subagents` is read as `subagents`.
+Config fields that drive everything — `delegation.host`, `delegation.mode`, `delegation.cli_phases`, `phase_profiles`, `profiles`. Values, defaults and the ten phase keys: `state-and-resume.md` → "config.yaml".
 
-There are **no rendered agent files**. A delegate is a generic subagent spawned through the host's native mechanism with the phase profile's model; nothing is provisioned per tool, so nothing can be stale.
+There are **no rendered agent files** — a delegate is a generic subagent spawned through the host's native mechanism at the phase profile's model.
 
 ## Resolving host & mode (every run)
 
-`host` and `mode` both default to `auto` and are **re-detected on every run** — one provisioned project runs under any supported tool. An explicit non-`auto` value forces the choice.
+`host` and `mode` both default to `auto` and are **re-detected on every run**; an explicit non-`auto` value forces the choice.
 
-Detect the host in this order — **env-var signals first**, because they identify the tool *currently executing*, which coexisting on-disk dirs cannot:
+Detect the host in this order — **env-var signals first** (they identify the tool *currently executing*):
 1. **Claude Code** — `${CLAUDE_PLUGIN_ROOT}` is set → `subagents`.
 2. **opencode** — `${OPENCODE_SESSION_ID}` is set → `subagents`.
 3. **On-disk fallback** (no env signal), each ⇒ `subagents`:
@@ -25,7 +25,7 @@ Pass the resolved host + tier to the Phase 0 preflight (`preflight.py --host <ho
 
 `bmad-build-auto` spawns its own subagents (review layers). So the chain that must work in the `subagents` tier is: **orchestrator (depth 0) → generic delegate subagent (depth 1) → build-auto's own subagents (depth 2).** Preflight's `nesting` block verifies it (`preflight.py … --host --tier [--cli-phases]`); obey `nesting.status` — `hard_stop` ⇒ stop and print `nesting.fix` verbatim; `warn` ⇒ surface it and continue.
 
-Per-host facts (verified) — preflight reads exactly these sources:
+Per-host facts — preflight reads exactly these sources:
 
 | host | knob | default | `hard_stop` when | `warn` when |
 |---|---|---|---|---|
@@ -44,8 +44,6 @@ Per-host facts (verified) — preflight reads exactly these sources:
 
 **Before spawning any phase, check `delegation.cli_phases` first.** A phase key present ⇒ read `cli-route.md` and take the external-CLI route (`claude -p` / `codex exec` / `opencode run`) instead of the tier below — it is **still delegation**: you build the command and parse the result, never read or write story code. Absent/empty (the default) ⇒ the phase uses its normal tier and `cli-route.md` is not needed.
 
-`cli-route.md` owns the `cli_delegate.py` resolver call, the argv + validation matrix, the prompt recipe, the launcher/waiter, the result contract (`ok:false` ⇒ hard-stop) and the cross-model layer shapes.
-
 ## Tier 1 — `subagents` (Claude Code, Codex & opencode)
 
 The delegate runs in an isolated generic subagent spawned by the host's native mechanism, at the phase profile's model. Look up profile `p = phase_profiles[P]`, then spawn per host:
@@ -57,7 +55,7 @@ The delegate runs in an isolated generic subagent spawned by the host's native m
 | opencode | Task tool with the default general subagent (no `subagent_type` beyond the built-in), prompt = the assembled delegate prompt | **inherits the user's model and reasoning** (`opencode.model`/`variant` are CLI-route / cross-model-layer only) |
 | other | no subagent mechanism ⇒ `inline` (below) | — |
 
-So per-phase effort is honored in-tool on **Codex only**; on Claude Code effort inherits the session; on opencode both model and effort inherit — record the applicable caveat in the run report (`delegation.mode: subagents`, host, and which knobs applied).
+Record the applicable caveat in the run report (`delegation.mode: subagents`, host, and which knobs applied).
 
 The prompt itself (role line + body + shared tail) is assembled per `delegation.md`.
 
@@ -72,7 +70,7 @@ To keep the rest of the machinery intact:
 - Before moving on, emit the same **six-field result** a delegate would (`delegation.md`) — state and the report depend on it.
 - Honor every hard-stop / `needs-human` condition.
 - Never read code outside the step you are executing; the orchestrator-direct rules (git, scripts, state) still apply between steps.
-- You lose context isolation and per-step model/effort tuning; note `delegation.mode: inline` prominently in the report.
+- Note `delegation.mode: inline` prominently in the report (no context isolation, no per-step model/effort tuning).
 
 ## One rule that survives every tier
 

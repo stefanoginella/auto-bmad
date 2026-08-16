@@ -10,8 +10,6 @@ A phase can be delegated to an **external CLI** — `claude -p`, `codex exec` or
 - Absent/empty ⇒ **every phase uses its normal tier**.
 - Schema: `state-and-resume.md`. Examples: `assets/config-defaults.yaml`.
 
-It is **opt-in and orthogonal** — an unrouted phase falls straight through to the tiers below.
-
 **Before spawning any phase, check `cli_phases` first**; if the phase key is present, take the CLI path. It is **still delegation** — you build the command, deliver the prompt, capture the child's structured-result block, then do your own git/finalize bookkeeping. You never read or write story code yourself.
 
 Routing `build` or `followup_review` = build-auto runs *inside* `codex exec` / `claude -p` / `opencode run`: the external CLI plans/implements, and its own review layers review **and** triage/patch. The orchestrator's after-step reads are unchanged (`story_plan.py --spec <spec_path>`).
@@ -31,7 +29,7 @@ It prints one JSON object. `routed:false` ⇒ use the normal tier. Otherwise it 
   - **For opencode both `model` and the variant are optional — blank ⇒ inherit the user's opencode defaults**, never a hard-stop.
 - `argv` (prompt-less), `prompt_via` (`stdin` for claude/codex, `arg` for opencode), `cwd`, the OS-temp `capture_log`, `exit_file`, `prompt_file`, `launch_cmd`, and `result_source` / `result_format` / `result_field` / `error_field`.
 
-Per-tool argv (every flag verified live against `claude --help` 2.1.232, `codex exec --help` 0.147.0, `opencode run --help` 1.18.15):
+Per-tool argv:
 - claude: `claude -p --model M --effort E --output-format json --dangerously-skip-permissions` (prompt on stdin).
 - codex: `codex exec -m M -c model_reasoning_effort=E --dangerously-bypass-approvals-and-sandbox -C ROOT -o LASTMSG --ephemeral` (prompt on stdin).
 - opencode: `opencode run [-m M] [--variant V] --format json --dir ROOT --auto <prompt>` (prompt = final positional arg; `--auto` auto-approves permissions).
@@ -58,9 +56,7 @@ The emitted `launch_cmd` itself does the following:
 - Redirects stdout+stderr to `capture_log`.
 - Writes the child's `$?` to `exit_file` as a **completion sentinel**.
 
-Use the emitted `launch_cmd` (every token `shlex.quote`d, wrapped in `bash -c`) precisely, so the spawn does NOT ride the host's interactive shell. Two failure modes a hand-rolled spawn hits:
-- A raw `( … ) & pid=$!` / `$?` wrapper is a bash/zsh-ism that breaks under fish.
-- An unquoted argv scalar is left **unsplit** by zsh (`SH_WORD_SPLIT` off) and exec'd as one filename.
+Use the emitted `launch_cmd` (every token `shlex.quote`d, wrapped in `bash -c`) precisely, so the spawn does NOT ride the host's interactive shell: a hand-rolled `( … ) & pid=$!` wrapper breaks under fish, and zsh leaves an unquoted argv scalar unsplit (`SH_WORD_SPLIT` off) and execs it as one filename.
 
 Capture the task's pid where the host exposes it and pass it to the waiter.
 
@@ -68,12 +64,7 @@ Capture the task's pid where the host exposes it and pass it to the waiter.
 - Process exit is the completion signal.
 - Total runtime is UNBOUNDED — no phase has a wall-clock cap.
 
-Why never foreground — host shell tools cap foreground commands far below real delegate runtimes:
-- Claude Code caps at a 2-min default, 10-min max.
-- A routed follow-up review routinely needs 20+ min.
-- A `build` run can take **hours**.
-
-So a delegate that runs for hours is healthy and must **never** be killed on a clock.
+Host shell tools cap foreground commands far below real delegate runtimes (Claude Code: 10-min max; a `build` run can take **hours**) — a delegate that runs for hours is healthy and must **never** be killed on a clock.
 
 Wait for it **with the helper**:
 - **Never** a hand-rolled poll loop.
@@ -110,15 +101,12 @@ On `status:"exited"`, read `result_source`:
 **Per-tool sandbox/auth notes:**
 - **codex** runs with `--dangerously-bypass-approvals-and-sandbox` — full access, no inner OS sandbox.
   - This is parity with claude's `--dangerously-skip-permissions` and opencode's `--auto`.
-  - It is required — because its bubblewrap sandbox can't create a namespace inside a nested container.
-  - Run auto-bmad in an outer sandbox (see README).
+  - It is required: its bubblewrap sandbox can't create a namespace inside a nested container. Run auto-bmad in an outer sandbox (see README).
 - **opencode** runs with `--auto` — headless auto-approve.
-  - Its auth preflight is **lenient** — keyless/local/config providers ⇒ "0 credentials" never hard-stops.
-  - So the preflight won't catch a missing cloud login.
-  - An unauthenticated `opencode run` on a cloud/Zen model **blocks indefinitely**.
-  - Make sure opencode is logged in before routing to it.
+  - Its auth preflight is **lenient** — keyless/local/config providers ⇒ "0 credentials" never hard-stops, so it won't catch a missing cloud login.
+  - An unauthenticated `opencode run` on a cloud/Zen model **blocks indefinitely** — make sure opencode is logged in before routing to it.
 
 **The cross-model review layer is not a routed phase.** `cli_delegate.py --layer-argv --config … --project-root … [--tool codex|claude|opencode]` builds the ONE shell line for the `auto-bmad-cross-model` review layer (tool = `code_review.cross_model_layer`, profile = `phase_profiles.cross_model_layer`); `build_auto_custom.py` bakes it into `_bmad/custom/bmad-build-auto.toml` at setup/`reprovision`, and **build-auto's parent runs it during its own review step — the orchestrator never runs it.** Verified shapes (`ROOT` = absolute project root; `TIMEOUT` = `timeout -k 30 1200 ` / `gtimeout -k 30 1200 ` when on PATH at bake time, else empty; `<DIFF_FILE>` = the diff temp file build-auto substitutes; each closes stdin so no CLI blocks on a pipe):
 - claude: `cd "ROOT" && TIMEOUT claude -p "PROMPT" --model M --effort E --output-format text --allowedTools "Read,Grep,Glob" </dev/null`
-- codex: `cd "ROOT" && TIMEOUT codex exec -m M -c model_reasoning_effort=E -c approval_policy=never -s read-only -C "ROOT" --ephemeral -o "<DIFF_FILE>.review" "PROMPT" </dev/null >/dev/null 2>&1; cat "<DIFF_FILE>.review"` (`codex exec` rejects `-a never`; the config override pins approvals instead).
+- codex: `cd "ROOT" && TIMEOUT codex exec -m M -c model_reasoning_effort=E -c approval_policy=never -s read-only -C "ROOT" --ephemeral -o "<DIFF_FILE>.review" "PROMPT" </dev/null >/dev/null 2>&1; cat "<DIFF_FILE>.review"`.
 - opencode: `cd "ROOT" && TIMEOUT opencode run [-m M] [--variant V] --dir "ROOT" --auto "PROMPT" </dev/null`
