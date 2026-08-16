@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "auto-bmad",
-  "description": "BMAD module that drives the full BMAD story workflow end-to-end — one story at a time, or a whole epic in one run — on Claude Code, Codex, or opencode.",
+  "description": "BMAD module that runs the BMAD build lane end-to-end — bmad-build-auto plan -> build -> follow-up review, one story at a time or a whole epic in one run — on Claude Code, Codex, or opencode.",
   "owner": {
     "name": "Stefano Ginella"
   },
@@ -9,7 +9,7 @@
     {
       "name": "auto-bmad",
       "source": "./",
-      "description": "Drive the full BMAD story workflow (create-story -> dev-story -> code-review, plus risk-gated TEA + epic-boundary skills) for one story at a time — or an ENTIRE epic in one run (`/auto-bmad epic`): one branch, commit per step, open a PR, and report. The orchestrator only delegates to model/effort-tuned subagents, with a graceful fallback to general subagents or inline execution on tools that lack them.",
+      "description": "Drive the BMAD build lane end-to-end — bmad-build-auto plan -> build -> follow-up review per story, or an ENTIRE epic in one run (`/auto-bmad epic`) — with risk-gated TEA, epic-boundary gates + retrospective, one branch, a commit per phase, a PR and a report. Every step is delegated to a model-tuned host-native subagent on Claude Code, Codex, or opencode (or run inline where the host has no subagents).",
       "version": "0.26.1",
       "author": {
         "name": "Stefano Ginella"
@@ -18,8 +18,20 @@
       "repository": "https://github.com/stefanoginella/auto-bmad",
       "license": "MIT",
       "category": "development",
-      "keywords": ["bmad", "module", "orchestrator", "workflow", "automation", "stories", "epic", "tea", "codex"],
-      "skills": ["./auto-bmad"]
+      "keywords": [
+        "bmad",
+        "module",
+        "orchestrator",
+        "workflow",
+        "automation",
+        "stories",
+        "epic",
+        "tea",
+        "codex"
+      ],
+      "skills": [
+        "./auto-bmad"
+      ]
     }
   ]
 }

@@ -90,7 +90,10 @@ Encoded rules (the normative definitions live in the reference docs / spec §1):
     (rc != 0 — e.g. timeout), both are ``null`` and ``status_error`` carries a
     stderr snippet — the gate fails CLOSED (hard stop), never reads as clean.
   - ``base_branch``: remote HEAD via ``git symbolic-ref refs/remotes/origin/HEAD``
-    (``refs/remotes/origin/`` prefix stripped), else the current branch.
+    (``refs/remotes/origin/`` prefix stripped), else the current branch. The
+    current-branch fallback is a FIRST-RUN SEED for the runtime config's
+    ``git.base_branch`` (which is authoritative once set), not the run-time
+    base — on a resume it would be the story/epic branch itself.
   - ``mode``: ``remote`` iff ``gh --version`` works AND ``gh auth status`` exits 0
     AND ``git remote -v`` shows a github.com remote — else ``local``.
   - hard-stops: not a repo; tree state unknown; dirty tree unless

@@ -44,6 +44,7 @@ Parse the invocation text into the **normalized override set** below, **echo the
 - **skip tea:** treat `tea.enabled` as false for this run.
   - No Phase 0 TEA triage; skips Phases 4 and 6, Phase 2 (epic test design), the Phase 8 TEA gates, and the Phase 7 tail trace advisory.
   - The retrospective still runs.
+- **skip 7 / skip review / skip followup (any phase-7 skip):** normalized to `skip code-review` — echo it as `skip code-review` in the override echo and state; no follow-up pass, `review_unverified: true` (draft-predicate clause 2), and the Phase 7 halt + tail (trace advisory, deferred harvest) still run.
 - **skip code-review:** no Phase 7 follow-up pass AND `review_unverified: true`.
   - `review_unverified` is draft-predicate clause 2 ⇒ the PR opens as a **draft** and the story stays at `review`.
   - Combine with `no_pr_draft` to ship non-draft anyway — the story still stays at `review`.
@@ -59,7 +60,8 @@ Parse the invocation text into the **normalized override set** below, **echo the
 - **skip retro-gate:** suppress the Phase 0 (epic: E0) ask that fires when the previous epic's newest retrospective verdict is `rejected`. The run proceeds as if the human answered **Proceed**.
 - **skip branch:** stay on the current branch (do not create `story/...`).
   - Only sensible with a clean intent like a dry run, or when the user is already on the right branch.
-  - Warn otherwise.
+  - **Hard-stop** when `git.current_branch == git.base_branch` (preflight JSON) unless `dry_run` is also set — `git-and-pr.md`: nothing ever lands on base. Message: `` `skip branch` on the base branch would commit story work to `<base_branch>` — switch to a story branch first or drop `skip branch` ``.
+  - Off-base: warn only.
 - **skip merge-prompt:** same shape as `git.offer_merge: false`, just for this run.
   - Phase 9 still pushes and opens the PR.
   - It does **not** wait for CI.

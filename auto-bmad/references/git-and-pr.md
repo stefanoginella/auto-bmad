@@ -42,9 +42,9 @@ These stay orchestrator-owned because it already holds the full pipeline context
 
 - **Is it a git repo?** `git rev-parse --is-inside-work-tree`.
   - Not a repo → hard-stop (suggest `git init`).
-- **Base branch** — store as `git.base_branch`:
+- **Base branch** — the runtime config's `git.base_branch` is authoritative once set (seeded at first run from preflight's value below; `state-and-resume.md`). Preflight's `git.base_branch` only **seeds** that key at first run and **warns** when the two disagree while `origin/HEAD` is present — every `<base_branch>`/`<base>` placeholder here, in `pipeline.md`, `epic-pipeline.md` and `delegation.md` means the **config** value. Preflight's detection:
   - the remote HEAD if present (`git symbolic-ref refs/remotes/origin/HEAD`);
-  - else the current branch at start (commonly `main`/`master`).
+  - else the current branch at start (commonly `main`/`master`) — a first-run seed only, never the run-time base (on a resume that would be the story/epic branch itself).
 - **Git mode:**
   - **`remote`** if `gh` is installed (`gh --version`), authenticated (`gh auth status`), AND a GitHub remote exists (`git remote -v` shows a github.com origin).
   - **`local`** otherwise.
@@ -91,8 +91,8 @@ These stay orchestrator-owned because it already holds the full pipeline context
 
 ### Clean-tree gate (before EVERY build-auto invocation)
 - Applies to the Phase 3 plan run, the Phase 5 build run, and every Phase 7 follow-up / re-review pass.
-- Why: build-auto's fresh-intent route HALTs on a dirty tree (its step-01 version-control check), and every build-auto run diffs tracked+untracked files since its `baseline_revision` and sweeps stragglers into its own commit at Finalize — auto-bmad bookkeeping must never ride in build-auto's review diff or commits.
-- (a) **Fold forward first:** write the build-auto phase's `timing-start` (and, for Phase 5, the `in-progress` sprint flip) *before* the preceding phase's commit when that commit is made in the same session — Phase 1 init → Phase 3 (when Phase 2 does not run); Phase 2 → Phase 3; Phase 3 → Phase 5 (when neither Phase 4 nor the spec-approval halt runs); Phase 4 → Phase 5; Phase 5 `mark review` → Phase 7 (when Phase 6 does not run); Phase 6 → Phase 7.
+- Why: build-auto's fresh-intent route HALTs on a dirty tree (its step-01 version-control check), and every build-auto run diffs tracked+untracked files since its `baseline_revision` and sweeps stragglers into its own commit at Finalize — auto-bmad bookkeeping must never sit uncommitted when build-auto starts: it would be swept into build-auto's own commit (or trip `finalization left repository dirty`). (Already-committed bookkeeping — the `mark review` flip, state, TEA artifacts — is visible to a done-spec follow-up pass by design, since it keeps the ORIGINAL `baseline_revision`; the review triage treats it as noise.)
+- (a) **Fold forward first:** write the build-auto phase's `timing-start` (epic mode: on the per-story file AND the epic anchor; and, for Phase 5, the `in-progress` sprint flip) *before* the preceding phase's commit when that commit is made in the same session — Phase 1 init → Phase 3 (when Phase 2 does not run); Phase 2 → Phase 3; Phase 3 → Phase 5 (when neither Phase 4 nor the spec-approval halt runs); Phase 4 → Phase 5; Phase 5 `mark review` → Phase 7 (when Phase 6 does not run); Phase 6 → Phase 7.
 - (b) **Otherwise**, if `git status --porcelain` is non-empty immediately before the invocation, stage everything and commit — the ONE sanctioned bookkeeping commit:
   - `chore(story-{e}-{s}): pipeline state` — state file only (Phase 1's `init` before Phase 3 is the usual case);
   - `chore(story-{e}-{s}): mark in-progress` — Phase 5: sprint flip + state.
@@ -125,7 +125,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - Stage the phase artifacts **and** the state file first — the single-commit rule above.
 
 ## PR (Phase 9, mode `remote` only)
-- Before anything: no dirty tree OTHER THAN auto-bmad's own state/report files (a pending Phase 7/8 folded state write folds into the report commit); any other dirty file ⇒ hard-stop `unexpected uncommitted changes before finalize: <files>`.
+- Before anything: no dirty tree OTHER THAN auto-bmad's own writes — the Phase 7 own-writes exclusion set: `<output_folder>/auto-bmad/**` (state, reports, config.yaml) and `<project_root>/_bmad/custom/bmad-build-auto.toml` (a pending Phase 7/8 folded state write, or a Phase 0 auto-applied heal/layers regen on a resume that entered at Phase 8/9) — those fold into the report commit; any other dirty file ⇒ hard-stop `unexpected uncommitted changes before finalize: <files>`.
 - Push: `git push -u origin <branch>`.
 - Open PR: `gh pr create --base <base_branch> --head <branch> --title "<title>" --body "<body>"`.
 - Add `--draft` if **any** clause of the **draft predicate** holds (clauses 1–4 below):
@@ -139,7 +139,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
   **Draft predicate (clauses 1–4):**
   1. a blocker was recorded (`blockers` non-empty);
   2. `review_unverified` is `true` — any of (Phase 7):
-     - the `skip code-review` override — no follow-up pass ran, see `overrides.md`;
+     - the `skip code-review` override — or a phase-7 skip normalized to it — no follow-up pass ran, see `overrides.md`;
      - **or** the spec's `followup_review_recommended` is still `true` after Phase 7's last pass (incl. `code_review.followup: never`, where build-auto's own recommendation was never acted on);
      - (a post-halt re-review that still recommends a follow-up leaves it `true` — the human's "Continue — ship as ready" sets `no_pr_draft` instead of clearing it — see `pipeline.md` Phase 7 step 3);
   3. `gate_decision` is `WAIVED` (Phase 8: the epic trace gate did not pass and the user — or the trace skill — chose to ship despite the coverage gaps);
@@ -268,6 +268,7 @@ Only the per-story-shaped items get an `epic-{e}` variant (below).
   - Its inputs must be **aggregated up** to the anchor during the run (E5h, in the landing `set` patch):
     - a story whose Phase 7 left `review_unverified: true` (or the `skip code-review` override) → anchor `review_unverified: true`;
     - any per-story blocker → anchor `blockers`;
+    - E8a terminal `FAIL` → anchor `blockers` entry (`epic {e} trace gate FAILED — …`);
     - E8a `WAIVED` → anchor `gate_decision`;
     - the one CI wait → anchor `ci_status`.
 - **Batch BMAD-status flip:** on a **clean completion** (`flip_bmad_status: true`), flip **every story in `stories_landed`** to `done`.
