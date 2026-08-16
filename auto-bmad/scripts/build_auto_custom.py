@@ -34,7 +34,8 @@ comments, whatever). The region is replaced in place when present, appended at E
 before) when absent, and the file is created when missing (first line
 ``# created by auto-bmad — team customization of bmad-build-auto (see the skill's customize.toml for the schema)``).
 Both layers disabled => the region (markers included) is REMOVED; the file itself is deleted only
-when it holds nothing but that creation marker and whitespace. The WHOLE resulting file is validated
+when it holds nothing but that creation marker and whitespace (a whitespace-only file WITHOUT the
+marker is not ours — it is left in place, holding the empty remainder). The WHOLE resulting file is validated
 with ``tomllib`` before anything is written (invalid => no write, exit 2). Instruction values are
 TOML literal multi-line strings (``'''``): the runtime placeholder ``{diff_output}`` survives verbatim
 and no ``{skill-root}``/``{project-root}`` token is ever emitted (paths are absolute); a baked value
@@ -73,6 +74,9 @@ Output — ONE JSON object on stdout.
             layers_present_in_region, duplicate_ids_outside_region, user_layer_overrides, toml_valid,
             cross_model: {enabled, tool, binary_on_path}, warnings, errors}``;
             exit 0 fresh, 1 needs_apply (stale/missing), 2 error.
+  A failure raised inside resolution (bad config, unreadable asset, unwritable target) prints the
+  SAME key set as that mode's success, with ``status: "error"``, ``errors: [...]`` and a convenience
+  ``message`` (see ``error_result()``) — exit 2, nothing written.
   ``stale`` = the region is present but differs from what the config renders now (a retuned profile,
   a flipped layer, a module-version drift in the open marker, a region that must go); ``missing`` =
   layers are expected but the file or the region is absent.
@@ -393,8 +397,11 @@ def compose(existing: str | None, region: str) -> tuple[str | None, dict]:
         return before + region + after, facts
     facts["region_removed"] = True
     remainder = before + after
-    stripped = remainder.strip()
-    if stripped == "" or stripped == CREATION_MARKER:
+    # Delete ONLY a file that is ours end-to-end: whitespace apart from a first non-blank line that
+    # is our creation marker. A whitespace-only file WITHOUT that marker was not created by us (a
+    # user placeholder, a stub some other tool owns) — leave it in place and write the remainder.
+    non_blank = [l for l in remainder.splitlines() if l.strip()]
+    if len(non_blank) == 1 and non_blank[0].strip() == CREATION_MARKER:
         facts["file_deleted"] = True
         return None, facts
     return remainder, facts
@@ -548,13 +555,57 @@ def run_apply(args, timeout_bin=None) -> tuple[dict, int]:
             res["target"].unlink()
         out["status"] = "applied"
         return out, 0
-    res["target"].parent.mkdir(parents=True, exist_ok=True)
-    tmp = res["target"].with_name(res["target"].name + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as fh:
-        fh.write(new_text)
-    tmp.replace(res["target"])
+    target = res["target"]
+    if target.is_dir():
+        out["errors"].append(f"{target} is a directory, not a file — nothing written")
+        return out, 2
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(new_text)
+        tmp.replace(target)
+    except OSError as exc:
+        out["errors"].append(f"could not write {target}: {exc.__class__.__name__}: {exc}")
+        return out, 2
+    finally:
+        # A failed replace (target is a directory, a full disk, a permission flip) must never leave
+        # a stray `<name>.tmp` next to the real file. A successful replace consumed it already.
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     out["status"] = "applied"
     return out, 0
+
+
+def error_result(mode: str, message: str, project_root: str | None = None) -> dict:
+    """The mode's FULL key set, defaulted, with ``status: "error"`` + ``errors: [message]``.
+
+    A failure raised inside resolution (a bad config, an unreadable asset) must parse with the SAME
+    shape as a success, so a caller can read ``errors``/``needs_apply``/``layers`` unconditionally
+    instead of special-casing a three-key error object. ``message`` is kept as an extra convenience
+    key. Lockstep with ``run_apply``/``run_check``'s ``out`` dicts (asserted in the self-test).
+    """
+    try:
+        file = str(Path(project_root) / TARGET_REL) if project_root else ""
+    except TypeError:  # pragma: no cover - only a non-path project_root
+        file = ""
+    out = {"status": "error", "file": file, "warnings": [], "errors": [message], "message": message}
+    if mode == "apply":
+        out.update({
+            "created_file": False, "region_removed": False, "file_deleted": False,
+            "layers": [], "region_bytes": 0,
+        })
+    else:
+        out.update({
+            "needs_apply": False, "file_present": False, "layers_expected": [],
+            "layers_present_in_region": [], "duplicate_ids_outside_region": [],
+            "user_layer_overrides": [], "toml_valid": None,
+            "cross_model": {"enabled": False, "tool": None, "binary_on_path": None},
+        })
+    return out
 
 
 def run_check(args, timeout_bin=None) -> tuple[dict, int]:
@@ -918,6 +969,52 @@ def _run_self_test() -> int:
         except BuildError:
             pass
 
+        # 20. file-deletion rule (both layers disabled): ONLY a file that is ours end-to-end goes.
+        # (a) unit: a whitespace-only remainder WITHOUT the creation marker is kept as-is.
+        blob = "  \n" + REGION_OPEN_PREFIX + " v\n" + REGION_CLOSE + "\n\n"
+        new, facts = compose(blob, "")
+        assert new == "  \n\n" and facts["region_removed"] and not facts["file_deleted"], (new, facts)
+        # (b) unit: marker first, whitespace otherwise => deleted (leading blank lines tolerated).
+        for own in (CREATION_MARKER + "\n\n" + REGION_OPEN_PREFIX + " v\n" + REGION_CLOSE + "\n",
+                    "\n" + CREATION_MARKER + "\n" + REGION_OPEN_PREFIX + " v\n" + REGION_CLOSE + "\n \n"):
+            new, facts = compose(own, "")
+            assert new is None and facts["file_deleted"] and facts["region_removed"], (own, new, facts)
+        # (c) end to end: our own file is deleted; the same file minus the marker survives empty.
+        if target.exists():
+            target.unlink()
+        res, code = run_apply(_args(root, cfgp), timeout_bin="")
+        assert code == 0 and res["created_file"], res
+        res, code = run_apply(_args(root, cfg_none), timeout_bin="")
+        assert code == 0 and res["file_deleted"] and not target.exists(), res
+        run_apply(_args(root, cfgp), timeout_bin="")
+        target.write_text(target.read_text(encoding="utf-8").replace(CREATION_MARKER + "\n", "  \n", 1), encoding="utf-8")
+        res, code = run_apply(_args(root, cfg_none), timeout_bin="")
+        assert code == 0 and res["region_removed"] and not res["file_deleted"], res
+        assert target.is_file() and target.read_text(encoding="utf-8").strip() == "", repr(target.read_text(encoding="utf-8"))
+        target.unlink()
+
+        # 21. an unwritable target => error exit 2 and NO stray `.tmp` left behind.
+        tmp_path = target.with_name(target.name + ".tmp")
+        target.mkdir(parents=True, exist_ok=True)          # a DIRECTORY where the file belongs
+        res, code = run_apply(_args(root, cfgp), timeout_bin="")
+        assert code == 2 and res["status"] == "error" and any("directory" in e for e in res["errors"]), res
+        assert not tmp_path.exists(), tmp_path
+        target.rmdir()
+        root2 = root / "alt"                                # parent path is a FILE => mkdir raises
+        root2.mkdir(parents=True, exist_ok=True)
+        (root2 / "_bmad").write_text("not a dir\n", encoding="utf-8")
+        res, code = run_apply(_args(root2, cfgp), timeout_bin="")
+        assert code == 2 and res["status"] == "error" and any("could not write" in e for e in res["errors"]), res
+        assert not (root2 / TARGET_REL).with_name(TARGET_REL.name + ".tmp").exists()
+
+        # 22. error_result(): the mode's full key set, defaulted.
+        ea = error_result("apply", "boom", str(root))
+        assert ea["status"] == "error" and ea["errors"] == ["boom"] and ea["message"] == "boom"
+        assert ea["file"] == str(root / TARGET_REL) and ea["layers"] == [] and ea["region_bytes"] == 0, ea
+        ec = error_result("check", "boom")
+        assert ec["file"] == "" and ec["needs_apply"] is False and ec["toml_valid"] is None, ec
+        assert ec["cross_model"] == {"enabled": False, "tool": None, "binary_on_path": None}, ec
+
         # 19. CLI round trip: exit codes + JSON on stdout
         script = str(Path(__file__).resolve())
         base = [sys.executable, script, "--project-root", str(root), "--config", str(cfgp)]
@@ -929,8 +1026,19 @@ def _run_self_test() -> int:
         assert p.returncode == 0 and json.loads(p.stdout)["status"] == "applied", p.stdout + p.stderr
         p = subprocess.run(base + ["--check"], capture_output=True, text=True)
         assert p.returncode == 0 and json.loads(p.stdout)["status"] == "fresh", p.stdout + p.stderr
+        # A resolution failure prints the mode's FULL key set (+ `message`), never a 3-key object.
+        ok_apply = json.loads(subprocess.run(base + ["--apply"], capture_output=True, text=True).stdout)
         p = subprocess.run(base + ["--apply", "--config", str(cfg_bad)], capture_output=True, text=True)
-        assert p.returncode == 2 and json.loads(p.stdout)["status"] == "error", p.stdout + p.stderr
+        err_apply = json.loads(p.stdout)
+        assert p.returncode == 2 and err_apply["status"] == "error" and err_apply["errors"], p.stdout + p.stderr
+        assert set(err_apply) == set(ok_apply) | {"message"}, sorted(set(err_apply) ^ set(ok_apply))
+        ok_check = json.loads(subprocess.run(base + ["--check"], capture_output=True, text=True).stdout)
+        p = subprocess.run(base + ["--check", "--config", str(cfg_bad)], capture_output=True, text=True)
+        err_check = json.loads(p.stdout)
+        assert p.returncode == 2 and err_check["status"] == "error" and err_check["errors"], p.stdout + p.stderr
+        assert set(err_check) == set(ok_check) | {"message"}, sorted(set(err_check) ^ set(ok_check))
+        assert err_check["file"].endswith(str(TARGET_REL)) and err_check["needs_apply"] is False, err_check
+        assert "Traceback" not in p.stderr, p.stderr
         p = subprocess.run([sys.executable, script, "--project-root", str(root)], capture_output=True, text=True)
         assert p.returncode == 2 and json.loads(p.stdout)["status"] == "error"
         p = subprocess.run(base + ["--apply", "--check"], capture_output=True, text=True)
@@ -965,12 +1073,18 @@ def main() -> int:
         return _usage("exactly one of --apply / --check is required")
     if not args.project_root or not args.config:
         return _usage("--project-root and --config are required")
+    mode = "apply" if args.apply else "check"
+
+    def _fail(msg: str) -> int:
+        print(json.dumps(error_result(mode, msg, args.project_root), indent=2))
+        return 2
+
     try:
         result, code = run_apply(args) if args.apply else run_check(args)
     except BuildError as exc:
-        return _usage(str(exc))
+        return _fail(str(exc))
     except OSError as exc:
-        return _usage(f"{exc.__class__.__name__}: {exc}")
+        return _fail(f"{exc.__class__.__name__}: {exc}")
     print(json.dumps(result, indent=2))
     return code
 

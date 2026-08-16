@@ -35,10 +35,15 @@ Encoded rules (the normative definitions live in the reference docs / spec §1):
   The literal ``{project-root}`` token is substituted with the absolute project
   root in EVERY string value; the three path fields are made absolute (a relative
   value is joined onto the project root). Missing ``_bmad/config.toml`` ⇒
-  ``present: false`` + hard-stop (not a BMAD project). Unparseable layer ⇒
-  ``error`` + hard-stop. ``modules.bmm`` absent (core-only install) ⇒
-  ``implementation_artifacts``/``planning_artifacts`` ``null`` + hard-stop.
-  Missing ``core.output_folder`` ⇒ hard-stop (nothing downstream can run without it).
+  ``present: false`` + hard-stop (not a BMAD project). Unparseable layer (bad
+  TOML or not UTF-8) ⇒ ``error`` + hard-stop. ``modules.bmm`` absent (core-only
+  install) ⇒ ``implementation_artifacts``/``planning_artifacts`` ``null`` + ONE
+  hard-stop ``bmm module not configured in _bmad/config.toml
+  (modules.bmm.implementation_artifacts missing)``; the table present but a field
+  missing ⇒ one reason per missing field. Missing ``core.output_folder`` ⇒
+  hard-stop (nothing downstream can run without it). The unparseable-layer and
+  ``output_folder`` stops are part of P1 ("the BMAD project is usable"), so they
+  are among the reasons ``--central-config-only`` may return.
 * **legacy_configs** (P11, warn only): ``_bmad/bmm/config.yaml`` and
   ``_bmad/core/config.yaml`` — the delegated BMAD skills still load them; one
   warning line per missing file.
@@ -46,10 +51,11 @@ Encoded rules (the normative definitions live in the reference docs / spec §1):
 * **uv** (P3): ``uv`` on PATH (``shutil.which``) + ``uv --version``; absent ⇒ hard-stop
   (bmad-build-auto renders through ``uv run`` and HALTs without it).
 * **python311** (P4): ``uv python find '>=3.11' --no-python-downloads`` — exit 0 ⇒
-  ``ok`` (``found`` = the interpreter path); non-zero (uv exits 2 when nothing
-  matches) ⇒ absent ⇒ ``warn`` (uv downloads one on first use) UNLESS
-  ``UV_PYTHON_DOWNLOADS`` ∈ {never, 0, false, off} ⇒ ``hard_stop``. Skipped
-  (``warn``) when uv is not on PATH — P3 already stops.
+  ``ok`` (``found`` = the interpreter path); exit 2 (uv's "nothing matches") ⇒
+  absent ⇒ ``warn`` (uv downloads one on first use) UNLESS ``UV_PYTHON_DOWNLOADS``
+  ∈ {never, 0, false, off} ⇒ ``hard_stop``; ANY other exit (broken/wedged uv,
+  rc 127 on timeout) ⇒ ``warn`` ``uv python find failed (exit N): …`` — never a
+  stop. Skipped (``warn``) when uv is not on PATH — P3 already stops.
 * **agents_md** (P10, warn only): ``<root>/AGENTS.md`` contains both
   ``<!-- bmad:context -->`` and ``<!-- /bmad:context -->``.
 * **nesting** (P6): the chain orchestrator (depth 0) → generic delegate subagent
@@ -62,14 +68,16 @@ Encoded rules (the normative definitions live in the reference docs / spec §1):
     or ``< 1`` (ignored by Claude ⇒ default 3), or ``>= 2`` ⇒ ``ok``; parses as an
     integer equal to ``1`` ⇒ ``hard_stop``.
   - codex: ``$CODEX_HOME/config.toml`` (default ``~/.codex/config.toml``) then
-    ``<root>/.codex/config.toml`` (project overrides user key-by-key) —
+    ``<root>/.codex/config.toml`` (project overrides user key-by-key — a plain
+    deep-merge, NOT the BMAD keyed-array merge: host configs never traceback) —
     ``features.multi_agent_v2 == true`` OR ``agents.max_depth >= 2`` ⇒ ``ok``;
-    otherwise ``hard_stop``; an unparseable file ⇒ ``warn``.
+    otherwise ``hard_stop``; an unparseable (or non-UTF-8) file ⇒ ``warn``.
   - opencode: ``~/.config/opencode/opencode.json``, ``$OPENCODE_CONFIG`` (if set),
     ``<root>/opencode.json``, ``<root>/.opencode/opencode.json`` (later wins; a
     ``.jsonc`` sibling is read right after each ``.json``; ``//`` line comments
-    outside strings are stripped before ``json.loads``) — the highest layer that
-    sets ``subagent_depth`` must be ``>= 2`` else ``hard_stop``; depth ok but no
+    outside strings are stripped before ``json.loads``; layers plain deep-merge,
+    later wins) — the highest layer that sets ``subagent_depth`` must be ``>= 2``
+    else ``hard_stop``; depth ok but no
     ``agent.general.permission.task == "allow"`` ⇒ ``warn``; unparseable file ⇒ ``warn``.
   - other ⇒ ``warn`` (unknown host — nested subagents unverified).
   ``fix`` carries the verbatim per-host remedy (``null`` when nothing to fix).
@@ -90,7 +98,8 @@ Encoded rules (the normative definitions live in the reference docs / spec §1):
     detached/unknown HEAD (even on a clean tree).
 * **ci**: any ``*.yml``/``*.yaml`` under ``.github/workflows`` or a root ``.gitlab-ci.yml``.
 * **skills** (P5): a required skill is present iff a DIRECTORY of that name exists
-  under ANY ``--skills-dirs`` entry; each miss is a hard-stop
+  under ANY ``--skills-dirs`` entry (``~`` expanded; a relative entry is joined
+  onto ``--project-root``, like every other probe); each miss is a hard-stop
   ``required skill missing: <name>`` (+ an install hint: ``bmad-testarch-*`` ⇒
   ``--modules tea``, the 6.11 additions ``bmad-build-auto``/``bmad-sprint-planning``
   ⇒ ``(BMAD < 6.11? run npx bmad-method install --action update)``).
@@ -181,6 +190,7 @@ _AGENTS_MD_OPEN = "<!-- bmad:context -->"
 _AGENTS_MD_CLOSE = "<!-- /bmad:context -->"
 
 _UV_DOWNLOADS_OFF = {"never", "0", "false", "off"}
+_UV_FIND_ABSENT_RC = 2  # `uv python find` exits 2 when no interpreter matches (spec §1.1 P4)
 _CLAUDE_DEPTH_ENV = "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"
 _CLI_PHASES_EXEMPT = {"build", "followup_review"}
 # The 6.11 additions whose absence most likely means an older BMAD.
@@ -207,6 +217,7 @@ _MSG_PYTHON_OLD = (
 _MSG_NOT_BMAD = (
     "not a BMAD project (no _bmad/config.toml) — run `npx bmad-method install` (BMAD >= 6.11.0) first"
 )
+_MSG_BMM_MISSING = "bmm module not configured in _bmad/config.toml (modules.bmm.implementation_artifacts missing)"
 _MSG_UV_MISSING = (
     "uv not on PATH — bmad-build-auto renders through `uv run`; install uv"
     " (https://docs.astral.sh/uv/) and re-run"
@@ -288,7 +299,9 @@ def load_toml(path: Path, *, required: bool = False) -> dict:
     try:
         with path.open("rb") as stream:
             parsed = tomllib.load(stream)
-    except tomllib.TOMLDecodeError as error:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+        # tomllib.load decodes the bytes as UTF-8 itself, so a non-UTF-8 layer
+        # surfaces as UnicodeDecodeError (a ValueError, NOT a TOMLDecodeError).
         raise ConfigError(f"failed to parse {path}: {error}") from error
     except OSError as error:
         raise ConfigError(f"failed to read {path}: {error}") from error
@@ -354,6 +367,20 @@ def merge_layers(layers: Sequence[dict]) -> dict:
     return merged
 
 
+def deep_merge(base: Any, override: Any) -> Any:
+    """Plain key-by-key deep-merge for the FOREIGN host configs (codex ``config.toml``,
+    opencode ``opencode.json``): tables merge recursively, everything else (arrays
+    included) is replaced by the later layer. Never raises — the BMAD-strict
+    ``structural_merge`` (keyed ``code``/``id`` arrays) is for the central config only;
+    host configs do not follow BMAD's merge semantics and must never traceback preflight."""
+    if isinstance(base, dict) and isinstance(override, dict):
+        result = dict(base)
+        for key, value in override.items():
+            result[key] = deep_merge(result[key], value) if key in result else value
+        return result
+    return override
+
+
 def _substitute_root(value: Any, root: str) -> Any:
     """Replace the literal ``{project-root}`` token in every string value (recursively)."""
     if isinstance(value, str):
@@ -415,7 +442,8 @@ def classify_central_config(project_root: Path) -> tuple[dict, list[str]]:
     block["layers_read"] = read
     core = cfg.get("core") if isinstance(cfg.get("core"), dict) else {}
     modules = cfg.get("modules") if isinstance(cfg.get("modules"), dict) else {}
-    bmm = modules.get("bmm") if isinstance(modules.get("bmm"), dict) else {}
+    bmm_present = isinstance(modules.get("bmm"), dict)
+    bmm = modules.get("bmm") if bmm_present else {}
     block["output_folder"] = _abs_path_value(core.get("output_folder"), project_root)
     block["implementation_artifacts"] = _abs_path_value(bmm.get("implementation_artifacts"), project_root)
     block["planning_artifacts"] = _abs_path_value(bmm.get("planning_artifacts"), project_root)
@@ -423,9 +451,13 @@ def classify_central_config(project_root: Path) -> tuple[dict, list[str]]:
     block["project_name"] = name if isinstance(name, str) and name else None
     if block["output_folder"] is None:
         reasons.append("core.output_folder missing in _bmad/config.toml — re-run the BMAD installer")
-    for field in ("implementation_artifacts", "planning_artifacts"):
-        if block[field] is None:
-            reasons.append(f"bmm module not configured in _bmad/config.toml (modules.bmm.{field} missing)")
+    if not bmm_present:
+        # Core-only install: ONE reason (the spec's verbatim message), not one per field.
+        reasons.append(_MSG_BMM_MISSING)
+    else:
+        for field in ("implementation_artifacts", "planning_artifacts"):
+            if block[field] is None:
+                reasons.append(f"bmm module not configured in _bmad/config.toml (modules.bmm.{field} missing)")
     return block, reasons
 
 
@@ -466,7 +498,10 @@ def classify_uv(run: Runner, which: Which) -> dict:
 
 
 def classify_python311(run: Runner, uv_on_path: bool, env: Mapping[str, str]) -> dict:
-    """``uv python find '>=3.11' --no-python-downloads``: exit 0 ⇒ ok; else warn/hard_stop."""
+    """``uv python find '>=3.11' --no-python-downloads``: exit 0 ⇒ ok; exit 2 ⇒ absent
+    (warn, or hard_stop when ``UV_PYTHON_DOWNLOADS`` disables downloads); any other
+    exit (a wedged/broken uv, rc 127 from the runner on timeout) ⇒ ``warn`` with a
+    ``uv python find failed (exit N): …`` detail — never a hard-stop."""
     if not uv_on_path:
         return {"status": "warn", "found": None, "detail": "uv not on PATH — probe skipped"}
     rc, out, err = run(["uv", "python", "find", ">=3.11", "--no-python-downloads"])
@@ -474,6 +509,8 @@ def classify_python311(run: Runner, uv_on_path: bool, env: Mapping[str, str]) ->
         found = out.strip().splitlines()[0] if out.strip() else None
         return {"status": "ok", "found": found, "detail": out.strip() or "found"}
     detail = (err.strip() or out.strip() or f"exit {rc}").splitlines()[0][:300]
+    if rc != _UV_FIND_ABSENT_RC:
+        return {"status": "warn", "found": None, "detail": f"uv python find failed (exit {rc}): {detail}"}
     downloads = env.get("UV_PYTHON_DOWNLOADS", "").strip().lower()
     if downloads in _UV_DOWNLOADS_OFF:
         return {"status": "hard_stop", "found": None, "detail": detail}
@@ -492,6 +529,8 @@ def _python311_messages(block: dict, env: Mapping[str, str], uv_on_path: bool) -
             "no Python >=3.11 available to uv and Python downloads are disabled"
             f" (UV_PYTHON_DOWNLOADS={value}) — run `uv python install 3.11`"
         ]
+    if block["detail"].startswith("uv python find failed"):
+        return [f"{block['detail']} — Python >=3.11 availability to uv could not be verified"], []
     return [_MSG_PY311_WARN], []
 
 
@@ -594,7 +633,7 @@ def _classify_codex_nesting(host: str, tier: str, project_root: Path, env: Mappi
         except ConfigError as e:
             return _nesting(host, tier, "warn", f"could not parse {f}: {e} — nesting could not be verified", None, sources)
         sources.append(str(f))
-        merged = structural_merge(merged, table)
+        merged = deep_merge(merged, table)
     features = merged.get("features") if isinstance(merged.get("features"), dict) else {}
     agents = merged.get("agents") if isinstance(merged.get("agents"), dict) else {}
     v2 = features.get("multi_agent_v2") is True
@@ -655,7 +694,7 @@ def _classify_opencode_nesting(host: str, tier: str, project_root: Path, env: Ma
         sources.append(str(f))
         if "subagent_depth" in data:
             depth = data["subagent_depth"]  # highest layer that sets it wins
-        merged = structural_merge(merged, data)
+        merged = deep_merge(merged, data)
     depth_ok = isinstance(depth, int) and not isinstance(depth, bool) and depth >= 2
     if not depth_ok:
         where = "unset (default 1)" if depth is None else repr(depth)
@@ -1066,6 +1105,11 @@ def _run_self_test() -> int:
     except ConfigError:
         pass
     assert _substitute_root({"a": ["{project-root}/x", 1], "b": {"c": "{project-root}"}}, "/R") == {"a": ["/R/x", 1], "b": {"c": "/R"}}
+    # deep_merge (host configs): tables recurse, arrays REPLACE, keyed-array shapes never raise.
+    dm = deep_merge({"a": {"x": 1, "y": 2}, "l": [{"id": 1}], "s": "u"}, {"a": {"y": 3}, "l": [{"id": 2}], "s": "p"})
+    assert dm == {"a": {"x": 1, "y": 3}, "l": [{"id": 2}], "s": "p"}, dm
+    assert deep_merge({"agents": {"max_depth": 1}}, {"agents": {"max_depth": 2}}) == {"agents": {"max_depth": 2}}
+    assert deep_merge(1, {"a": 1}) == {"a": 1} and deep_merge({"a": 1}, None) is None
 
     # --- Claude env parser semantics ---
     assert parse_claude_depth(None) is None and parse_claude_depth("") is None
@@ -1175,6 +1219,14 @@ def _run_self_test() -> int:
         assert w == [] and len(r) == 1 and f"(UV_PYTHON_DOWNLOADS={off})" in r[0] and "uv python install 3.11" in r[0], r
     p = classify_python311(_fake_runner(_UV_NO_PY), True, {"UV_PYTHON_DOWNLOADS": "automatic"})
     assert p["status"] == "warn", p
+    # rc != 2 (wedged uv: rc 127 timeout / rc 1 failure) -> warn "uv python find failed", NEVER a stop.
+    for rc_bad, err_bad in ((127, "timed out after 20 seconds"), (1, "error: something broke"), (101, "")):
+        t = dict(_UV_OK); t["uv python find >=3.11 --no-python-downloads"] = (rc_bad, "", err_bad)
+        p = classify_python311(_fake_runner(t), True, {"UV_PYTHON_DOWNLOADS": "never"})
+        assert p["status"] == "warn" and p["found"] is None, (rc_bad, p)
+        assert p["detail"].startswith(f"uv python find failed (exit {rc_bad}):"), p
+        w, r = _python311_messages(p, {"UV_PYTHON_DOWNLOADS": "never"}, True)
+        assert r == [] and len(w) == 1 and w[0].startswith(f"uv python find failed (exit {rc_bad})") and "could not be verified" in w[0], (w, r)
     p = classify_python311(_fake_runner({}), False, {"UV_PYTHON_DOWNLOADS": "never"})
     assert p["status"] == "warn" and "probe skipped" in p["detail"], p
     assert _python311_messages(p, {"UV_PYTHON_DOWNLOADS": "never"}, False) == (["python >=3.11 probe skipped (uv not on PATH)"], [])
@@ -1219,8 +1271,26 @@ def _run_self_test() -> int:
         (root / "_bmad" / "config.toml").write_text('[core]\noutput_folder = "{project-root}/o"\n', encoding="utf-8")
         cc, r = classify_central_config(root)
         assert cc["implementation_artifacts"] is None and cc["planning_artifacts"] is None, cc
-        assert r[0] == "bmm module not configured in _bmad/config.toml (modules.bmm.implementation_artifacts missing)", r
-        assert len(r) == 2 and "planning_artifacts missing" in r[1], r
+        assert r == [_MSG_BMM_MISSING], r  # ONE reason for a missing table (spec verbatim)
+        assert _MSG_BMM_MISSING == "bmm module not configured in _bmad/config.toml (modules.bmm.implementation_artifacts missing)"
+        # Table present but a field missing -> one reason per missing field.
+        (root / "_bmad" / "config.toml").write_text('[core]\noutput_folder = "o"\n[modules.bmm]\nimplementation_artifacts = "a"\n', encoding="utf-8")
+        cc, r = classify_central_config(root)
+        assert cc["implementation_artifacts"] == str(root / "a") and cc["planning_artifacts"] is None, cc
+        assert r == ["bmm module not configured in _bmad/config.toml (modules.bmm.planning_artifacts missing)"], r
+        (root / "_bmad" / "config.toml").write_text('[core]\noutput_folder = "o"\n[modules.bmm]\nx = 1\n', encoding="utf-8")
+        cc, r = classify_central_config(root)
+        assert len(r) == 2 and "implementation_artifacts missing" in r[0] and "planning_artifacts missing" in r[1], r
+        # A non-UTF-8 layer (any of the four) -> error + hard-stop, never a traceback.
+        _write_bmad_project(root, layers=False)
+        (root / "_bmad" / "custom" / "config.user.toml").write_bytes(b"\xff\xfe\x00garbage[core]\n")
+        cc, r = classify_central_config(root)
+        assert cc["present"] and cc["error"] and "failed to parse" in cc["error"] and "config.user.toml" in cc["error"], cc
+        assert len(r) == 1 and r[0].startswith("could not read the BMAD central config"), r
+        res = preflight(root, central_config_only=True, run=_fake_runner({}), which=_fake_which([]), env={}, home=home)
+        assert res["hard_stop"] is True and res["central_config"]["error"] and len(res["hard_stop_reasons"]) == 1, res
+        (root / "_bmad" / "custom" / "config.user.toml").write_text("", encoding="utf-8")
+        (root / "_bmad" / "config.toml").write_text('[core]\noutput_folder = "{project-root}/o"\n', encoding="utf-8")
         # Missing core.output_folder -> hard-stop.
         (root / "_bmad" / "config.toml").write_text('[modules.bmm]\nimplementation_artifacts = "a"\nplanning_artifacts = "b"\n', encoding="utf-8")
         cc, r = classify_central_config(root)
@@ -1344,6 +1414,20 @@ def _run_self_test() -> int:
         (root / ".codex" / "config.toml").write_text("[agents\nmax_depth = 2\n", encoding="utf-8")
         n = classify_nesting("codex", "subagents", root, [], {}, home)
         assert n["status"] == "warn" and "could not parse" in n["detail"] and n["fix"] is None, n
+        # ...and the same warn lands in `warnings` (not reasons) through the full assembly.
+        res = preflight(root, host="codex", tier="subagents", run=_fake_runner(_ALL_OK), which=_fake_which(["uv"]), env={}, home=home)
+        assert res["nesting"]["status"] == "warn" and any(x.startswith("nesting: could not parse") for x in res["warnings"]), res
+        assert not any("nested subagents unavailable" in x for x in res["hard_stop_reasons"]), res["hard_stop_reasons"]
+        # Non-UTF-8 project file -> warn (never a traceback).
+        (root / ".codex" / "config.toml").write_bytes(b"\xff\xfe[agents]\nmax_depth = 2\n")
+        n = classify_nesting("codex", "subagents", root, [], {}, home)
+        assert n["status"] == "warn" and "could not parse" in n["detail"] and "nesting could not be verified" in n["detail"], n
+        # Arrays of tables with non-string / empty `id`/`code` (BMAD keyed-merge shape) never raise
+        # for host configs: plain deep-merge, later layer's array replaces.
+        (home / ".codex" / "config.toml").write_text('[agents]\nmax_depth = 2\n[[mcp]]\nid = 1\n', encoding="utf-8")
+        (root / ".codex" / "config.toml").write_text('[[mcp]]\nid = 2\n[[srv]]\ncode = ""\n', encoding="utf-8")
+        n = classify_nesting("codex", "subagents", root, [], {}, home)
+        assert n["status"] == "ok" and "max_depth = 2" in n["detail"] and len(n["sources"]) == 2, n
         (root / ".codex" / "config.toml").unlink()
         # CODEX_HOME relocates the user config.
         alt = root / "alt-codex-home"; alt.mkdir()
@@ -1399,6 +1483,16 @@ def _run_self_test() -> int:
         (root / "opencode.json").write_text('[1, 2]', encoding="utf-8")
         assert "could not parse" in classify_nesting("opencode", "subagents", root, [], {}, home)["detail"]
         (root / "opencode.json").unlink()
+        # Keyed-array shapes (`id`/`code` non-string / empty) never raise for host configs.
+        (oc_global / "opencode.json").write_text('{"subagent_depth": 2, "plugin": [{"id": 1}], "agent": {"general": {"permission": {"task": "allow"}}}}', encoding="utf-8")
+        (root / "opencode.json").write_text('{"plugin": [{"id": 2}, {"code": ""}]}', encoding="utf-8")
+        n = classify_nesting("opencode", "subagents", root, [], {}, home)
+        assert n["status"] == "ok" and len(n["sources"]) == 2, n
+        (root / "opencode.json").unlink()
+        # Non-UTF-8 opencode.json -> read with errors=replace -> json fails -> warn (no traceback).
+        (oc_global / "opencode.json").write_bytes(b"\xff\xfe{\"subagent_depth\": 2}")
+        n = classify_nesting("opencode", "subagents", root, [], {}, home)
+        assert n["status"] == "warn" and "could not parse" in n["detail"], n
         # Non-int depth (string / bool) is not ok.
         (oc_global / "opencode.json").write_text('{"subagent_depth": "2"}', encoding="utf-8")
         assert classify_nesting("opencode", "subagents", root, [], {}, home)["status"] == "hard_stop"
@@ -1560,6 +1654,27 @@ def _run_self_test() -> int:
         rc, out = cli("--project-root", str(root), "--central-config-only")
         assert rc == 1 and out["hard_stop_reasons"] == [_MSG_NOT_BMAD], out
         _write_bmad_project(root, layers=False)
+        # Full mode through argv (real git on the sandbox: not a repo -> hard stop -> exit 1; the
+        # CSV parsing tolerates spaces/empties; a RELATIVE skills dir resolves against --project-root;
+        # --cli-phases build+followup_review exempts nesting; --cross-model-tool passthrough).
+        rc, out = cli(
+            "--project-root", str(root), "--host", "codex", "--tier", "subagents",
+            "--require-skills", " bmad-build-auto, bmad-sprint-planning ,, bmad-retrospective ",
+            "--skills-dirs", f".claude/skills, {d2} ,",
+            "--cli-phases", " build , followup_review ", "--cross-model-tool", "claude",
+            "--expected-branch", "story/1-1-x", "--tea-enabled", "--detect-framework-ci",
+        )
+        assert rc == 1 and out["hard_stop"] is True, out
+        assert out["skills"]["checked"] == ["bmad-build-auto", "bmad-sprint-planning", "bmad-retrospective"], out["skills"]
+        assert out["skills"]["missing"] == [] and out["skills"]["sprint_plan_script"].startswith(str(d1)), out["skills"]
+        assert out["nesting"]["status"] == "ok" and out["nesting"]["detail"] == _MSG_CLI_EXEMPT, out["nesting"]
+        assert out["cross_model"]["tool"] == "claude" and out["tea_config"] is not None and out["framework"] is not None, out
+        assert any("not a git repo" in x for x in out["hard_stop_reasons"]), out["hard_stop_reasons"]
+        assert not any("required skill missing" in x for x in out["hard_stop_reasons"]), out["hard_stop_reasons"]
+        rc, out = cli("--project-root", str(root), "--host", "codex", "--tier", "subagents", "--cross-model-tool", "gemini")
+        assert rc == 2 and "--cross-model-tool" in out["message"], out
+        rc, out = cli("--project-root", str(root), "--host", "codex", "--tier", "hybrid")
+        assert rc == 2 and "--tier" in out["message"], out
 
     # --- real end-to-end: temp git repo via the real subprocess runner (git/gh real; uv faked) ---
     with tempfile.TemporaryDirectory() as td:
@@ -1593,6 +1708,20 @@ def _run_self_test() -> int:
         assert res["git"]["tree_clean"] and res["hard_stop"] is False, res
         assert _MSG_AGENTS_MD in res["warnings"], res["warnings"]
         json.dumps(res)
+        # Full mode through argv on the clean repo: exit 0 when nothing hard-stops (real git; the
+        # real `uv` if on PATH — else P3 stops, so only assert exit 0 with uv present).
+        p_cli = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--project-root", str(root),
+             "--host", "claude-code", "--tier", "inline"],
+            capture_output=True, text=True, timeout=60, env={**os.environ, "HOME": str(home)},
+        )
+        out = json.loads(p_cli.stdout)
+        assert set(out) >= {"python", "central_config", "git", "nesting", "hard_stop", "hard_stop_reasons"}, out
+        assert out["git"]["tree_clean"] and out["nesting"]["detail"] == _MSG_INLINE, out
+        if shutil.which("uv"):
+            assert p_cli.returncode == 0 and out["hard_stop"] is False, out
+        else:
+            assert p_cli.returncode == 1 and out["hard_stop_reasons"] == [_MSG_UV_MISSING], out
 
     print("SELF-TEST PASSED (all assertions)")
     return 0
@@ -1650,7 +1779,12 @@ def main() -> int:
     if args.cross_model_tool and args.cross_model_tool not in _CROSS_MODEL_TOOLS:
         return usage_error(f"--cross-model-tool must be one of {list(_CROSS_MODEL_TOOLS)}, got {args.cross_model_tool!r}")
     require_skills = [s.strip() for s in args.require_skills.split(",") if s.strip()]
-    skills_dirs = [Path(s.strip()).expanduser() for s in args.skills_dirs.split(",") if s.strip()]
+    # Every filesystem probe is project-root-relative, so a relative entry joins the root
+    # (the orchestrator passes absolute `<root>/…` / `~/…` paths; `~` is expanded here).
+    skills_dirs = [
+        (lambda p: p if p.is_absolute() else project_root / p)(Path(s.strip()).expanduser())
+        for s in args.skills_dirs.split(",") if s.strip()
+    ]
     if require_skills and not skills_dirs:
         return usage_error("--require-skills given without --skills-dirs")
     cli_phases = [s.strip() for s in args.cli_phases.split(",") if s.strip()]

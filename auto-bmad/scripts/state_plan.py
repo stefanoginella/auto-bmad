@@ -28,7 +28,8 @@ Three modes, all emitting a single JSON object on stdout:
   which changes ONLY ``draft``); ``clean_completion`` = no clause fired (never
   affected by ``--no-pr-draft``); ``flip_bmad_status`` = ``clean_completion``;
   ``reasons`` names each firing clause. Exit 0 = verdict delivered (draft or
-  not), 1 = state file missing, 2 = usage errors.
+  not), 1 = state file missing or unreadable (non-UTF-8 / I/O error — never a
+  clean verdict derived from nothing), 2 = usage errors.
 
 Every scan / epic-scan record and the story-mode result also carry the state's
 top-level ``branch`` scalar (``null`` when absent) so the orchestrator can pass
@@ -95,8 +96,8 @@ def read_state_file(path: str):
                             fields[name] = val or None
                 if all(v is not None for v in fields.values()):
                     break
-    except OSError:
-        pass
+    except (OSError, UnicodeDecodeError):
+        pass  # unreadable / non-UTF-8 stray file: a record with null fields, never a traceback
     return fields
 
 
@@ -184,8 +185,8 @@ def _read_epic_fields(path: str):
                         active_story = _scalar_or_none(m.group(1))
                 if epic_num is not None and active_story is not None:
                     break
-    except OSError:
-        pass
+    except (OSError, UnicodeDecodeError):
+        pass  # unreadable / non-UTF-8 anchor: null cursor fields, never a traceback
     return epic_num, active_story
 
 
@@ -336,13 +337,17 @@ def read_finalize_fields(path: str):
     """Read the draft-predicate inputs from a flat state YAML: the ``blockers``
     list (inline ``[...]`` or block ``- item`` form) plus the
     ``review_unverified`` / ``gate_decision`` / ``ci_status`` scalars."""
-    fields = {"review_unverified": None, "gate_decision": None, "ci_status": None}
+    fields = {"review_unverified": None, "gate_decision": None, "ci_status": None,
+              "read_error": None}
     blockers: "list[str]" = []
     in_blockers = False
     try:
         with open(path, "r", encoding="utf-8") as fh:
             lines = fh.read().splitlines()
-    except OSError:
+    except (OSError, UnicodeDecodeError) as exc:
+        # Unreadable / non-UTF-8: the caller must NOT derive a clean verdict from
+        # nothing (it would flip the story to done) — surface the error instead.
+        fields["read_error"] = f"{type(exc).__name__}: {exc}"
         lines = []
     for line in lines:
         if in_blockers:
@@ -381,7 +386,7 @@ def read_finalize_fields(path: str):
 
 def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_draft=False):
     """Evaluate the draft predicate for one story. Returns (result, exit_code):
-    0 = verdict delivered (draft or not), 1 = state file missing."""
+    0 = verdict delivered (draft or not), 1 = state file missing or unreadable."""
     path = os.path.join(state_dir, story_key + ".yaml")
     result = {
         "mode": "finalize",
@@ -411,6 +416,9 @@ def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_
         return result, 1
 
     fields = read_finalize_fields(path)
+    if fields["read_error"]:
+        result["error"] = f"state file unreadable: {path} ({fields['read_error']})"
+        return result, 1
     blockers = fields["blockers"]
     gate = fields["gate_decision"]
 
@@ -502,6 +510,18 @@ def _run_self_test():
     check("scan: branch null when absent", any(s["story_key"] == "1-3-plant-model" and s["branch"] is None for s in scan["stories"]))
     check("scan: in_flight records carry branch", all("branch" in s for s in scan["in_flight"]))
 
+    # A non-UTF-8 stray file in the state dir must not kill the scan (a record
+    # with null fields, still one JSON object) — nor story mode on that key.
+    with open(os.path.join(state_dir, "bad-bytes.yaml"), "wb") as fh:
+        fh.write(b"story_key: bad-bytes\nstatus: in-progress\xff\xfe\n\xff\n")
+    binscan = build_result(state_dir)
+    json.dumps(binscan)  # must serialize
+    check("scan: non-UTF-8 file yields a null-status record", any(s["story_key"] == "bad-bytes" and s["status"] is None and s["branch"] is None for s in binscan["stories"]))
+    check("scan: non-UTF-8 file does not disturb the target", binscan["target"] == "1-3-plant-model")
+    binstory = build_result(state_dir, "bad-bytes")
+    check("story: non-UTF-8 file exists with null status", binstory["exists"] is True and binstory["status"] is None)
+    os.unlink(os.path.join(state_dir, "bad-bytes.yaml"))
+
     # Story mode: exact-path lookup, no glob.
     done = build_result(state_dir, "1-1-user-auth")
     check("story: done exists", done["exists"] is True)
@@ -548,6 +568,15 @@ def _run_self_test():
     check("epic-scan: no internal mtime leak", all(not any(k.startswith("_") for k in e) for e in epscan["epics"]))
     check("epic-scan: records carry branch", any(e["epic_key"] == "epic-2" and e["branch"] == "epic/2-widgets" for e in epscan["epics"]))
     check("epic-scan: branch null when absent", any(e["epic_key"] == "epic-1" and e["branch"] is None for e in epscan["epics"]))
+
+    # A non-UTF-8 anchor: null cursor fields, scan still returns JSON.
+    with open(os.path.join(epic_dir, "epic-9.yaml"), "wb") as fh:
+        fh.write(b"story_key: epic-9\nepic_num: 9\xff\nactive_story: \xfe\n")
+    binep = _scan_epics(epic_dir)
+    json.dumps(binep)
+    check("epic-scan: non-UTF-8 anchor yields null fields", any(e["epic_key"] == "epic-9" and e["status"] is None and e["epic_num"] is None and e["active_story"] is None for e in binep["epics"]))
+    check("epic-scan: non-UTF-8 anchor does not disturb the target", binep["target"] == "epic-2")
+    os.unlink(os.path.join(epic_dir, "epic-9.yaml"))
 
     # The epic/ subdir is invisible to the per-story scan (no collision).
     rescan = build_result(state_dir)
@@ -752,6 +781,14 @@ def _run_self_test():
     check("finalize no-pr-draft: clause + reason still reported", res["clauses"]["blocker"] is True and len(res["reasons"]) == 1)
     res, _ = build_finalize_result(fin_dir, "2-1-clean", no_pr_draft=True)
     check("finalize no-pr-draft on clean: unchanged", res["draft"] is False and res["clean_completion"] is True)
+
+    # A non-UTF-8 state file: still a JSON verdict (no clause can fire from it), exit 0.
+    with open(os.path.join(fin_dir, "2-9-bad-bytes.yaml"), "wb") as fh:
+        fh.write(b"story_key: 2-9-bad-bytes\nblockers: [\xff]\nci_status: failed\xfe\n")
+    res, code = build_finalize_result(fin_dir, "2-9-bad-bytes")
+    json.dumps(res)
+    check("finalize non-UTF-8: exit 1 with an error, never a traceback", code == 1 and "unreadable" in (res["error"] or ""))
+    check("finalize non-UTF-8: no clean verdict from unreadable content", res["clean_completion"] is False and res["flip_bmad_status"] is False)
 
     # Missing state file => exit 1.
     res, code = build_finalize_result(fin_dir, "9-9-nope")

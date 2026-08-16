@@ -110,10 +110,15 @@ Idempotent by ``(source_spec basename, normalized summary)`` — case-folded,
 whitespace-collapsed — against the entries of BOTH the ledger and the archive
 (``--archive`` defaults to the ledger's sibling ``deferred-work-resolved.md``);
 an item already recorded in either file (or repeated within the spec) counts
-in ``skipped_existing`` and is not written again. A missing ledger is
-created (H1 title + heading + entries; ``ledger_created: true``) — but never
-when the spec has nothing to harvest (``deferred_in_spec: 0`` ⇒ no-op, no
-file created). ``--dry-run`` computes the same counts and writes nothing.
+in ``skipped_existing`` and is not written again. An item with a MISSING/BLANK
+``summary`` has no identity of its own, so its ``evidence`` (plus ``location``
+when present) joins the key instead — two summary-less items never collapse
+into one. A missing ledger is created (H1 title + heading + entries) — but
+never when the spec has nothing to harvest (``deferred_in_spec: 0`` ⇒ no-op,
+no file created) and never when every item was already recorded.
+``ledger_created`` is true ONLY when this run actually created the file: false
+on every no-write path, ``--dry-run`` included (which computes the same counts
+and writes nothing).
 Prints::
 
     {"harvested": int, "skipped_existing": int, "ledger_created": bool,
@@ -122,7 +127,10 @@ Prints::
 Exit codes: 0 ok (``plan`` on a missing ledger, an idempotent ``harvest``
 re-run and a ``harvest`` that creates the ledger are all 0); 1 stale sha /
 unknown id / missing ledger (``archive``), missing or unreadable spec, or a
-missing ``story_plan.py`` sibling (``harvest``); 2 usage.
+missing ``story_plan.py`` sibling (``harvest``); 2 usage. An I/O failure on any
+mode — a ledger/archive/spec that is unreadable or not valid UTF-8, or a
+``--ledger``/``--archive`` that names a DIRECTORY — prints ``{"error": …}``
+and exits 1 (never a traceback, never a partial write).
 Dependency-free (stdlib only). Output is a single JSON object on stdout.
 """
 from __future__ import annotations
@@ -159,7 +167,9 @@ SYNTHETIC_HEADING = "## Deferred from: bmad-build (unsectioned)"
 # the bullet marker; continuation lines are indented). Value = group 1.
 FIELD_LINE_RE = {
     name: re.compile(r"^\s*(?:[-*+]\s+)?%s:\s*(.*?)\s*$" % name, re.IGNORECASE)
-    for name in ("source_spec", "summary")
+    # `evidence` / `location` are read for the dedupe key only — they are the
+    # fallback identity of a summary-less item (see `dedupe_key`).
+    for name in ("source_spec", "summary", "evidence", "location")
 }
 # A YAML block-scalar indicator as the whole value (`>-`, `|-`, `>`, `|`, with
 # an optional trailing comment): the value continues on the deeper-indented
@@ -209,6 +219,42 @@ REMAINDER_RE = re.compile(
 
 ARCHIVE_TITLE = "# Deferred Work — Resolved"
 
+# Placeholders `harvest` writes for a spec item with a blank/missing field.
+NO_SUMMARY = "(no summary recorded)"
+NO_EVIDENCE = "(no evidence recorded)"
+
+
+class LedgerIOError(Exception):
+    """A ledger / archive / spec path could not be read or written (missing
+    permissions, a directory where a file is expected, non-UTF-8 bytes).
+    Every mode turns this into ``{"error": …}`` + exit 1, never a traceback."""
+
+
+def _read_ledger_bytes(path, label):
+    """Read ``path`` as bytes. Raises ``LedgerIOError`` instead of an OSError."""
+    if os.path.isdir(path):
+        raise LedgerIOError(f"{label} path is a directory, not a markdown file: {path}")
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except (OSError, IsADirectoryError) as exc:
+        raise LedgerIOError(f"cannot read {label}: {path}: {exc.strerror or exc}") from exc
+
+
+def _decode_ledger(raw, path, label):
+    """Decode ledger/archive bytes as UTF-8. Raises ``LedgerIOError``."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LedgerIOError(
+            f"{label} is not valid UTF-8 ({exc.reason} at byte {exc.start}): {path}"
+        ) from exc
+
+
+def _read_ledger_text(path, label):
+    """Read + decode a ledger/archive file. Raises ``LedgerIOError``."""
+    return _decode_ledger(_read_ledger_bytes(path, label), path, label)
+
 
 def classify_hint(entry_text: str) -> str:
     """Heuristic marker hint for ONE entry, from its own text only."""
@@ -236,11 +282,11 @@ def _fold(value: str) -> str:
 
 
 def extract_fields(entry_lines):
-    """``{"source_spec": str|None, "summary": str|None}`` from an entry's OWN
-    lines: the first ``source_spec:`` / ``summary:`` field line before any
+    """``{"source_spec", "summary", "evidence", "location"}`` (each str|None)
+    from an entry's OWN lines: the first field line of each name before any
     fenced block (a `` `x` ``/quoted value is unwrapped; a ``>-``/``|-``
     block scalar is folded from the deeper-indented lines that follow)."""
-    out = {"source_spec": None, "summary": None}
+    out = {name: None for name in FIELD_LINE_RE}
     n = len(entry_lines)
     for idx, line in enumerate(entry_lines):
         if _fence_open(line):
@@ -367,6 +413,10 @@ def parse_document(text: str):
                 "text": entry_text,
                 "source_spec": fields["source_spec"],
                 "summary": fields["summary"],
+                # Dedupe-key fallback fields; NOT part of the `plan` JSON
+                # (build_plan re-projects the documented entry keys).
+                "evidence": fields["evidence"],
+                "location": fields["location"],
                 "marker_hint": classify_hint(entry_text),
             }
         )
@@ -514,6 +564,16 @@ def _insert_entries(segments, next_section, moved):
 
 
 def _atomic_write(path: str, content: str) -> None:
+    """Atomic temp-file + ``os.replace`` write. Any OS failure (unwritable
+    directory, a directory in place of the file) becomes a ``LedgerIOError``
+    so the caller reports ``{"error": …}`` + exit 1 instead of a traceback."""
+    try:
+        _atomic_write_raw(path, content)
+    except (OSError, IsADirectoryError) as exc:
+        raise LedgerIOError(f"cannot write {path}: {exc.strerror or exc}") from exc
+
+
+def _atomic_write_raw(path: str, content: str) -> None:
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".deferred-ledger.", suffix=".tmp")
@@ -534,12 +594,22 @@ def _atomic_write(path: str, content: str) -> None:
 
 
 def build_plan(ledger_path: str):
+    """The ``plan`` JSON. An unreadable / non-UTF-8 ledger (or a ``--ledger``
+    that names a directory) returns ``{"error": …}`` — exit 1 in ``main``."""
+    try:
+        return _build_plan(ledger_path)
+    except LedgerIOError as exc:
+        return {"error": str(exc)}
+
+
+def _build_plan(ledger_path: str):
     if not os.path.isfile(ledger_path):
+        if os.path.isdir(ledger_path):
+            raise LedgerIOError(f"ledger path is a directory, not a markdown file: {ledger_path}")
         return {"ledger_present": False, "ledger_sha256": None, "entries": []}
-    with open(ledger_path, "rb") as fh:
-        raw = fh.read()
+    raw = _read_ledger_bytes(ledger_path, "ledger")
     sha = hashlib.sha256(raw).hexdigest()
-    text = raw.decode("utf-8")
+    text = _decode_ledger(raw, ledger_path, "ledger")
     if not text.strip():
         return {"ledger_present": False, "ledger_sha256": sha, "entries": []}
     _segments, entries, _next = parse_document(text)
@@ -556,11 +626,21 @@ def build_plan(ledger_path: str):
 
 
 def do_archive(ledger_path: str, archive_path: str, ids, expect_sha: str):
-    """Returns ``(result_dict, exit_code)``. No writes on any failure."""
+    """Returns ``(result_dict, exit_code)``. No writes on any failure — an
+    unreadable / non-UTF-8 / directory ledger or archive is ``{"error": …}``
+    + exit 1, never a traceback."""
+    try:
+        return _do_archive(ledger_path, archive_path, ids, expect_sha)
+    except LedgerIOError as exc:
+        return {"error": str(exc)}, 1
+
+
+def _do_archive(ledger_path: str, archive_path: str, ids, expect_sha: str):
     if not os.path.isfile(ledger_path):
+        if os.path.isdir(ledger_path):
+            raise LedgerIOError(f"ledger path is a directory, not a markdown file: {ledger_path}")
         return {"error": f"ledger not found: {ledger_path}"}, 1
-    with open(ledger_path, "rb") as fh:
-        raw = fh.read()
+    raw = _read_ledger_bytes(ledger_path, "ledger")
     actual_sha = hashlib.sha256(raw).hexdigest()
     if actual_sha != expect_sha.strip().lower():
         return (
@@ -571,7 +651,7 @@ def do_archive(ledger_path: str, archive_path: str, ids, expect_sha: str):
             },
             1,
         )
-    segments, entries, _next = parse_document(raw.decode("utf-8"))
+    segments, entries, _next = parse_document(_decode_ledger(raw, ledger_path, "ledger"))
     known = {e["id"] for e in entries}
     wanted = sorted(set(ids))
     unknown = [i for i in wanted if i not in known]
@@ -594,8 +674,11 @@ def do_archive(ledger_path: str, archive_path: str, ids, expect_sha: str):
     new_ledger = render(segments, skip_entry_ids=move_set, skip_sections=emptied)
 
     if os.path.isfile(archive_path):
-        with open(archive_path, "r", encoding="utf-8") as fh:
-            a_segments, _a_entries, a_next = parse_document(fh.read())
+        a_segments, _a_entries, a_next = parse_document(
+            _read_ledger_text(archive_path, "archive")
+        )
+    elif os.path.isdir(archive_path):
+        raise LedgerIOError(f"archive path is a directory, not a markdown file: {archive_path}")
     else:
         a_segments = [{"kind": "text", "section": None, "lines": [ARCHIVE_TITLE]}]
         a_next = 0
@@ -638,25 +721,41 @@ def _load_story_plan(script_path=None):
     return module
 
 
-def dedupe_key(source_spec, summary):
+def dedupe_key(source_spec, summary, evidence=None, location=None):
     """The harvest idempotency key: ``(spec basename, normalized summary)``.
-    ``None`` when the entry has neither field (free-text bullets never
-    collide with harvested items)."""
-    if source_spec is None and summary is None:
+
+    A summary-less item (blank/missing ``summary``, i.e. the ``NO_SUMMARY``
+    placeholder ``harvest`` renders) has no identity of its own, so its
+    evidence — and location when present — is folded into the key instead:
+    ``(basename, "", evidence, location)``. Without that, two DIFFERENT
+    summary-less items collapse into one and the second is silently dropped
+    as "already recorded". ``None`` when the entry has none of the fields
+    (free-text bullets never collide with harvested items)."""
+    if source_spec is None and summary is None and evidence is None and location is None:
         return None
     base = os.path.basename(_strip_wrapping(source_spec)) if source_spec else ""
-    return (base.casefold(), _fold(summary or "").casefold())
+    norm_summary = _fold(summary or "").casefold()
+    if norm_summary and norm_summary != NO_SUMMARY.casefold():
+        return (base.casefold(), norm_summary)
+    return (
+        base.casefold(),
+        "",
+        _fold(evidence or "").casefold(),
+        _fold(location or "").casefold(),
+    )
 
 
-def _existing_keys(path):
-    """Dedupe keys of every entry in a ledger/archive file (missing ⇒ empty)."""
+def _existing_keys(path, label="ledger"):
+    """Dedupe keys of every entry in a ledger/archive file (missing ⇒ empty).
+    Raises ``LedgerIOError`` on an unreadable / non-UTF-8 file."""
     keys = set()
     if not os.path.isfile(path):
+        if os.path.isdir(path):
+            raise LedgerIOError(f"{label} path is a directory, not a markdown file: {path}")
         return keys
-    with open(path, "r", encoding="utf-8") as fh:
-        _segs, entries, _n = parse_document(fh.read())
+    _segs, entries, _n = parse_document(_read_ledger_text(path, label))
     for e in entries:
-        k = dedupe_key(e["source_spec"], e["summary"])
+        k = dedupe_key(e["source_spec"], e["summary"], e["evidence"], e["location"])
         if k is not None:
             keys.add(k)
     return keys
@@ -664,8 +763,8 @@ def _existing_keys(path):
 
 def render_harvest_entry(spec_basename, item):
     """The ledger entry lines for one spec ``deferred:`` item."""
-    summary = _fold(str(item.get("summary") or "")) or "(no summary recorded)"
-    evidence = _fold(str(item.get("evidence") or "")) or "(no evidence recorded)"
+    summary = _fold(str(item.get("summary") or "")) or NO_SUMMARY
+    evidence = _fold(str(item.get("evidence") or "")) or NO_EVIDENCE
     lines = [
         f"- source_spec: `{spec_basename}`",
         f"  summary: {summary}",
@@ -680,7 +779,9 @@ def render_harvest_entry(spec_basename, item):
 
 def do_harvest(ledger_path, spec_path, story_key, archive_path=None, date=None,
                dry_run=False, story_plan_module=None):
-    """Returns ``(result_dict, exit_code)``. Never writes on failure or dry-run."""
+    """Returns ``(result_dict, exit_code)``. Never writes on failure or dry-run.
+    An unreadable / non-UTF-8 / directory ledger, archive or spec is
+    ``{"error": …, "heading": …}`` + exit 1, never a traceback."""
     if archive_path is None:
         archive_path = os.path.join(os.path.dirname(os.path.abspath(ledger_path)),
                                     "deferred-work-resolved.md")
@@ -689,12 +790,24 @@ def do_harvest(ledger_path, spec_path, story_key, archive_path=None, date=None,
         date = _dt.date.today().isoformat()
     heading = HARVEST_HEADING_TMPL.format(key=story_key, date=date)
     try:
+        return _do_harvest(ledger_path, spec_path, archive_path, heading,
+                           dry_run, story_plan_module)
+    except LedgerIOError as exc:
+        return {"error": str(exc), "heading": heading}, 1
+
+
+def _do_harvest(ledger_path, spec_path, archive_path, heading, dry_run, story_plan_module):
+    if os.path.isdir(ledger_path):
+        raise LedgerIOError(f"ledger path is a directory, not a markdown file: {ledger_path}")
+    try:
         sp = story_plan_module or _load_story_plan()
     except FileNotFoundError as exc:
         return {"error": f"story_plan.py not found next to this script: {exc}",
                 "heading": heading}, 1
     spec = sp.read_spec(spec_path)
-    if not spec.get("exists"):
+    if not spec.get("exists") or spec.get("error"):
+        # Missing, unreadable or non-UTF-8 spec: story_plan.py already reports
+        # the reason (it never raises) — pass it through as this mode's error.
         return {"error": spec.get("error") or f"spec file not found: {spec_path}",
                 "heading": heading}, 1
     items = spec["frontmatter"].get("deferred") or []
@@ -710,12 +823,13 @@ def do_harvest(ledger_path, spec_path, story_key, archive_path=None, date=None,
         return result, 0  # nothing to harvest: never create/touch the ledger
 
     spec_basename = os.path.basename(spec_path)
-    seen = _existing_keys(ledger_path) | _existing_keys(archive_path)
+    seen = _existing_keys(ledger_path, "ledger") | _existing_keys(archive_path, "archive")
     new_entries = []
     for item in items:
         lines = render_harvest_entry(spec_basename, item)
         fields = extract_fields(lines)
-        key = dedupe_key(fields["source_spec"], fields["summary"])
+        key = dedupe_key(fields["source_spec"], fields["summary"],
+                         fields["evidence"], fields["location"])
         if key in seen:
             result["skipped_existing"] += 1
             continue
@@ -724,12 +838,10 @@ def do_harvest(ledger_path, spec_path, story_key, archive_path=None, date=None,
     result["harvested"] = len(new_entries)
 
     ledger_exists = os.path.isfile(ledger_path)
-    text = ""
-    if ledger_exists:
-        with open(ledger_path, "r", encoding="utf-8") as fh:
-            text = fh.read()
-    result["ledger_created"] = not ledger_exists
+    text = _read_ledger_text(ledger_path, "ledger") if ledger_exists else ""
     if not new_entries:
+        # Everything was already recorded: nothing is written, so no file was
+        # created either (`ledger_created` stays false).
         return result, 0
     if text.strip():
         segments, _entries, next_section = parse_document(text)
@@ -739,6 +851,9 @@ def do_harvest(ledger_path, spec_path, story_key, archive_path=None, date=None,
     _insert_entries(segments, next_section, new_entries)
     if not dry_run:
         _atomic_write(ledger_path, render(segments))
+        # True ONLY when this run actually created the file: never on the
+        # all-skipped early exit above, and never under --dry-run.
+        result["ledger_created"] = not ledger_exists
     return result, 0
 
 
@@ -1307,10 +1422,12 @@ def _run_self_test():
         # extract_fields: fields below a fence are ignored; quoted value unwrapped.
         ef = extract_fields(["- ```", "  summary: fenced", "  ```"])
         check("extract_fields: nothing before the fence ⇒ nulls",
-              ef == {"source_spec": None, "summary": None})
-        ef = extract_fields(['- source_spec: "spec-9.md"', "  summary: |-", "    two", "    lines"])
-        check("extract_fields: quotes stripped, literal block folded",
-              ef == {"source_spec": "spec-9.md", "summary": "two lines"})
+              ef == {"source_spec": None, "summary": None, "evidence": None, "location": None})
+        ef = extract_fields(['- source_spec: "spec-9.md"', "  summary: |-", "    two", "    lines",
+                             "  evidence: `x.py:1`", "  location: src/x.py:1"])
+        check("extract_fields: quotes stripped, literal block folded, dedupe fields read",
+              ef == {"source_spec": "spec-9.md", "summary": "two lines",
+                     "evidence": "x.py:1", "location": "src/x.py:1"})
 
         # ---- harvest: lockstep with story_plan.py ------------------------- #
         sp_mod = None
@@ -1352,9 +1469,9 @@ def _run_self_test():
             pass
         # Dry run: counts computed, nothing written.
         res, code = do_harvest(hl, spec_p, "2-6a-digest-delivery", date="2026-08-16", dry_run=True)
-        check("harvest dry-run: counts + no file",
+        check("harvest dry-run: counts + no file, ledger_created false (nothing was created)",
               code == 0 and res["harvested"] == 2 and res["skipped_existing"] == 1
-              and res["ledger_created"] is True and res["dry_run"] is True and not os.path.exists(hl))
+              and res["ledger_created"] is False and res["dry_run"] is True and not os.path.exists(hl))
         # Real run: ledger created with title + heading + 2 entries (spec-internal dupe skipped).
         res, code = do_harvest(hl, spec_p, "2-6a-digest-delivery", date="2026-08-16")
         check("harvest create: exit 0, harvested 2, skipped 1, ledger_created",
@@ -1446,6 +1563,98 @@ def _run_self_test():
         check("harvest --archive: explicit archive dedupes",
               code == 0 and res["harvested"] == 3 and res["skipped_existing"] == 2
               and "Third finding" not in read(hl4))
+        # ---- ledger_created: true ONLY on a real creation ----------------- #
+        # Every item already archived ⇒ nothing written ⇒ no file created.
+        skip_spec = os.path.join(td, "spec-3-1-allskipped.md")
+        with open(skip_spec, "w", encoding="utf-8") as fh:
+            fh.write("---\nstatus: done\ndeferred:\n  - summary: >-\n      Only finding\n"
+                     "    evidence: |-\n      e\n---\n\nbody\n")
+        skip_arch = os.path.join(td, "allskipped-archive.md")
+        with open(skip_arch, "w", encoding="utf-8") as fh:
+            fh.write(ARCHIVE_TITLE + "\n\n" + SYNTHETIC_HEADING
+                     + "\n\n- source_spec: `spec-3-1-allskipped.md`\n"
+                       "  summary: Only finding\n  evidence: e\n")
+        hl5 = os.path.join(td, "harvest5", "deferred-work.md")
+        res, code = do_harvest(hl5, skip_spec, "3-1-allskipped", archive_path=skip_arch,
+                               date="2026-08-16")
+        check("harvest all-skipped on a missing ledger: ledger_created false, no file",
+              code == 0 and res["harvested"] == 0 and res["skipped_existing"] == 1
+              and res["ledger_created"] is False and not os.path.exists(hl5))
+
+        # ---- summary-less items keep their own identity ------------------- #
+        blank_spec = os.path.join(td, "spec-3-2-nosummary.md")
+        with open(blank_spec, "w", encoding="utf-8") as fh:
+            fh.write("---\nstatus: done\ndeferred:\n"
+                     "  - evidence: |-\n      first evidence line\n    location: src/a.py:1\n"
+                     "  - evidence: |-\n      second evidence line\n    location: src/b.py:2\n"
+                     "  - evidence: |-\n      first evidence line\n    location: src/a.py:1\n"
+                     "---\n\nbody\n")
+        hl6 = os.path.join(td, "harvest6", "deferred-work.md")
+        res, code = do_harvest(hl6, blank_spec, "3-2-nosummary", date="2026-08-16")
+        check("harvest summary-less: distinct evidence ⇒ two entries, exact dupe skipped",
+              code == 0 and res["harvested"] == 2 and res["skipped_existing"] == 1)
+        t6 = read(hl6)
+        check("harvest summary-less: both items written under the placeholder summary",
+              t6.count("summary: " + NO_SUMMARY) == 2
+              and "first evidence line" in t6 and "second evidence line" in t6)
+        res, code = do_harvest(hl6, blank_spec, "3-2-nosummary", date="2026-08-16")
+        check("harvest summary-less: re-run is idempotent against the ledger",
+              code == 0 and res["harvested"] == 0 and res["skipped_existing"] == 3
+              and read(hl6) == t6)
+        check("dedupe_key: summary-less items differ by evidence/location",
+              dedupe_key("s.md", None, "e1", "l") != dedupe_key("s.md", None, "e2", "l")
+              and dedupe_key("s.md", None, "e1", "l1") != dedupe_key("s.md", None, "e1", "l2")
+              and dedupe_key("s.md", NO_SUMMARY, "e1") == dedupe_key("s.md", "  ", " E1 "))
+
+        # ---- unreadable / directory paths: JSON error + exit 1 ------------ #
+        bad_ledger = os.path.join(td, "bad-ledger.md")
+        with open(bad_ledger, "wb") as fh:
+            fh.write(b"# Deferred Work\n\n- source_spec: caf\xe9\n")
+        r = build_plan(bad_ledger)
+        check("plan non-UTF-8 ledger: error dict, no traceback",
+              "error" in r and "UTF-8" in r["error"])
+        code, out = run_main(["plan", "--ledger", bad_ledger])
+        check("cli plan non-UTF-8 ledger: exit 1 + JSON error",
+              code == 1 and "error" in json.loads(out))
+        a_dir = os.path.join(td, "a-directory")
+        os.makedirs(a_dir)
+        code, out = run_main(["plan", "--ledger", a_dir])
+        check("cli plan --ledger is a directory: exit 1 + JSON error",
+              code == 1 and "directory" in json.loads(out)["error"])
+        res, code = do_harvest(a_dir, spec_p, "2-6a-digest-delivery", date="2026-08-16")
+        check("harvest --ledger is a directory: exit 1 + error",
+              code == 1 and "directory" in res["error"] and res["heading"])
+        res, code = do_harvest(bad_ledger, spec_p, "2-6a-digest-delivery", date="2026-08-16")
+        with open(bad_ledger, "rb") as fh:
+            check("harvest non-UTF-8 ledger: exit 1 + error, file untouched",
+                  code == 1 and "UTF-8" in res["error"] and fh.read().endswith(b"caf\xe9\n"))
+        bad_arch = os.path.join(td, "bad-archive.md")
+        with open(bad_arch, "wb") as fh:
+            fh.write(b"# Deferred Work \xff\n")
+        hl7 = os.path.join(td, "harvest7", "deferred-work.md")
+        res, code = do_harvest(hl7, spec_p, "2-6a-digest-delivery", archive_path=bad_arch,
+                               date="2026-08-16")
+        check("harvest non-UTF-8 archive: exit 1 + error, no ledger created",
+              code == 1 and "UTF-8" in res["error"] and not os.path.exists(hl7))
+        bad_spec = os.path.join(td, "spec-3-3-bad.md")
+        with open(bad_spec, "wb") as fh:
+            fh.write(b"---\nstatus: done\n---\n\xff\n")
+        hl8 = os.path.join(td, "harvest8", "deferred-work.md")
+        res, code = do_harvest(hl8, bad_spec, "3-3-bad", date="2026-08-16")
+        check("harvest non-UTF-8 spec: exit 1 + error, no ledger created",
+              code == 1 and "UTF-8" in res["error"] and not os.path.exists(hl8))
+        lz = fresh("ledger-z.md")
+        pz = build_plan(lz)
+        res, code = do_archive(a_dir, os.path.join(td, "arch-z.md"), [0], pz["ledger_sha256"])
+        check("archive --ledger is a directory: exit 1 + error",
+              code == 1 and "directory" in res["error"])
+        res, code = do_archive(lz, bad_arch, [0], pz["ledger_sha256"])
+        check("archive non-UTF-8 archive: exit 1 + error, ledger untouched",
+              code == 1 and "UTF-8" in res["error"] and read(lz) == _LEDGER)
+        res, code = do_archive(lz, a_dir, [0], pz["ledger_sha256"])
+        check("archive --archive is a directory: exit 1 + error, ledger untouched",
+              code == 1 and "directory" in res["error"] and read(lz) == _LEDGER)
+
         # dedupe_key: free-text bullets never collide.
         check("dedupe_key: null for free text", dedupe_key(None, None) is None)
         check("dedupe_key: basename + casefold + fold",
@@ -1522,8 +1731,9 @@ def main(argv=None):
     if args.self_test:
         return _run_self_test()
     if args.cmd == "plan":
-        print(json.dumps(build_plan(args.ledger), indent=2))
-        return 0
+        result = build_plan(args.ledger)
+        print(json.dumps(result, indent=2))
+        return 1 if "error" in result else 0
     if args.cmd == "archive":
         try:
             ids = [int(token.strip()) for token in args.ids.split(",") if token.strip()]

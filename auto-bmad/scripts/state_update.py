@@ -20,7 +20,9 @@ Subcommands (each emits a single JSON object on stdout):
                       (``story_trace``/``overrides``/``phase8_steps``/``build``/``retro`` — a map
                       value may itself be a flat list, e.g. ``build.warnings``, and round-trips);
                       reserved key ``_append`` extends list fields
-                      (``{"_append": {"commits": ["a1b2c3d"]}}``); a patch that sets
+                      (``{"_append": {"commits": ["a1b2c3d"]}}``); a list field takes only
+                      a list (``null`` lands as its ``[]`` default) and ``build``/``retro``/
+                      ``phase8_steps`` only a map (never ``null``); a patch that sets
                       ``status: "done"`` auto-stamps ``completed_at``; any attempt to CHANGE
                       ``started_at`` is refused (exit 1, error in JSON).
 * ``phase-done``    — add ``--phase N`` to ``completed_phases`` (idempotent, kept sorted) and apply
@@ -52,8 +54,12 @@ Subcommands (each emits a single JSON object on stdout):
 
 Exit codes: 0 ok; 1 contract violation (init-exists, started_at rewrite, pause-without-anchor,
 a patch value the emit/parse round-trip or the timing math could not honor — un-re-readable map
-keys, non-int INT fields, off-schema ``phase8_steps``/``build``/``retro`` keys or markers,
-set+``_append`` overlap); 2 usage/parse error. Dependency-free (stdlib only); state parsing is a
+keys, non-int INT fields, a non-list LIST field, a null/non-map ``phase8_steps``/``build``/``retro``,
+off-schema ``phase8_steps``/``build``/``retro`` keys or markers, set+``_append`` overlap — and a
+stored value a command cannot use: a non-int ``timing_anchor``/``active_seconds`` at
+``timing-pause``/``report-section``, a non-list ``completed_phases`` at ``phase-done`` or a
+non-list target at ``_append``, each answered with an exit-1 JSON that names the field to repair
+with ``set``); 2 usage/parse error. Dependency-free (stdlib only); state parsing is a
 small block-structured reader in the ``state_plan.py`` spirit — flat scalars, flat lists,
 one-level maps (whose values may be scalars or flat lists).
 
@@ -371,6 +377,10 @@ def _int_coercible(v) -> bool:
 def _coerce(key: str, val):
     """Light type repair for hand-edited/legacy values."""
     if val is None:
+        if key in LIST_FIELDS:                        # a list field's documented default is []
+            return []
+        if key in MAP_FIELDS and key != "story_trace":   # …and a map's (bar the nullable trace) is a map
+            return dict(default_state()[key])
         return None
     if key in INT_FIELDS and isinstance(val, str) and re.fullmatch(r"-?\d+", val.strip()):
         return int(val)
@@ -393,6 +403,12 @@ def full_state(raw: dict) -> dict:
             merged = dict(state[k])
             merged.update(v)
             state[k] = merged
+        elif k in MAP_FIELDS and isinstance(state.get(k), dict):
+            # A hand-edited / legacy `build: null` (or a stray scalar) in a map whose
+            # documented default is a full map: keep the default so the next write
+            # re-emits every sub-key with its explicit default (file-shape invariant;
+            # story_trace is the one nullable map and has no dict default).
+            continue
         elif k in SCHEMA_ORDER:
             state[k] = _coerce(k, v)
         else:
@@ -455,8 +471,17 @@ def _validate_patch(patch: dict) -> None:
                     raise ContractError(
                         f"{k} key {sub!r} would not survive a rewrite — map keys must match "
                         "[A-Za-z_][A-Za-z0-9_]*")
+        elif k in _FIXED_MAP_KEYS:
+            # phase8_steps / build / retro are never null on disk: every sub-key is
+            # always emitted with its explicit default (a null would let a later
+            # partial merge write a map missing sub-keys).
+            raise ContractError(f"{k} must be a map (never null), got {v!r}")
         elif k in MAP_FIELDS and v is not None:
             raise ContractError(f"{k} must be a map (or null), got {v!r}")
+        if k in LIST_FIELDS and v is not None and not isinstance(v, list):
+            # A scalar in a list field is emitted as a scalar and read back as one:
+            # phase-done would then crash on it and _append would iterate a string.
+            raise ContractError(f"{k} must be a list (or null -> []), got {v!r}")
         if k in _FIXED_MAP_KEYS and isinstance(v, dict):
             # phase8_steps / build / retro have a closed key set: a typo'd sub-key
             # would ride along silently while the real one stayed at its default.
@@ -474,6 +499,17 @@ def _validate_patch(patch: dict) -> None:
                         + " | ".join("null" if m is None else m for m in allowed))
         if k in INT_FIELDS and v is not None and not _int_coercible(v):
             raise ContractError(f"{k} must be an integer (or null), got {v!r}")
+
+
+def _stored_list(state: dict, key: str) -> list:
+    """A stored LIST_FIELD value as a list (null -> []); ContractError if a hand-edit left a
+    scalar there (``completed_phases: 3`` / ``commits: abc``) — never iterate/guess it."""
+    val = state.get(key)
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return list(val)
+    raise ContractError(f"{key} in the state file is not a list: {val!r} — repair it with `set`")
 
 
 def apply_patch(state: dict, patch: dict, allow_started_at: bool = False) -> dict:
@@ -502,7 +538,7 @@ def apply_patch(state: dict, patch: dict, allow_started_at: bool = False) -> dic
     _validate_patch(patch)
     if ap:
         for field, vals in ap.items():
-            state[field] = list(state.get(field) or []) + vals
+            state[field] = _stored_list(state, field) + vals
             appended[field] = len(vals)
     changed = []
     for k, v in patch.items():
@@ -557,7 +593,7 @@ def cmd_phase_done(state_file: Path, phase: int, patch: dict | None) -> dict:
         raise ContractError(
             "phase-done owns completed_phases — drop it from the patch "
             "(the phase argument is the only way this command records one)")
-    phases = [p for p in (state.get("completed_phases") or [])
+    phases = [p for p in _stored_list(state, "completed_phases")
               if isinstance(p, int) and not isinstance(p, bool)]
     already = phase in phases
     if not already:
@@ -625,7 +661,7 @@ def _timing_line(state: dict, resumed: int) -> str:
     completed_text = completed if end_dt else "in progress"
     end = end_dt or _parse_iso(_now_iso()) or datetime.now(timezone.utc)
     elapsed = int((end - start_dt).total_seconds())
-    active = int(state.get("active_seconds") or 0)
+    active = _stored_int(state, "active_seconds") or 0    # corrupt -> ContractError, not a traceback
     wait = max(0, elapsed - active)
     suffix = f"; resumed {resumed}×" if resumed >= 1 else ""
     return (f"**Timing:** started {started}; completed {completed_text} — elapsed "
@@ -1435,6 +1471,107 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             cmd_set(sfv, {"build": {"warnings": ["oversized", "needs: review", "x #1", ""]}})
             wl = full_state(load_state(sfv))["build"]["warnings"]
             assert wl == ["oversized", "needs: review", "x #1", ""], wl
+
+            # --- stored-shape guards (findings V1–V4) ---------------------------- #
+            # V1: a LIST field patched with a scalar is rejected before any write
+            # (set, init and phase-done's folded patch alike); null means [] on disk
+            sfl = tmp / "state" / "4-1-lists.yaml"
+            cmd_init(sfl, {"story_key": "4-1-lists", "epic_num": 4, "story_num": 1})
+            pristine_l = sfl.read_text(encoding="utf-8")
+            for bad_list in ({"completed_phases": 3}, {"commits": "abc"},
+                             {"tea_selected": "atdd"}, {"blockers": "needs key"},
+                             {"open_questions": {"q": 1}}):
+                rc, out = cli_json(bad_list, "set", "--state-file", str(sfl))
+                key = next(iter(bad_list))
+                assert rc == 1 and key in out["error"] and "list" in out["error"], (rc, out)
+            assert sfl.read_text(encoding="utf-8") == pristine_l, "V1 rejection must not write"
+            rc, out = cli_json({"commits": "abc"}, "phase-done", "--state-file", str(sfl),
+                               "--phase", "3")
+            assert rc == 1 and "commits" in out["error"], (rc, out)
+            assert sfl.read_text(encoding="utf-8") == pristine_l, "V1 folded rejection must not write"
+            try:
+                cmd_init(tmp / "state" / "never2.yaml", {"story_key": "x", "commits": "abc"})
+                raise AssertionError("init with a scalar list field must raise ContractError")
+            except ContractError:
+                pass
+            assert not (tmp / "state" / "never2.yaml").exists()
+            rc, out = cli_json({"commits": None, "tea_selected": ["atdd"]},
+                               "set", "--state-file", str(sfl))
+            assert rc == 0, (rc, out)
+            assert re.search(r"^commits: \[\]$", sfl.read_text(encoding="utf-8"), re.M), (
+                "a null list patch must land as the explicit [] default")
+            # V1b: a hand-corrupted stored list -> phase-done / _append answer with an
+            # exit-1 JSON naming the field (no traceback); `set` repairs it
+            sfl.write_text(sfl.read_text(encoding="utf-8").replace(
+                "completed_phases: []", "completed_phases: 3").replace(
+                "commits: []", "commits: abc"), encoding="utf-8")
+            rc, out = run_cli(["phase-done", "--state-file", str(sfl), "--phase", "3"])
+            assert rc == 1 and out["ok"] is False and "completed_phases" in out["error"], (rc, out)
+            rc, out = cli_json({"_append": {"commits": ["a1"]}}, "set", "--state-file", str(sfl))
+            assert rc == 1 and out["ok"] is False and "commits" in out["error"], (rc, out)
+            rc, out = cli_json({"completed_phases": [3], "commits": []},
+                               "set", "--state-file", str(sfl))
+            assert rc == 0, (rc, out)                     # repair path
+            rc, out = run_cli(["phase-done", "--state-file", str(sfl), "--phase", "5"])
+            assert rc == 0 and out["completed_phases"] == [3, 5], (rc, out)
+            rc, out = cli_json({"_append": {"commits": ["a1"]}}, "set", "--state-file", str(sfl))
+            assert rc == 0 and out["appended"] == {"commits": 1}, (rc, out)
+            # a legacy `commits: null` line reads as [] and is re-emitted as []
+            legl = tmp / "state" / "9-7-nulllist.yaml"
+            legl.write_text('story_key: 9-7-nulllist\nstarted_at: "2026-01-01T00:00:00Z"\n'
+                            "commits: null\nblockers: ~\n", encoding="utf-8")
+            assert full_state(load_state(legl))["commits"] == [], "null list must read as []"
+            cmd_set(legl, {"_append": {"blockers": ["needs key"]}})
+            lt = legl.read_text(encoding="utf-8")
+            assert re.search(r"^commits: \[\]$", lt, re.M), lt
+            assert full_state(load_state(legl))["blockers"] == ["needs key"], lt
+            # V2: report-section with a hand-corrupted active_seconds -> exit-1 JSON, no traceback
+            sfr = tmp / "state" / "4-2-timing.yaml"
+            cmd_init(sfr, {"story_key": "4-2-timing", "epic_num": 4, "story_num": 2})
+            sfr.write_text(sfr.read_text(encoding="utf-8").replace(
+                "active_seconds: 0", "active_seconds: lots"), encoding="utf-8")
+            rfr = tmp / "reports" / "4-2-timing.md"
+            rc, out = cli_json({"disposition_tag": "final"}, "report-section",
+                               "--report-file", str(rfr), "--state-file", str(sfr))
+            assert rc == 1 and out["ok"] is False and "active_seconds" in out["error"], (rc, out)
+            assert not rfr.exists(), "a rejected report-section must not write the report"
+            rc, out = cli_json({"active_seconds": 60}, "set", "--state-file", str(sfr))
+            assert rc == 0, (rc, out)                     # repair, then the report renders
+            rc, out = cli_json({"disposition_tag": "final"}, "report-section",
+                               "--report-file", str(rfr), "--state-file", str(sfr))
+            assert rc == 0 and out["section_written"], (rc, out)
+            assert "≈1m AI-run" in rfr.read_text(encoding="utf-8")
+            # V3: build / retro / phase8_steps are never null — a null patch is rejected …
+            sfm = tmp / "state" / "4-3-maps.yaml"
+            cmd_init(sfm, {"story_key": "4-3-maps", "epic_num": 4, "story_num": 3})
+            pristine_m = sfm.read_text(encoding="utf-8")
+            for fixed in ("build", "retro", "phase8_steps"):
+                rc, out = cli_json({fixed: None}, "set", "--state-file", str(sfm))
+                assert rc == 1 and fixed in out["error"] and "map" in out["error"], (rc, out)
+            assert sfm.read_text(encoding="utf-8") == pristine_m, "V3 rejection must not write"
+            rc, out = cli_json({"story_trace": None, "overrides": None},
+                               "set", "--state-file", str(sfm))
+            assert rc == 0, (rc, out)                     # story_trace stays nullable …
+            mtxt0 = sfm.read_text(encoding="utf-8")
+            assert re.search(r"^story_trace: null$", mtxt0, re.M), mtxt0
+            assert re.search(r"^overrides: \{\}$", mtxt0, re.M), "null overrides must land as {}"
+            # … and a legacy/hand-edited `build: null` (or a stray scalar) re-emits the
+            # full default map on the next write, so a partial merge never lands on disk
+            legm = tmp / "state" / "9-6-nullmap.yaml"
+            legm.write_text('story_key: 9-6-nullmap\nstarted_at: "2026-01-01T00:00:00Z"\n'
+                            "build: null\nretro: pending\nphase8_steps: null\n",
+                            encoding="utf-8")
+            lm = full_state(load_state(legm))
+            assert lm["build"] == default_build() and lm["retro"] == default_retro(), lm
+            assert lm["phase8_steps"] == {k: None for k in PHASE8_KEYS}, lm["phase8_steps"]
+            cmd_set(legm, {"build": {"status": "done"}})
+            lm = full_state(load_state(legm))
+            assert lm["build"] == {**default_build(), "status": "done"}, lm["build"]
+            mtxt = legm.read_text(encoding="utf-8")
+            for sub in BUILD_KEYS:
+                assert re.search(rf"^  {sub}:", mtxt, re.M), f"build.{sub} missing on disk"
+            for sub in RETRO_KEYS:
+                assert re.search(rf"^  {sub}:", mtxt, re.M), f"retro.{sub} missing on disk"
 
         print("SELF-TEST PASSED (all assertions)")
         return 0

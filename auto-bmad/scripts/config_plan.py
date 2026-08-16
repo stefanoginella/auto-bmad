@@ -71,10 +71,43 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+
+
+class ConfigIOError(Exception):
+    """A config/asset file could not be read or written (missing, unreadable, not UTF-8).
+
+    Raised by ``_read_text``/``_write_text`` so ``main()`` can turn any of them into the
+    documented ``{"status": "error", ...}`` JSON + exit 2 instead of a traceback.
+    """
+
+
+def _read_text(path: Path) -> str:
+    """Read a text file WITHOUT newline translation (``newline=""``).
+
+    Byte preservation: the default universal-newlines read would turn a CRLF config's
+    ``\\r\\n`` into ``\\n``, and writing it back would silently rewrite every line ending of
+    a file this script only appends to. Keeping the endings verbatim means the untouched
+    lines round-trip byte-for-byte. Raises ``ConfigIOError`` on an unreadable / non-UTF-8 file.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as fh:
+            return fh.read()
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ConfigIOError(f"cannot read {path}: {type(exc).__name__}: {exc}") from exc
+
+
+def _write_text(path: Path, text: str) -> None:
+    """Write text back WITHOUT newline translation (the ``_read_text`` counterpart)."""
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+    except (OSError, UnicodeEncodeError, ValueError) as exc:
+        raise ConfigIOError(f"cannot write {path}: {type(exc).__name__}: {exc}") from exc
 
 
 def _strip_comment(s: str) -> str:
@@ -404,6 +437,21 @@ def collect_setup_answers(cfg_lines: Sequence[str]) -> list:
     return out
 
 
+# The pre-0.27 spelling of the tier value the orchestrator now calls `subagents`. A config seeded by
+# an older release still carries it; the orchestrator reads it as `subagents`, so it is TOLERATED —
+# never healed, never stripped, never part of the drift verdict. Reported so config-check can say so.
+LEGACY_MODE_ALIAS = "custom-subagents"
+
+
+def detect_legacy_mode_alias(cfg_lines: Sequence[str]) -> bool:
+    """True when ``delegation.mode`` is the legacy ``custom-subagents`` spelling (informational)."""
+    nodes = parse_tree(cfg_lines, 0, len(cfg_lines), 0)
+    node = _resolve_node(nodes, "delegation.mode")
+    if node is None or node["kind"] == "map":
+        return False
+    return _leaf_value(cfg_lines, node) == LEGACY_MODE_ALIAS
+
+
 def _read_version(text: str, key: str) -> str | None:
     for line in text.splitlines():
         if _indent(line) == 0:
@@ -437,6 +485,10 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
     values of the heal-immune behavioural answers (``SETUP_ANSWER_PATHS``) the asset omits, so
     config-check can show every deviation the two diff-lists structurally can't (see that constant).
 
+    ``legacy_mode_alias`` (bool, informational — never part of the drift verdict) is true when the
+    config still spells ``delegation.mode`` the pre-0.27 way (``custom-subagents``), which the
+    orchestrator reads as ``subagents``.
+
     The "what you've customised vs shipped defaults" axis for the PROFILE surface (read-only, for
     the ``config-check`` preview — the heal never touches it) goes in three lists:
     ``customized_profiles`` (``[{profile, key, value, default}]`` — a profile **model/effort** leaf
@@ -460,6 +512,7 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
     asset_lines = asset_text.splitlines(keepends=True)
 
     setup_answers = collect_setup_answers(cfg_lines)
+    legacy_mode_alias = detect_legacy_mode_alias(cfg_lines)
 
     missing_setup: list = []
     added_setup: list = []
@@ -544,6 +597,7 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
         "added_setup": added_setup,
         "kept_setup": kept_setup,
         "setup_answers": setup_answers,
+        "legacy_mode_alias": legacy_mode_alias,
         "customized_profiles": customized_profiles,
         "custom_profiles": custom_profiles,
         "customized_phase_profiles": customized_phase_profiles,
@@ -586,30 +640,38 @@ def apply(config_text: str, asset_text: str, config_version: str | None,
     # sub-block both gain a key): shallower applied first => deeper ends nearest the anchor,
     # so the deeper line attaches to the inner block and the shallower starts a new outer key.
     inserts: list[tuple[int, int, list[str]]] = []
+    # A config that lacks a `profiles:` / `phase_profiles:` HEADER entirely has nothing to anchor an
+    # insert on, so the block is (re)created at EOF instead — mirroring reset's trailing path. Without
+    # it the reseeded_* lists would claim keys apply() never actually wrote.
+    trailing: list[str] = []
 
     # Missing whole profiles -> copy the asset's raw block to the profiles block end.
     if info["missing_profiles"]:
         span = find_block(lines, "profiles")
+        block: list[str] = []
+        for name in info["missing_profiles"]:
+            p = asset_prof[name]
+            block.append("\n")
+            block.extend(asset_lines[p["start"]: p["end"]])
         if span is not None:
             header, end = span
             anchor = _last_content_idx(lines, header + 1, end)
             anchor = anchor if anchor is not None else header
-            block: list[str] = []
-            for name in info["missing_profiles"]:
-                p = asset_prof[name]
-                block.append("\n")
-                block.extend(asset_lines[p["start"]: p["end"]])
             inserts.append((anchor, 2, block))
+        else:  # no `profiles:` block at all — recreate it at EOF (drop the leading separator)
+            trailing += ["\n", "profiles:\n"] + block[1:]
 
     # Missing phase_profiles keys -> append `  key: value` lines to that block end.
     if info["missing_phase_profiles"]:
         span = find_block(lines, "phase_profiles")
+        block = [f"  {k}: {v}\n" for k, v in info["missing_phase_profiles"].items()]
         if span is not None:
             header, end = span
             anchor = _last_content_idx(lines, header + 1, end)
             anchor = anchor if anchor is not None else header
-            block = [f"  {k}: {v}\n" for k, v in info["missing_phase_profiles"].items()]
             inserts.append((anchor, 2, block))
+        else:  # no `phase_profiles:` block at all — recreate it at EOF
+            trailing += ["\n", "phase_profiles:\n"] + block
 
     # Missing setup-block keys (delegation/tea/git/code_review/build) -> append-only, nested-aware.
     healed_setup: list = []
@@ -621,6 +683,14 @@ def apply(config_text: str, asset_text: str, config_version: str | None,
     for anchor, _, block in sorted(inserts, key=lambda t: (t[0], -t[1]), reverse=True):
         _ensure_newline(lines, anchor)
         lines[anchor + 1: anchor + 1] = block
+
+    # Recreated whole blocks land after every anchored insert, so plan and write agree.
+    if trailing:
+        if lines:
+            _ensure_newline(lines, len(lines) - 1)
+        if not trailing[-1].endswith("\n"):
+            trailing[-1] = trailing[-1] + "\n"
+        lines.extend(trailing)
 
     # Restamp profiles_source_version (content-based, robust to the splices above).
     restamped = None
@@ -928,8 +998,8 @@ def reset(config_text: str, asset_text: str, config_version: str | None,
 
 def reset_to_file(config_path: Path, asset_path: Path, module_version: str | None,
                   scope: str | None, write: bool) -> dict:
-    config_text = config_path.read_text(encoding="utf-8")
-    asset_text = asset_path.read_text(encoding="utf-8")
+    config_text = _read_text(config_path)
+    asset_text = _read_text(asset_path)
     config_version = _read_version(config_text, "profiles_source_version")
     res = reset(config_text, asset_text, config_version, module_version, scope)
     if res.get("error"):
@@ -940,8 +1010,8 @@ def reset_to_file(config_path: Path, asset_path: Path, module_version: str | Non
     backup = None
     if write and changed:
         backup = str(config_path) + ".bak"
-        Path(backup).write_text(config_text, encoding="utf-8")
-        config_path.write_text(res["new_text"], encoding="utf-8")
+        _write_text(Path(backup), config_text)
+        _write_text(config_path, res["new_text"])
 
     status = "reset" if (write and changed) else ("noop" if write else "reset-plan")
     return {
@@ -967,7 +1037,7 @@ def _default_setup_defaults() -> Path:
 def _read_setup_text(setup_path: Path | None) -> str | None:
     """Read the config-defaults asset, or ``None`` if it is absent (heal degrades gracefully)."""
     path = setup_path if setup_path is not None else _default_setup_defaults()
-    return path.read_text(encoding="utf-8") if path.is_file() else None
+    return _read_text(path) if path.is_file() else None
 
 
 def _default_module_yaml() -> Path:
@@ -1717,14 +1787,119 @@ def _run_self_test() -> int:
         chk_nosetup = check_file(cfgp, asset, "0.9.0", Path(td) / "absent-config-defaults.yaml")
         assert chk_nosetup["status"] == "fresh" and chk_nosetup["missing_setup"] == [], chk_nosetup
 
+    # ----------------------------------------------------------------------- #
+    # apply() on a config with NO `profiles:` / `phase_profiles:` HEADER: the   #
+    # block is RECREATED at EOF (reset's trailing path), so the reseeded_*      #
+    # lists never claim keys the write did not produce.                        #
+    # ----------------------------------------------------------------------- #
+    headless = 'version: 1\nprofiles_source_version: "0.8.0"\ngit:\n  mode: auto\n'
+    hl_lines = headless.splitlines(keepends=True)
+    assert find_block(hl_lines, "profiles") is None and find_block(hl_lines, "phase_profiles") is None, \
+        "fixture: headless config still carries an asset block"
+    res_hl = apply(headless, asset_text, "0.8.0", "0.9.0")
+    t_hl = res_hl["new_text"]
+    l_hl = t_hl.splitlines(keepends=True)
+    got_prof = parse_profiles_blocks(l_hl, find_block(l_hl, "profiles"))
+    got_pp = parse_phase_profiles(l_hl, find_block(l_hl, "phase_profiles"))
+    # Everything the result CLAIMS was reseeded is actually in the written text.
+    assert set(res_hl["reseeded_profiles"]) == set(PROFILE_NAMES), res_hl["reseeded_profiles"]
+    assert set(got_prof) == set(res_hl["reseeded_profiles"]), \
+        f"reseeded_profiles claimed but not written: {sorted(set(res_hl['reseeded_profiles']) - set(got_prof))}"
+    assert res_hl["reseeded_phase_profiles"] == a_pp, res_hl["reseeded_phase_profiles"]
+    assert got_pp == res_hl["reseeded_phase_profiles"], \
+        f"reseeded_phase_profiles claimed but not written: {got_pp}"
+    assert "mode: auto" in t_hl, "recreation clobbered an existing block"
+    # ... and the recreated config re-reads as fully fresh (idempotent second apply).
+    info_hl = analyze(t_hl, asset_text, "0.9.0", "0.9.0")
+    assert not info_hl["needs_reseed"] and not info_hl["manual_review"], _public(info_hl)
+    assert apply(t_hl, asset_text, "0.9.0", "0.9.0")["reseeded_profiles"] == [], "second apply must reseed nothing"
+    # Same for a config missing only ONE of the two headers (profiles present, phase_profiles gone).
+    only_prof = 'profiles_source_version: "0.9.0"\n' + asset_text[:asset_text.index("phase_profiles:")]
+    assert find_block(only_prof.splitlines(keepends=True), "phase_profiles") is None, "fixture: phase_profiles present"
+    res_op = apply(only_prof, asset_text, "0.9.0", "0.9.0")
+    op_lines = res_op["new_text"].splitlines(keepends=True)
+    assert parse_phase_profiles(op_lines, find_block(op_lines, "phase_profiles")) == a_pp, "phase_profiles not recreated"
+    assert res_op["reseeded_phase_profiles"] == a_pp, res_op["reseeded_phase_profiles"]
+
+    # ----------------------------------------------------------------------- #
+    # legacy_mode_alias: informational only (the pre-0.27 `custom-subagents`).  #
+    # ----------------------------------------------------------------------- #
+    legacy_cfg = base + "delegation:\n  host: auto\n  mode: custom-subagents\n"
+    assert analyze(legacy_cfg, asset_text, "0.9.0", "0.9.0", setup_text)["legacy_mode_alias"] is True, "legacy alias not detected"
+    for mode_line in ("  mode: subagents\n", "  mode: inline\n", ""):
+        cfg_m = base + "delegation:\n  host: auto\n" + mode_line
+        assert analyze(cfg_m, asset_text, "0.9.0", "0.9.0", setup_text)["legacy_mode_alias"] is False, mode_line
+    # It rides --check, and never changes the verdict on an otherwise-fresh config.
+    with tempfile.TemporaryDirectory() as td:
+        cfgp = Path(td) / "config.yaml"
+        fresh_legacy = ('profiles_source_version: "0.9.0"\n' + asset_text + setup_text).replace(
+            "\ndelegation:\n", "\ndelegation:\n  host: auto\n  mode: custom-subagents\n", 1)
+        assert "mode: custom-subagents" in fresh_legacy, "fixture: legacy alias not injected"
+        cfgp.write_text(fresh_legacy, encoding="utf-8")
+        chk_legacy = check_file(cfgp, asset, "0.9.0", setup_asset)
+        assert chk_legacy["legacy_mode_alias"] is True, chk_legacy["legacy_mode_alias"]
+        assert chk_legacy["status"] == "fresh", f"legacy alias must not create drift: {chk_legacy}"
+
+    # ----------------------------------------------------------------------- #
+    # Byte preservation: CRLF configs round-trip (read/write use newline="").   #
+    # ----------------------------------------------------------------------- #
+    with tempfile.TemporaryDirectory() as td:
+        cfgp = Path(td) / "config.yaml"
+        crlf_src = ('profiles_source_version: "0.9.0"\n' + asset_text
+                    + "delegation:\n  cli_phases: {}\ngit:\n  mode: auto\n  ci_wait_minutes: 30\n")
+        cfgp.write_bytes(crlf_src.replace("\n", "\r\n").encode("utf-8"))
+        assert "\r\n" in _read_text(cfgp), "_read_text must NOT translate CRLF away"
+        assert "\r\n" not in cfgp.read_text(encoding="utf-8"), "fixture: universal-newlines read would hide the CRLFs"
+        app_crlf = apply_to_file(cfgp, asset, "0.9.0", setup_asset)
+        assert app_crlf["status"] == "applied" and app_crlf["reseeded_setup"], app_crlf
+        raw = cfgp.read_bytes()
+        assert b"git:\r\n  mode: auto\r\n  ci_wait_minutes: 30\r\n" in raw, "existing CRLF lines were rewritten to LF"
+        assert raw.count(b"\r\n") >= crlf_src.count("\n") - 1, "the file was silently converted to LF"
+        assert check_file(cfgp, asset, "0.9.0", setup_asset)["status"] == "fresh", "CRLF heal did not clear the drift"
+
+    # ----------------------------------------------------------------------- #
+    # main() end-to-end via subprocess: exit codes + one JSON object on stdout. #
+    # ----------------------------------------------------------------------- #
+    def _cli(argv: list, expect: int) -> dict:
+        proc = subprocess.run([sys.executable, str(Path(__file__).resolve())] + argv,
+                              capture_output=True, text=True)
+        assert proc.returncode == expect, f"{argv} -> {proc.returncode} (want {expect})\n{proc.stdout}\n{proc.stderr}"
+        assert "Traceback" not in proc.stderr, f"{argv} raised:\n{proc.stderr}"
+        return json.loads(proc.stdout)
+
+    with tempfile.TemporaryDirectory() as td:
+        fresh_p = Path(td) / "fresh.yaml"
+        fresh_p.write_text('profiles_source_version: "9.9.9"\n' + asset_text + setup_text, encoding="utf-8")
+        drift_p = Path(td) / "drift.yaml"
+        drift_p.write_text(stale_cfg, encoding="utf-8")
+        bad_p = Path(td) / "bad.yaml"
+        bad_p.write_bytes(b'profiles_source_version: "9.9.9"\n\xff\xfe not utf-8\n')
+
+        # usage error: no mode flag at all.
+        assert _cli([], 2)["status"] == "error", "bare invocation must be a usage error"
+        assert _cli(["--check"], 2)["status"] == "error", "--check without --config must be a usage error"
+        # --check: fresh => 0, drift => 1.
+        out_fresh = _cli(["--check", "--config", str(fresh_p), "--module-version", "9.9.9"], 0)
+        assert out_fresh["status"] == "fresh", out_fresh
+        out_drift = _cli(["--check", "--config", str(drift_p), "--module-version", "9.9.9"], 1)
+        assert out_drift["status"] == "drift", out_drift
+        # --reset with an unknown scope => 2 (plan error, nothing written).
+        out_scope = _cli(["--reset", "ab-nope", "--config", str(fresh_p), "--module-version", "9.9.9"], 2)
+        assert out_scope["status"] == "error" and out_scope["valid_scopes"], out_scope
+        # An unreadable / non-UTF-8 config => error JSON + 2 on every mode, never a traceback.
+        for mode in (["--check"], ["--apply"], ["--reset"]):
+            out_bad = _cli(mode + ["--config", str(bad_p), "--module-version", "9.9.9"], 2)
+            assert out_bad["status"] == "error" and "cannot read" in out_bad["message"], (mode, out_bad)
+        assert bad_p.read_bytes().endswith(b"not utf-8\n"), "an unreadable config must never be rewritten"
+
     print("SELF-TEST PASSED (all assertions)")
     return 0
 
 
 def check_file(config_path: Path, asset_path: Path, module_version: str | None,
                setup_path: Path | None = None) -> dict:
-    config_text = config_path.read_text(encoding="utf-8")
-    asset_text = asset_path.read_text(encoding="utf-8")
+    config_text = _read_text(config_path)
+    asset_text = _read_text(asset_path)
     setup_text = _read_setup_text(setup_path)
     config_version = _read_version(config_text, "profiles_source_version")
     info = _public(analyze(config_text, asset_text, config_version, module_version, setup_text))
@@ -1738,15 +1913,15 @@ def check_file(config_path: Path, asset_path: Path, module_version: str | None,
 
 def apply_to_file(config_path: Path, asset_path: Path, module_version: str | None,
                   setup_path: Path | None = None) -> dict:
-    config_text = config_path.read_text(encoding="utf-8")
-    asset_text = asset_path.read_text(encoding="utf-8")
+    config_text = _read_text(config_path)
+    asset_text = _read_text(asset_path)
     setup_text = _read_setup_text(setup_path)
     config_version = _read_version(config_text, "profiles_source_version")
     res = apply(config_text, asset_text, config_version, module_version, setup_text)
     changed = bool(res["reseeded_phase_profiles"] or res["reseeded_profiles"]
                    or res["reseeded_setup"] or res["version_restamped"])
     if changed:
-        config_path.write_text(res["new_text"], encoding="utf-8")
+        _write_text(config_path, res["new_text"])
     return {
         "status": "applied" if changed else "noop",
         "reseeded_phase_profiles": res["reseeded_phase_profiles"],
@@ -1798,27 +1973,33 @@ def main() -> int:
         print(json.dumps({"status": "error", "message": f"asset profiles not found: {asset_path}"}))
         return 2
 
-    module_version = args.module_version
-    if not module_version:
-        myaml = Path(args.module_yaml) if args.module_yaml else _default_module_yaml()
-        if myaml.is_file():
-            module_version = _read_version(myaml.read_text(encoding="utf-8"), "module_version")
-
     setup_path = Path(args.asset_config_defaults) if args.asset_config_defaults else None
 
-    if args.reset is not None:
-        result = reset_to_file(config_path, asset_path, module_version, scope=args.reset, write=args.write)
-        print(json.dumps(result, indent=2))
-        return 2 if result["status"] == "error" else 0
+    # Every file touch below can fail on an unreadable / non-UTF-8 / unwritable file. Report it as
+    # the documented error JSON + exit 2 (never a traceback) — the orchestrator parses stdout.
+    try:
+        module_version = args.module_version
+        if not module_version:
+            myaml = Path(args.module_yaml) if args.module_yaml else _default_module_yaml()
+            if myaml.is_file():
+                module_version = _read_version(_read_text(myaml), "module_version")
 
-    if args.apply:
-        result = apply_to_file(config_path, asset_path, module_version, setup_path)
-        print(json.dumps(result, indent=2))
-        return 0
+        if args.reset is not None:
+            result = reset_to_file(config_path, asset_path, module_version, scope=args.reset, write=args.write)
+            print(json.dumps(result, indent=2))
+            return 2 if result["status"] == "error" else 0
 
-    result = check_file(config_path, asset_path, module_version, setup_path)
-    print(json.dumps(result, indent=2))
-    return 1 if result["status"] == "drift" else 0
+        if args.apply:
+            result = apply_to_file(config_path, asset_path, module_version, setup_path)
+            print(json.dumps(result, indent=2))
+            return 0
+
+        result = check_file(config_path, asset_path, module_version, setup_path)
+        print(json.dumps(result, indent=2))
+        return 1 if result["status"] == "drift" else 0
+    except ConfigIOError as exc:
+        print(json.dumps({"status": "error", "message": str(exc), "config_path": str(config_path)}))
+        return 2
 
 
 if __name__ == "__main__":

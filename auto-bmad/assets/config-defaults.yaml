@@ -19,7 +19,7 @@
 #   tea.enabled, tea.framework_ci     (gated on whether TEA / a test framework / CI are present)
 #   git.mode                          (the detect|remote|local toggle; default sentinel `auto` = detect)
 #   git.base_branch                   (detected from the repo)
-#   code_review.cross_model_layer     (env-detected: codex when on PATH and != host, else ""; absent key ⇒ "")
+#   code_review.cross_model_layer     (env-detected: the first of codex, claude, opencode on PATH that is not the host, else ""; absent key ⇒ "")
 # These are always seeded at first run, so they are never "missing" in practice; keeping them
 # out of this asset guarantees the heal can never materialise a wrong static value for them.
 #

@@ -225,16 +225,36 @@ def _parse_inline_map(body: str) -> dict:
     return out
 
 
+def _find_top_level_inline_map(lines: Sequence[str], name: str) -> dict | None:
+    """A top-level ``name: {k: v, ...}`` flow map -> dict (``{}`` for ``name: {}``), else None."""
+    for line in lines:
+        if _is_blank_or_comment(line) or _indent(line) != 0:
+            continue
+        stripped = _strip_comment(line.strip())
+        if not stripped.startswith(f"{name}:"):
+            continue
+        _, _, rest = stripped.partition(":")
+        rest = rest.strip()
+        if rest.startswith("{"):
+            inner = rest[1:-1] if rest.endswith("}") else rest[1:]
+            return _parse_inline_map(inner)
+        return None
+    return None
+
+
 def parse_block_scalars(lines: Sequence[str], name: str) -> dict:
     """Parse the indent-2 ``key: value`` scalars of a top-level ``name:`` block.
 
     Nested sub-blocks (deeper indent) are skipped; a ``key:`` with no scalar maps to ``""``.
     Used for ``phase_profiles`` (``phase: profile``) and ``code_review`` (``cross_model_layer: tool``).
+    The inline flow form (``code_review: {cross_model_layer: codex}``) is accepted too — it is valid
+    YAML the interview never writes but a hand-edited config may.
     """
     span = find_block(lines, name)
     out: dict = {}
     if span is None:
-        return out
+        inline = _find_top_level_inline_map(lines, name)
+        return inline if inline is not None else out
     header, end = span
     for i in range(header + 1, end):
         line = lines[i]
@@ -371,12 +391,14 @@ def _model_effort(profiles: dict, profile: str, tool: str) -> tuple[str | None, 
     if not prof:
         return None, None, [f"profile '{profile}' not found in profiles block"]
     tool_block = prof.get(tool)
-    if not tool_block:
-        return None, None, [f"profile '{profile}' has no '{tool}' block"]
-    if tool == "opencode":
+    if tool == "opencode" and isinstance(tool_block, dict):
         # opencode is MULTI-PROVIDER and MODEL-ONLY: a blank model => the routed `opencode run`
-        # inherits the user's opencode default model; a blank variant => the model's default reasoning.
+        # inherits the user's opencode default model; a blank variant => the model's default
+        # reasoning. Both keys are OPTIONAL, so a PRESENT-BUT-EMPTY block (`opencode: {}` inline or
+        # a bare `opencode:` header) is legitimate and means "inherit both" — not a missing block.
         return (tool_block.get("model") or None), (tool_block.get("variant") or None), errors
+    if not tool_block or not isinstance(tool_block, dict):
+        return None, None, [f"profile '{profile}' has no '{tool}' block"]
     model = tool_block.get("model")
     # claude uses `effort`; codex uses `reasoning_effort`.
     effort_key = "effort" if tool == "claude" else "reasoning_effort"
@@ -1401,6 +1423,37 @@ def _run_self_test() -> int:
     assert e["ok"] is False and any("'ab-missing' not found" in x for x in e["errors"]), e
     e = resolve_layer(cfg.replace("cross_model_layer: ab-alt-deep", "cross_model_layer: ab-blank"), "/proj", timeout_bin="")
     assert e["ok"] is False and any("has no 'codex' block" in x for x in e["errors"]), e   # ab-blank: opencode only
+
+    # A PRESENT-BUT-EMPTY opencode block means "inherit model AND variant", NOT a missing block —
+    # both spellings (inline `{}` and a bare `opencode:` header) resolve with no errors.
+    for empty in ("  ab-empty:\n    opencode: {}\n", "  ab-empty:\n    opencode:\n"):
+        pe = parse_profiles("profiles:\n" + empty)
+        assert _model_effort(pe, "ab-empty", "opencode") == (None, None, []), (empty, pe)
+        le = resolve_layer(
+            "code_review:\n  cross_model_layer: opencode\n"
+            "phase_profiles:\n  cross_model_layer: ab-empty\nprofiles:\n" + empty,
+            "/proj", timeout_bin="")
+        assert le["ok"] and not le["errors"] and le["model"] is None and le["effort"] is None, (empty, le)
+        assert le["command"] == 'cd "/proj" && opencode run --dir "/proj" --auto "' + CROSS_MODEL_REVIEW_PROMPT + '" </dev/null', le
+    # claude/codex still REQUIRE their two keys: an empty block there stays an error.
+    assert _model_effort(parse_profiles("profiles:\n  ab-empty:\n    codex: {}\n"), "ab-empty", "codex")[2] == [
+        "profile 'ab-empty' has no 'codex' block"]
+
+    # code_review written as an INLINE flow map resolves identically to the block form.
+    inline_cfg = cfg.replace(
+        "code_review:\n  followup: recommended\n  security_layer: true\n  cross_model_layer: codex\n",
+        "code_review: {followup: recommended, security_layer: true, cross_model_layer: codex}\n")
+    assert "code_review: {" in inline_cfg
+    assert parse_block_scalars(inline_cfg.splitlines(), "code_review") == {
+        "followup": "recommended", "security_layer": "true", "cross_model_layer": "codex",
+    }
+    li = resolve_layer(inline_cfg, "/proj", timeout_bin="")
+    assert li["ok"] and li["enabled"] and li["tool"] == "codex" and li["command"] == ly["command"], li
+    # An empty inline map (and an inline map without the key) leaves the layer disabled.
+    assert resolve_layer(cfg.replace(
+        "code_review:\n  followup: recommended\n  security_layer: true\n  cross_model_layer: codex\n",
+        "code_review: {}\n"), "/proj", timeout_bin="")["enabled"] is False
+    assert parse_block_scalars(["code_review: {}"], "code_review") == {}
     e = resolve_layer(cfg, "relative/dir", timeout_bin="")
     assert e["ok"] is False and any("must be absolute" in x for x in e["errors"]), e
     e = resolve_layer(cfg, '/pro"j', timeout_bin="")
@@ -1446,6 +1499,17 @@ def _run_self_test() -> int:
         p = subprocess.run([sys.executable, me, "--layer-argv", "--config", str(Path(ld) / "nope.yaml"), "--project-root", ld],
                            capture_output=True, text=True, timeout=60)
         assert p.returncode == 2 and "config not found" in json.loads(p.stdout)["message"], (p.returncode, p.stdout)
+        # An unreadable config (here: not valid UTF-8) => ONE json error object, exit 2, NO traceback
+        # — on both entry points.
+        bad_cfg = Path(ld) / "binary.yaml"
+        bad_cfg.write_bytes(b"version: 1\ncode_review:\n  cross_model_layer: \xff\xfe codex\n")
+        for extra in (["--layer-argv"], ["--phase", "build"]):
+            p = subprocess.run([sys.executable, me, *extra, "--config", str(bad_cfg), "--project-root", ld],
+                               capture_output=True, text=True, timeout=60)
+            j = json.loads(p.stdout)
+            assert p.returncode == 2 and j["status"] == "error", (extra, p.returncode, p.stdout)
+            assert j["message"].startswith("config unreadable: "), (extra, j)
+            assert "Traceback" not in p.stderr, (extra, p.stderr)
         # The routed-phase CLI still answers `routed: false` (exit 0) for an unrouted phase.
         p = subprocess.run([sys.executable, me, "--phase", "retrospective", "--config", str(cfg_file), "--project-root", ld],
                            capture_output=True, text=True, timeout=60)
@@ -1645,7 +1709,13 @@ def main() -> int:
     if not cfg_path.is_file():
         print(json.dumps({"status": "error", "message": f"config not found: {cfg_path}"}))
         return 2
-    config_text = cfg_path.read_text(encoding="utf-8")
+    try:
+        config_text = cfg_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        # A directory, a permission denial or a non-UTF-8 blob must be ONE json object, never a
+        # traceback (both --phase and --layer-argv reach this line).
+        print(json.dumps({"status": "error", "message": f"config unreadable: {cfg_path}: {exc}"}))
+        return 2
 
     if args.layer_argv:
         # abspath (not resolve): absolute as the user spelled it, symlinks untouched.
