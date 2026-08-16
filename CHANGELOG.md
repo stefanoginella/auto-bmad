@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Delegate profiles simplified to three tiers: `light` / `standard` / `critical`.** Sonnet for
+  mechanical steps, Opus by default, Fable only for the follow-up review; Codex runs
+  `gpt-5.6-luna/terra/sol`. Old `ab-*` configs keep their mappings until `/auto-bmad reset-defaults`.
+
 ## [0.27.2] - 2026-08-16
 
 ### Fixed

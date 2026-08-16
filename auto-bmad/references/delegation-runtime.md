@@ -6,7 +6,7 @@ Config fields that drive everything (in `{output_folder}/auto-bmad/config.yaml`,
 - `delegation.host` — `auto` | `claude-code` | `codex` | `opencode` | `other`.
 - `delegation.mode` — `auto` | `subagents` | `inline`. The legacy value `custom-subagents` is read as `subagents`.
 - `delegation.cli_phases` — opt-in per-phase override routing a phase to an external CLI instead of an in-tool subagent — see "Per-phase external-CLI routing" below. Absent/empty ⇒ none.
-- `phase_profiles` — maps each of the ten phase keys (`build`, `followup_review`, `security_layer`, `cross_model_layer`, `tea_triage`, `tea_per_story`, `tea_epic`, `tea_epic_audit`, `retrospective`, `deferred_reconcile`) to a profile name — one of the shipped five (`ab-deep`, `ab-standard`, `ab-alt-deep`, `ab-alt-standard`, `ab-security`) or a custom profile the user added to `profiles` (any name).
+- `phase_profiles` — maps each of the ten phase keys (`build`, `followup_review`, `security_layer`, `cross_model_layer`, `tea_triage`, `tea_per_story`, `tea_epic`, `tea_epic_audit`, `retrospective`, `deferred_reconcile`) to a profile name — one of the shipped three (`light`, `standard`, `critical`) or a custom profile the user added to `profiles` (any name).
 - `profiles` — each profile's per-tool model + effort **only** (`claude.model`/`effort`, `codex.model`/`reasoning_effort`, `opencode.model`/`variant`). No persona text: every `delegation.md` prompt carries its own role line.
 
 There are **no rendered agent files**. A delegate is a generic subagent spawned through the host's native mechanism with the phase profile's model; nothing is provisioned per tool, so nothing can be stale.
