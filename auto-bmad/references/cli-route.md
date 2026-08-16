@@ -46,7 +46,7 @@ It also runs the **preflight `validation`**, checking three things:
 
 **`ok:false` ⇒ hard-stop** with its `errors` (exit 1 = validation failed; exit 2 = resolution error, e.g. a phase whose `phase_profiles` value is blank — "no phase_profiles mapping"); never silently degrade to an in-tool subagent. Echo the routed phases + resolved tool/model/effort in the Phase 0 preflight and final report, next to `delegation.mode`.
 
-**Prompt recipe** — a CLI invocation has no host-provided delegate context, so the prompt is the `delegation.md` entry for the step, verbatim: role line first, placeholders filled with absolute paths, then the shared tail the orchestrator appends after the fenced block — the autonomy directive and the structured-result template (`delegation.md` preamble). That is the complete prompt; add no second operating block, so a CLI-routed delegate runs under exactly the same rules as an in-tool one.
+**Prompt recipe** — a CLI invocation has no host-provided delegate context, so the prompt is assembled exactly as in-tool (`delegation.md`): role line + the entry's body (absolute paths) + the shared tail. That is the complete prompt; add no second operating block, so a CLI-routed delegate runs under exactly the same rules as an in-tool one.
 
 **Launch it via the helper's `launch_cmd` — never hand-roll the spawn.** The plan emits a ready `launch_cmd` (a `bash -c` body) alongside `prompt_file` and `exit_file`. To spawn:
 - Write the assembled prompt (above) to `prompt_file`.

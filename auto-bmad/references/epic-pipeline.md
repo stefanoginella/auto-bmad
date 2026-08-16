@@ -17,10 +17,7 @@ Epic mode drives a **whole epic** — every actionable story — in one run, the
 - It owns git + finalize bookkeeping directly (`git-and-pr.md` → "Ownership" and "Epic mode", now at epic scope).
 - The delegated prompts are the **exact** `delegation.md` entries — the per-story ones reused verbatim in the loop, plus the epic-scoped TEA / reconcile / retrospective entries.
 
-**Placeholders** are the `delegation.md` glossary (`{e}`/`{s}`, `{key}`, `{slug}`, `{title}`, `<impl>`, `<planning>`, `<spec_path>`, `<project_root>`, `{skill-root}`, …) plus:
-- `<state-dir>` = `<output_folder>/auto-bmad/state`.
-- `<anchor>` — the **epic anchor** `<state-dir>/epic/epic-{e}.yaml` (`state-and-resume.md` → "state/epic/epic-{e}.yaml").
-- `<base>` = the runtime config's `git.base_branch` (`git-and-pr.md` → "Mode detection"); `<sprint_plan_script>` = `skills.sprint_plan_script` from the preflight JSON.
+**Placeholders:** the `delegation.md` glossary (it defines the epic ones too — `<state-dir>`, `<anchor>`, `<base>`, `<sprint_plan_script>`).
 
 ---
 

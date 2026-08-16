@@ -75,18 +75,10 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 
 ## Delegation mechanics
 
-- **Pick the spawn method by host/tier — read `references/delegation-runtime.md`.** That file:
-  - resolves `delegation.host` + `delegation.mode` from config into a tier — `subagents` (a generic host subagent at the phase profile's model: per-call model on Claude Code and Codex, per-call effort on Codex only, opencode inherits the user's model) or `inline` (this context, last resort);
-  - maps each phase to a profile via `phase_profiles` (ten keys) and takes each profile's per-tool model + effort from `profiles` (`assets/profiles.yaml` copied into the runtime config; no persona text, no rendered agent files);
-  - states the **nested-subagent requirement** of the `subagents` tier — orchestrator → delegate → build-auto's own subagents (depth 2) — which Phase 0's `preflight.py` verifies per host (`nesting.status`; print `nesting.fix` verbatim on a hard-stop);
-  - mandates **foreground** spawns — the orchestrator spawns each delegate synchronously, and every prompt tells the delegate to spawn build-auto's subagents synchronously too.
-- **Opt-in external-CLI routing — before picking a tier, check `delegation.cli_phases`.**
-  - A phase listed there is delegated to an external CLI (`claude -p` / `codex exec` / `opencode run`) instead of an in-tool subagent (routing `build`/`followup_review` runs build-auto inside that CLI).
-  - Resolve it with `scripts/cli_delegate.py` (see `references/cli-route.md`).
-  - Still delegation — you build the command and parse the result, never read code.
-  - Default is empty (all in-tool).
-- **The delegate prompt is always the exact content from `references/delegation.md` for that step** — role line first, the shared tail last (autonomy directive + structured result template), placeholders filled (story id, file paths — always pass absolute paths).
-- **After each delegated step:** read the six-field structured result (Outcome / Files changed / Status / Open questions / Deferred work / Blockers); read build-auto's outcome through `story_plan.py --spec <spec_path>`; then checkpoint (commit) and update state (via `state_update.py`). This is identical across tiers.
+- **Host, tier, nesting and the foreground rule — read `references/delegation-runtime.md`** before the first delegated step: it resolves `delegation.host` + `delegation.mode` into a tier (`subagents` / `inline`), maps each phase to a profile via `phase_profiles`, and owns the nested-subagent requirement Phase 0's `preflight.py` verifies (print `nesting.fix` verbatim on a hard-stop).
+- **Before picking a tier, check `delegation.cli_phases`** — a phase listed there is delegated to an external CLI instead (`references/cli-route.md`, resolved with `scripts/cli_delegate.py`); default empty ⇒ all in-tool. Still delegation: you build the command and parse the result, never read code.
+- **The delegate prompt is assembled from `references/delegation.md`** — role line + the entry's body (placeholders filled, always absolute paths) + the shared tail.
+- **After each delegated step:** read the six-field result (`references/delegation.md`); read build-auto's outcome through `story_plan.py --spec <spec_path>`; then checkpoint (commit) and update state (via `state_update.py`). Identical across tiers.
 
 ## Procedure
 
