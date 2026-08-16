@@ -18,20 +18,8 @@
       "repository": "https://github.com/stefanoginella/auto-bmad",
       "license": "MIT",
       "category": "development",
-      "keywords": [
-        "bmad",
-        "module",
-        "orchestrator",
-        "workflow",
-        "automation",
-        "stories",
-        "epic",
-        "tea",
-        "codex"
-      ],
-      "skills": [
-        "./auto-bmad"
-      ]
+      "keywords": ["bmad", "module", "orchestrator", "workflow", "automation", "stories", "epic", "tea", "codex"],
+      "skills": ["./auto-bmad"]
     }
   ]
 }
