@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The security review layer can no longer go silent by reaching for the host's findings tool.**
+  Its closing instruction now matches upstream `bmad-build-auto`'s fixed convention: return findings
+  as text, never route them through a findings-reporting tool the host may offer.
+
 ## [0.27.1] - 2026-08-16
 
 ### Changed
