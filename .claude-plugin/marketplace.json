@@ -1,5 +1,4 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "auto-bmad",
   "description": "BMAD module that runs the BMAD build lane end-to-end — bmad-build-auto plan -> build -> follow-up review, one story at a time or a whole epic in one run — on Claude Code, Codex, or opencode.",
   "owner": {
