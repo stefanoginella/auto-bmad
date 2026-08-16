@@ -51,7 +51,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 
 **Whether to start a pipeline after configuration:**
 - If the user's only intent was `setup`/`configure`/`install`/`reprovision`/`reset-defaults`/`config-check` → stop after reporting what was written (or previewed); do **not** start a pipeline run.
-- If configuration ran **only because it was missing** (a run-intent invocation on a fresh project) → the first-run stop applies: finish config + the review-layers sync, then **stop for a fresh session** rather than launch the pipeline.
+- If configuration ran **only because it was missing** (a run-intent invocation on a fresh project) → **stop for a fresh session** instead of launching the pipeline (`references/state-and-resume.md` → "First-run flow", step 4).
 - Otherwise → continue to the Procedure.
 
 ## The one rule
@@ -59,7 +59,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 **You never do story work yourself.**
 - Every BMAD step — the `bmad-build-auto` plan run, build run and follow-up review pass, every TEA skill, the deferred-work reconcile, the retrospective — runs inside a **delegated generic subagent** spawned at the phase profile's model (or via the `cli_phases` route).
 - **You never read or edit story code, and never edit the spec.** Spec metadata comes only from `scripts/story_plan.py --spec` / `--find-spec`; story/epic titles from `--resolve` / `--epic --planning-dir`; the retro verdict from `--retro-verdict`; TEA values from the delegate's structured result — never from a TEA artifact. Never grep planning/impl markdown (filename-only `find` lookups are fine).
-- **Git plus the orchestrator-owned bookkeeping are yours: you run them directly, never via a delegate** — exact list in `references/git-and-pr.md` → "Ownership": git/PR work (preflight, branching, per-phase commits, the clean-tree gate before every build-auto invocation, push, PR, CI wait, merge prompt); the Phase 0 probes (`preflight.py` incl. uv/Python 3.11/nesting/TOML/`AGENTS.md`, the config-drift heal, the review-layers TOML sync); the sprint-status write-back around build-auto (`story_plan.py --mark-status`, incl. the epic lift, the Phase 8 pre-retro flip and the Phase 9 flip); the Phase 7 halt handling (git-only external-change detection — the re-review itself is a delegated build-auto pass); the Phase 8 ledger archive (+ the Phase 7 tail harvest); the Phase 9 finalize writes; the retro verdict gate ask.
+- **Git plus the orchestrator-owned bookkeeping are yours: you run them directly, never via a delegate** — git/PR work, the Phase 0 probes, the sprint-status write-back around build-auto, the Phase 7 halt handling, the Phase 8 ledger archive, the Phase 9 finalize writes, the retro verdict gate ask. The complete list is `references/git-and-pr.md` → "Ownership" — read it before Phase 1.
 - You write commit/PR messages yourself.
 - Your own actions are: reading config/state; running the helper scripts (`preflight.py`, `story_plan.py`, `state_plan.py`, `state_update.py`, `config_plan.py`, `build_auto_custom.py`, `deferred_ledger.py`, `cli_delegate.py`, `ci_wait.py`) and the upstream picker `uv run <sprint_plan_script> status`; deciding what to delegate; the ownership list; writing the state file; producing the final report.
 - Tempted to edit code, write a test, edit the spec, or run a `/bmad-*` skill directly? **Don't** — delegate it.
@@ -84,7 +84,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
   - Resolve it with `scripts/cli_delegate.py` (see `references/delegation-runtime.md` → "Per-phase external-CLI routing").
   - Still delegation — you build the command and parse the result, never read code.
   - Default is empty (all in-tool).
-- **The delegate prompt is always the exact content from `references/delegation.md` for that step** — role line first, shared autonomy directive last, placeholders filled (story id, file paths — always pass absolute paths).
+- **The delegate prompt is always the exact content from `references/delegation.md` for that step** — role line first, the shared tail last (autonomy directive + structured result template), placeholders filled (story id, file paths — always pass absolute paths).
 - **After each delegated step:** read the six-field structured result (Outcome / Files changed / Status / Open questions / Deferred work / Blockers); read build-auto's outcome through `story_plan.py --spec <spec_path>`; then checkpoint (commit) and update state (via `state_update.py`). This is identical across tiers.
 
 ## Procedure
@@ -153,13 +153,12 @@ The one-line *disposition* is **not** in that wrapper — it lives in the file's
   - On a clean path Phase 9 / E_final already wrote + committed it **before push** (`docs(story-{e}-{s}): pipeline report` / `docs(epic-{e}): pipeline report`) — Step 3 does not re-write it.
   - On any path that didn't reach that pre-push write (a hard-stop in Phases 0–8, `needs-human`, a `stopped` halt, or an override that ended the run early) → Step 3 writes it now as a fallback: append a new `## Report — <ISO timestamp>` section, tagged `(halted — <reason>)` on this pre-finalize path, preserving any earlier sections; **no commit** (the human commits alongside their fix).
   - On a hard-stop BEFORE Phase 1's `init` (no state file yet — e.g. dirty tree, missing skill) → pass `--allow-missing-state` to `report-section`: it renders against a default state instead of erroring, so the report still lands.
-  - Never overwrite on resume.
-  - The ONLY overwrite is a deliberate full re-run of an already-`done` story, after explicit user confirmation (`--overwrite-confirmed`) — if declined, append.
+  - Appends, never overwrites — incl. on resume; the one confirmed-overwrite exception (`--overwrite-confirmed`) is in `references/state-and-resume.md` → "reports/{key}.md".
 - **Chat-only** — printed at the end of every run; not written to the file: the full file portion, **plus** the artifact lines listed under "Chat-only — additional lines" below.
 
 **File portion — fields:** the file portion's fields, heading order, and per-field semantics live in `references/state-and-resume.md` → "Section template" — the **single home**, rendered literally by `scripts/state_update.py report-section` (payload keys are exact; unknown keys are rejected). Don't restate or restructure them here.
 
-**Chat-only — additional lines.** Not committed — the finalization **artifacts/links**, retrievable from git/GitHub/sprint-status later. They add the PR/CI/merge specifics on top of the disposition the file's `Pipeline status` line already carries; the disposition itself is not chat-only.
+**Chat-only — additional lines.** Not committed — the finalization **artifacts/links** (why: `references/state-and-resume.md` → "reports/{key}.md"). They add the PR/CI/merge specifics on top of the disposition the file's `Pipeline status` line already carries.
 - **Final status:** clean (BMAD-level flipped to `done`) vs caveated (left at `review`: draft PR / recorded blocker / waived gate / CI red or timed-out) — or "`done` (pre-retro), PR draft: <reason>" when the Phase 8 pre-retro flip ran and a later clause fired.
   - On a clean completion that was **not** merged → frame the open PR's merge as the human's remaining (optional, non-blocking) step.
   - On a successful merge → say so plainly ("Merged via merge commit; branch deleted") — no further action.

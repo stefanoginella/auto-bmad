@@ -2,6 +2,7 @@
 
 - All git work is performed by the **orchestrator directly** — never delegated (see "Ownership" below).
 - Nothing ever lands on the base branch.
+- **Never rewrite or discard work the orchestrator did not author** — no `git push --force`/`--force-with-lease`, `git reset --hard`, `git checkout -- .`/`git restore` on files it did not write, `git clean`, `--no-verify`: runs are unattended on a shared branch and unfamiliar dirty files may be a human's in-progress work. The documented hard-stop is the recovery — stop and report, and let the human decide.
 - Every phase is its own commit — so the pipeline is resumable and reviewable.
 - **`bmad-build-auto` authors every code commit** (the Phase 5 build run and every Phase 7 review pass commit their own diff on the current branch and never push). The orchestrator commits everything else — spec/plan artifacts, TEA artifacts, sprint-status flips, state, reports — and **never** makes a `feat` commit of story code.
 
@@ -22,7 +23,7 @@ Orchestrator-owned, never delegated:
 - the Phase 9 **merge prompt + `gh pr merge` execution** — opt-in via `git.offer_merge` (default on), only on a clean completion.
 - the Phase 8 **deferred-work archive** (+ the Phase 7 tail **harvest**) — `deferred_ledger.py`; the keep-vs-move judgment and the reconcile stay delegated.
 - the Phase 7 **HITL-halt handling**:
-  - detect external-review changes — a git-only check, never a code read; auto-bmad's own writes are excluded (`pipeline.md` Phase 7 step 3, own-writes exclusion): changed := `git status --porcelain -- . ':(exclude)<output_folder>/auto-bmad' ':(exclude)<project_root>/_bmad/custom/bmad-build-auto.toml'` non-empty OR HEAD moved — `git rev-parse HEAD` ≠ the HEAD when the halt opened this session; on a halt re-opened after `stopped`, HEAD moved := `git log --format=%h --since=<state updated_at, read BEFORE the re-open reset write> HEAD -- . ':(exclude)<output_folder>/auto-bmad' ':(exclude)<project_root>/_bmad/custom/bmad-build-auto.toml'` non-empty.
+  - detect external-review changes — the git-only check + own-writes exclusion in `pipeline.md` Phase 7 step 3 (never a code read).
   - commit them (`fix(story-{e}-{s}): external review changes`).
   - re-open the halt ONCE after the re-review.
   - the **re-review of those changes is delegated**, NOT orchestrator-owned — one more `followup-review` build-auto pass at `followup_review` (see `pipeline.md` Phase 7 step 3).
@@ -61,7 +62,6 @@ These stay orchestrator-owned because it already holds the full pipeline context
 - Create it explicitly off base — `git switch -c <branch> <base_branch>`.
   - NEVER a bare `git switch -c <branch>` — because preflight allows a clean tree on an unrelated branch, and a bare `-c` would branch off it, leaking foreign commits into the PR.
   - On resume → `git switch <branch>` if it already exists.
-- Never `commit`/`push` to the base branch.
 
 ## Commits (between phases)
 - Use Conventional Commits, **in full** — never subject-only (see "Message body"):
@@ -126,9 +126,10 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - Stage the phase artifacts **and** the state file first — the single-commit rule above.
 
 ## PR (Phase 9, mode `remote` only)
-- Before anything: no dirty tree OTHER THAN auto-bmad's own writes — the Phase 7 own-writes exclusion set: `<output_folder>/auto-bmad/**` (state, reports, config.yaml) and `<project_root>/_bmad/custom/bmad-build-auto.toml` (a pending Phase 7/8 folded state write, or a Phase 0 auto-applied heal/layers regen on a resume that entered at Phase 8/9) — those fold into the report commit; any other dirty file ⇒ hard-stop `unexpected uncommitted changes before finalize: <files>`.
+- Before anything: no dirty tree OTHER THAN auto-bmad's own writes — the own-writes exclusion set in `pipeline.md` Phase 7 step 3 (here: a pending Phase 7/8 folded state write, or a Phase 0 auto-applied heal/layers regen on a resume that entered at Phase 8/9) — those fold into the report commit; any other dirty file ⇒ hard-stop `unexpected uncommitted changes before finalize: <files>`.
 - Push: `git push -u origin <branch>`.
 - Open PR: `gh pr create --base <base_branch> --head <branch> --title "<title>" --body "<body>"`.
+- **Push/PR failure** — a non-zero `git push` or `gh pr create` (rejected push, expired `gh auth`, protected branch) ⇒ hard-stop: report `needs-human` with the command's error verbatim under "Needs attention", leave the commits on the branch, and retry nothing automatically. A rejected push is resolved by the human (see the no-force rule at the top of this file), never by a force-push.
 - Add `--draft` if **any** clause of the **draft predicate** holds (clauses 1–4 below):
   - Evaluated deterministically by `scripts/state_plan.py --state-dir <state-dir> --story-key {key} --finalize` from the story's state file.
   - Run it **twice** in Phase 9:

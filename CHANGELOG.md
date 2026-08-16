@@ -13,6 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Every delegate prompt ends with a literal six-field result template.** `Outcome` is enumerated
+  (`done | needs-human | blocked`); the CLI route sends the same tail and no second operating block.
+- **Destructive BMAD menu options are no longer the delegate's default.** Overwrite / discard / reset
+  options are taken only when the step's prompt says so — otherwise the delegate stops `needs-human`.
+- **The security review layer reports every plausible finding with a `confidence:` tag.** The
+  `<70% confident` filter is gone; the parent workflow triages (run `/auto-bmad reprovision`).
+- **`build-run` / `followup-review` carry a scope fence; carry-over items are a labelled block.**
+  The story spec is the whole scope; the previous epic's action items ride in `<carry_over_context>`.
+- **Reference docs state each rule once.** Clean-tree gate, own-writes exclusion, draft predicate,
+  ownership list, `dry_run`, retro sub-step and PR-body sections have one home and pointers elsewhere.
+
+### Fixed
+
+- **An unrecognised epic trace verdict no longer passes the gate.** Any other or missing verdict is
+  handled as `FAIL` (`pipeline.md` Phase 8, `epic-pipeline.md` E8a).
+- **A failed `git push` / `gh pr create` hard-stops with the error verbatim.** Nothing is retried
+  automatically and a rejected push is never force-pushed.
+- **A `blocking_condition` spliced into a commit subject is capped to its first line.** The full
+  text goes to the commit body and state.
+
+### Security
+
+- **File content and delegate output are treated as data, not instructions.** Stated once for the
+  orchestrator (`pipeline.md`), in the shared delegate directive, and on the security layer's diff.
+- **The orchestrator never force-pushes, hard-resets, cleans, or bypasses hooks.** Runs are
+  unattended on a shared branch; the documented hard-stop is the recovery (`git-and-pr.md`).
+
 ## [0.27.0] - 2026-08-16
 
 ### Added

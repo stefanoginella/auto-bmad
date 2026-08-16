@@ -105,7 +105,7 @@ Starting mid-pipeline requires the earlier outputs to already exist. Before skip
 - start at **4 (atdd)** or later → the story's build-auto spec must exist at `ready-for-dev` or later (never `draft`/`blocked`): `python3 {skill-root}/scripts/story_plan.py --find-spec --impl-dir <impl> --story-key {key} --sprint-status <impl>/sprint-status.yaml` (`found: false` ⇒ hard-stop; `ambiguous: true` ⇒ hard-stop listing `candidates`); record `spec_path` in state (or reuse the state's `spec_path` and read `--spec <spec_path>` for the status).
 - start at **5 (build)** or later → same.
 - start at **7 (review)** or later → the spec's `status` (`--spec <spec_path>`) is `done` and the sprint entry is `review` (`--resolve` → `current_status`, or the `--epic` read's `epic_stories[].status`; `--find-spec`'s `status` is the spec's frontmatter status, not the sprint entry).
-  - Entering Phase 7 with no Phase 5 result (this override, or the status-mismatch guard's `review` ⇒ Phase 7 route) first seeds `build.*` from `story_plan.py --spec <spec_path>`, then runs ONE follow-up pass **regardless of the recommendation gate**; `skip code-review` still wins (`pipeline.md` Phase 7).
+  - Entering Phase 7 with no Phase 5 result (this override, or the status-mismatch guard's `review` ⇒ Phase 7 route) is handled by `pipeline.md` Phase 7's "Entry at Phase 7 without a Phase 5 result" rule — the `build.*` seed, the one unconditional pass, and the `skip code-review` precedence.
 - start at **9 (finalize)** → there must be commits on the story branch to push.
 
 Prefer the normal resume path (`state-and-resume.md`) over `start_phase` when a state file exists. Use `start_phase` for deliberate manual control.
