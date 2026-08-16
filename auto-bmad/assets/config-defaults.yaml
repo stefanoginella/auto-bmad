@@ -32,7 +32,7 @@ delegation:
                             # still come from that phase's profile). A few examples:
                             #   cli_phases: { followup_review: codex }   # the follow-up review pass on Codex (Codex reviews AND triages/patches)
                             #   cli_phases: { retrospective: codex }     # run the retro via `codex exec`
-                            #   cli_phases: { build: claude }            # run bmad-build-auto itself via `claude -p` (needs no nesting)
+                            #   cli_phases: { build: claude, followup_review: claude }  # run bmad-build-auto via `claude -p`; routing both skips the in-tool nesting check
 tea:
   gate_max_iterations: 2    # Phase 8 trace-gate remediation cap before only waive/stop remain
   story_trace_advisory:     # per-story, non-blocking trace pass; self-activating on long high-risk epics

@@ -1,123 +1,122 @@
 # Config, state, resume & first-run
 
-Everything auto-bmad persists lives under `{project-root}/_bmad-output/auto-bmad/`. One section each below:
+Everything auto-bmad persists lives under `{output_folder}/auto-bmad/` (`{output_folder}` = `core.output_folder` from the BMAD central TOML config — read only through `preflight.py --central-config-only`, never by hand). One section each below:
 - `config.yaml` — project config, created on first run.
-- `state/{key}.yaml` — one resumable state file per story.
-- `retro-notes/epic-{e}.md` — accumulated notes feeding the epic retrospective.
-- `reports/{key}.md` — per-story report log, appended each run.
+- `state/{key}.yaml` — one resumable state file per story (epic mode adds the anchor `state/epic/epic-{e}.yaml`).
+- `reports/{key}.md` — per-story report log, appended each run (epic mode: one `reports/epic-{e}.md`).
 
 ## config.yaml
 ```yaml
-version: 1
-profiles_source_version: "0.26.1"  # abm version whose assets/agents/profiles.yaml seeded the profiles +
-                                  # phase_profiles blocks below; re-stamped by the Phase 0 heal (ADDITIVE-only —
-                                  # never overwrites user values; see assets/config-defaults.yaml header) or `reprovision`.
-delegation:                # spawn mechanism — host/mode auto-detected each run
-  host: auto               # auto (detect each run) | claude-code | codex | opencode | other
-  mode: auto               # auto (derive from host) | custom-subagents | general-subagents | inline
-  target_tools:            # tools to provision agents for; detected from installed skill dirs
-    - claude-code          # (rules: module-setup.md) and confirmed at first run. May also list
-    - codex                # `opencode`. More than one = run in any of those tools, no reconfig.
-  cli_phases: {}           # OPT-IN per-phase external-CLI routing: keys = phase_profiles keys, value =
-                           # claude|codex|opencode; empty/absent => every phase uses its tier. Hand-edited.
-                           # Semantics: delegation-runtime.md "Per-phase external-CLI routing"; examples: assets/config-defaults.yaml.
+version: 1                          # schema version (nothing reads it; stale keys are handled by the removed-key policy below)
+profiles_source_version: "0.26.1"   # abm version whose assets/profiles.yaml seeded the profiles + phase_profiles blocks below;
+                                    #   restamped by the Phase 0 heal (ADDITIVE-only — never overwrites user values; see
+                                    #   assets/config-defaults.yaml header) or a full `reset-defaults`
+delegation:                         # spawn mechanism — host/mode re-detected every run (the stored values are inert)
+  host: auto                        # auto | claude-code | codex | opencode | other
+  mode: auto                        # auto (derive from host) | subagents | inline   (legacy value custom-subagents is read as subagents)
+  cli_phases: {}                    # OPT-IN per-phase external-CLI routing: <phase_profiles key> -> claude|codex|opencode; empty/absent
+                                    #   => every phase uses its tier. Setup answer (heal-immune), hand-edited. Semantics:
+                                    #   delegation-runtime.md "Per-phase external-CLI routing"; examples: assets/config-defaults.yaml
 tea:
-  enabled: true            # set at first run after checking TEA skills exist
-  framework_ci: prompt     # prompt | done | skip  (resolved at first run)
-  gate_max_iterations: 2   # Phase 8 trace-gate remediation cap (automate + re-trace) before only waive/stop are offered
-  story_trace_advisory:    # per-story, non-blocking trace pass — shifts coverage-gap visibility left on LONG epics
-    enabled: true          # self-activating: dormant on short epics (see min_epic_stories), fires only on long high-risk stories
-    min_epic_stories: 6    # only runs in epics with >= this many stories; short epics rely on the epic-end gate alone
-    skip_last_stories: 3   # also skip the epic's last N stories (distance-to-gate, tea-policy.md §3) — their gap surfaces at the epic-end trace gate anyway. Absent in older configs => orchestrator defaults to 3
+  enabled: true                     # interviewed at first run (default yes iff bmad-testarch-* installed)
+  framework_ci: prompt              # prompt | done | skip (resolved at first run)
+  gate_max_iterations: 2            # Phase 8 trace-gate remediation cap (automate + re-trace) before only waive/stop are offered (constant default)
+  story_trace_advisory:             # per-story, non-blocking trace pass — shifts coverage-gap visibility left on LONG epics (constant defaults)
+    enabled: true                   # self-activating: dormant on short epics (see min_epic_stories), fires only on long high-risk stories
+    min_epic_stories: 6             # only runs in epics with >= this many stories; short epics rely on the epic-end gate alone
+    skip_last_stories: 3            # also skip the epic's last N stories (tea-policy.md §3) — their gap surfaces at the epic-end trace gate
 git:
-  mode: auto               # auto -> detect; or force "remote" / "local"
-  branch_prefix: "story/"
-  epic_branch_prefix: "epic/"  # epic mode: the one branch a whole epic run commits to (epic/{e}-{slug}). Absent => orchestrator defaults to "epic/"
-  base_branch: main        # auto-detected; written after first detection
-  offer_merge: true        # Phase 9: ask the user whether to merge a clean-completion PR
-  ci_wait_minutes: 30      # max wait for in-progress CI before deciding (used only when offer_merge is on)
+  mode: auto                        # auto -> detect | remote | local (Full setup; heal-immune)
+  branch_prefix: "story/"           # constant default
+  epic_branch_prefix: "epic/"       # epic mode: the one branch a whole epic run commits to (epic/{e}-{slug}) (constant default)
+  base_branch: main                 # detected once; never asked; never healed
+  offer_merge: true                 # Phase 9: ask whether to merge a clean-completion PR (constant default)
+  ci_wait_minutes: 30               # max wait for in-progress CI before deciding (only when offer_merge is on) (constant default)
 code_review:
-  max_iterations: 2
-  security_review: true    # run the dedicated per-story security review inside the Phase 7 loop (auto-bmad-local; ab-security delegate). false => skip it. Absent => orchestrator defaults to true
-  verification_gap: true   # run the verification-gap review inside the Phase 7 loop (upstream bmad-review-verification-gap, single-instance like security; ab-verification delegate). false => skip it. Absent => defaults to true
-  epic_review: true        # epic mode: run the Tier-B epic integration review (heavy adversarial pass; no halt — decisions auto-resolved, unconverged ships a draft). false => per-story thin review only. Absent => defaults to true
-  tier_a_lenses: [auditor, security]  # epic mode: the per-story thin-review lens set (one pass, no loop/halt); security gated by security_review; add `verification` to opt the verification-gap lens in (gated by verification_gap). Absent => defaults to [auditor, security]
-  epic_diff_chunk_threshold_lines: 6000  # epic mode: chunk the Tier-B review when the epic diff exceeds this many lines (per-story sub-diffs + joint triage); 0 => never. Absent => defaults to 6000
-# profiles + phase_profiles complete the file — single source: assets/agents/profiles.yaml
-# (first run copies it in verbatim; edit it or this copy, then `/auto-bmad reprovision`;
-# `/auto-bmad reset-defaults` re-seeds — see below). Codex model names ship as real defaults —
-# retune them (in the asset) if your install differs; set opencode.model per profile for
-# per-phase tiering + cross-vendor review diversity. Shape only:
-profiles: {…}              # ab-deep | ab-standard | ab-alt-deep | ab-alt-standard, each:
-                           #   {claude: {model, effort}, codex: {model, reasoning_effort},
-                           #    opencode: {model, variant}} — opencode is model-only + ships model
-                           #   BLANK (inherit your opencode default); variant is cli_phases-only.
-                           #   CUSTOM profiles may be ADDED here (same field set incl. the persona
-                           #   strings; name MUST start with `ab-`) — reprovision renders every
-                           #   ab-* profile it finds; a whole-block reset-defaults prunes them
-phase_profiles: {…}        # create_story, dev_story, code_review_review, code_review_review_secondary,
-                           #   code_review_review_tertiary (the two extra reviewer slots are OPTIONAL —
-                           #   blank "" => disabled; secondary ships on, tertiary ships blank),
-                           #   code_review_security (dedicated security review; blank "" => primary profile),
-                           #   code_review_verification (verification-gap review; blank "" => primary profile),
-                           #   code_review_fix, tea_triage, tea_per_story, tea_epic, tea_epic_audit,
-                           #   retrospective, project_context, uat (git/PR work runs in the orchestrator
-                           #   directly — no delegate profile). Values may name ANY profile in the
-                           #   profiles block above — shipped or custom
+  followup: recommended             # recommended | always | never — Phase 7 follow-up bmad-build-auto review pass on the done spec at the
+                                    #   followup_review profile: recommended => only when the spec says followup_review_recommended: true;
+                                    #   always => every story; never => skip (constant default)
+  security_layer: true              # write the auto-bmad-security review layer into _bmad/custom/bmad-build-auto.toml (constant default)
+  cross_model_layer: codex          # codex | claude | opencode | "" — external CLI for the auto-bmad-cross-model layer; ENV-DETECTED at first run
+                                    #   (the first of codex, claude, opencode on PATH that is not the host, else ""); absent key => "";
+                                    #   NOT in config-defaults.yaml (setup answer, heal-immune)
+build:
+  spec_approval: false              # opt-in per-story HITL halt between Phase 3 (plan) and Phase 4/5 (constant default; per-run override
+                                    #   `approve spec`; never in epic mode)
+profiles:                           # copied VERBATIM (block style) from assets/profiles.yaml at first run — model/effort ONLY, no persona
+  ab-deep:                          #   strings (every delegation.md prompt is self-contained). Shown flow-style here for brevity:
+    claude: {model: opus, effort: xhigh}               # claude.model = the Agent tool's per-call model; claude.effort is used ONLY by the
+                                                       #   cli_phases route / cross-model layer (`claude -p --effort`)
+    codex: {model: gpt-5.5, reasoning_effort: xhigh}   # both are per-call knobs of Codex's spawn_agent (and `codex exec` on the CLI route)
+    opencode: {model: "", variant: ""}                 # BOTH used ONLY by the cli_phases route / cross-model layer (`opencode run -m/--variant`);
+                                                       #   in-tool opencode subagents inherit the user's default model; ships BLANK (inherit)
+  ab-standard: {…}                  # same field set — shipped values + what each profile drives: assets/profiles.yaml
+  ab-alt-deep: {…}
+  ab-alt-standard: {…}
+  ab-security: {…}                  # + any CUSTOM profile (any name, same field set) — phase_profiles may name shipped or custom profiles
+phase_profiles: {…}                 # build, followup_review, security_layer, cross_model_layer, tea_triage, tea_per_story, tea_epic,
+                                    #   tea_epic_audit, retrospective, deferred_reconcile — the SINGLE phase->profile binding (pipeline.md /
+                                    #   delegation.md name these keys, never raw profiles); git/PR work runs in the orchestrator directly —
+                                    #   no delegate profile. delegation.cli_phases keys are exactly these keys
 ```
+- **Retune paths** (write a pointer comment above the copied `profiles:` block naming both): edit the `profiles` / `phase_profiles` copy here, then `/auto-bmad reprovision` (re-syncs the review-layers TOML that bakes the `security_layer` / `cross_model_layer` models — see below); discard retunes with `/auto-bmad reset-defaults`.
+- **Absent-key orchestrator fallbacks** (must equal `assets/config-defaults.yaml`): `code_review.followup: recommended`, `code_review.security_layer: true`, `code_review.cross_model_layer: ""`, `build.spec_approval: false`, `git.epic_branch_prefix: "epic/"`, `git.offer_merge: true`, `git.ci_wait_minutes: 30`, `tea.gate_max_iterations: 2`, `tea.story_trace_advisory.{enabled: true, min_epic_stories: 6, skip_last_stories: 3}`, `delegation.cli_phases: {}`.
+- **Removed keys (ignored).** Old configs may still carry them; `config_plan.py` ignores unknown keys and never strips them (`--check`/`--apply` report the stale ones informationally; only `--reset both|profiles` prunes). This note is the ONE sanctioned place a shipped reference spells these names — never use, document as live, or accept them as input elsewhere: `delegation.target_tools`; `code_review.max_iterations`, `code_review.security_review`, `code_review.verification_gap`, `code_review.epic_review`, `code_review.tier_a_lenses`, `code_review.epic_diff_chunk_threshold_lines`; `phase_profiles` keys `create_story`, `dev_story`, `code_review_review`, `code_review_review_secondary`, `code_review_review_tertiary`, `code_review_security`, `code_review_verification`, `code_review_fix`, `project_context`, `uat`; profile `ab-verification`; per-profile `description` / `role_blurb` / `status_example` (persona strings — ignored if present; pruned by `--reset both|profiles`). `delegation.mode: custom-subagents` in an old config is read as `subagents` (alias) and reported by `config-check` (`legacy_mode_alias`).
 
-## First-run flow (only when config.yaml is absent)
-This is the single interactive episode in normal operation.
-- Always confirm `target_tools`.
-- Then offer **quick vs full** setup.
-- Use AskUserQuestion.
+## First-run flow (config.yaml absent, or an explicit `setup`/`configure`/`install`)
+This is the single interactive episode in normal operation. Use AskUserQuestion. It runs after the help-row registration (`assets/module-setup.md`) — `setup`/`configure`/`install` = that registration + this flow (incl. the review-layers sync in step 4). Nothing is rendered into the repo — no agent files, no restart caveat.
+- **Existing config (explicit `setup`/`configure`/`install` on a provisioned project):** the same flow, prefilled with the current values. Step 0 keeps every existing key as it is (env-detects `code_review.cross_model_layer` only when the key is absent); the interview answers overwrite their own keys inside the setup blocks (`delegation`/`tea`/`git`/`code_review`/`build`) in place — every other key (e.g. `delegation.cli_phases`, `git.base_branch`) stays; step 4 leaves `profiles`/`phase_profiles`/`profiles_source_version` untouched (those are the Phase 0 heal / `reset-defaults` domain), then syncs + stops as usual.
+- **Headless (`accept all defaults` / `--headless` passed through by `module-setup.md`):** no prompts — Quick depth; `tea.enabled` = whether `bmad-testarch-*` is installed; `framework_ci` = `done` when the step-2 probe finds both, else `skip` (never auto-run); everything else the seeded values. Still print the step-4 summary.
 
-0. **Seed delegation & profiles (non-interactive).** All of these are file-edited later, never interviewed.
-   - Set `delegation.host`/`mode` to `auto`.
-   - Seed `delegation.cli_phases: {}`.
-   - Copy the `profiles` + `phase_profiles` defaults from `{skill-root}/assets/agents/profiles.yaml`.
-   - Detect the live host.
-   - Run `reprovision` (`scripts/render-agents.py`) before the pipeline starts — if the host needs `custom-subagents` but its agent files are missing.
-1. **Confirm `target_tools` (always).** Detect from the installed skill dirs on disk and confirm with the user — exact rules: `assets/module-setup.md` → "Provision Delegate Agents" (Step 1).
-   - Reuse the `abm` value `module-setup.md` just confirmed — if it already ran *this session*.
-   - Run `reprovision` for the confirmed set — if it differs from what agents were rendered for.
-2. **Choose setup depth.** Ask **Quick** or **Full**.
-   - **Quick** (recommended) — `target_tools` + TEA only; sensible defaults for everything else. Skip step 4.
-   - **Full** — also set git + code-review prefs.
-3. **TEA (both depths).** Detect the TEA skills (`bmad-testarch-*`) and ask `tea.enabled`.
+0. **Seed (non-interactive).** All of these are file-edited later, never interviewed.
+   - `delegation.host` / `delegation.mode` = `auto`; `delegation.cli_phases: {}`.
+   - Copy the `profiles` + `phase_profiles` blocks VERBATIM from `{skill-root}/assets/profiles.yaml`.
+   - Seed `code_review.followup: recommended`, `code_review.security_layer: true`, `build.spec_approval: false`.
+   - **Env-detect `code_review.cross_model_layer`:** the FIRST of `codex`, `claude`, `opencode` that is on PATH AND is not the detected host; else `""`. (A setup answer, not a shipped default — the heal never touches it; a user who wants a different tool sets it in the Full interview or in `config.yaml`.)
+1. **Choose setup depth.** Ask **Quick** or **Full**.
+   - **Quick** (recommended) — TEA only; the seeded values for everything else. Skip step 3.
+   - **Full** — also git, review and build prefs.
+2. **TEA (both depths).** Detect the TEA skills (`bmad-testarch-*`) and ask `tea.enabled`.
    - Default "yes" if present.
    - Default "no" if absent — don't offer yes when absent.
-   - If enabled, resolve `framework_ci` via `preflight.py --detect-framework-ci` (`framework.configs` = test-framework configs found, `framework.ci_present` = CI workflow):
+   - If enabled, resolve `framework_ci` with the framework probe — first resolve host + tier per `delegation-runtime.md` → "Resolving host & mode" (config absent ⇒ pure detection), then:
+     ```
+     python3 {skill-root}/scripts/preflight.py --project-root <project_root> --host <host> --tier <tier> --detect-framework-ci
+     ```
+     (`--host`/`--tier` are required for this probe; `--central-config-only` cannot be combined with it.) Read ONLY `framework.configs` (test-framework configs found) and `framework.ci_present` (CI workflow) from its JSON here — its `hard_stop`/`hard_stop_reasons` (git tree, nesting, …) are Phase 0's concern, not the first-run flow's:
      - Both present → `framework_ci: done` silently.
-     - Missing → **ask** to run one-time `/bmad-testarch-framework` + `/bmad-testarch-ci` now (delegate to `ab-standard`) or `skip` — never auto-run unasked, because it is heavy, infra-choosing setup.
-4. **Full only — extra prefs** (each prefilled with the default shown):
-   - `git.mode` (auto | remote | local; default auto).
-   - `git.branch_prefix` (default `story/`).
-   - `code_review.max_iterations` (default 2).
-   - `git.base_branch` is auto-detected, never asked.
-5. **Write `config.yaml`** with the seeded delegation/profiles, the confirmed `target_tools`, the answers, and detected `git`/`base_branch` values (Quick fills the step-4 fields with the defaults above).
-   - Above the copied `profiles:` block, write a pointer comment naming both retune paths (*edit here + `/auto-bmad reprovision`*; *discard edits with `/auto-bmad reset-defaults`*).
+     - Missing → **ask** to run the one-time `/bmad-testarch-framework` + `/bmad-testarch-ci` now (delegated at the `tea_per_story` profile's model) or `skip` — never auto-run unasked, because it is heavy, infra-choosing setup.
+3. **Full only — extra prefs** (each prefilled with the seeded default):
+   - `git.mode` (auto | remote | local; default auto) and `git.branch_prefix` (default `story/`).
+   - **Follow-up review pass** — `code_review.followup`: *recommended (default)* / *always* / *never*.
+   - **Extra review layers inside build-auto** (asked once; the answer writes the project-wide `_bmad/custom/bmad-build-auto.toml` managed region — say explicitly: "these layers also run for a manual `/bmad-build-auto`"): *Security + cross-model on `<tool>`* [offered only when some external CLI ≠ host is on PATH — `<tool>` = the step-0 detected tool, labelled "(recommended)"] / *Security only* / *None*. Sets `code_review.security_layer` + `code_review.cross_model_layer`; any other tool can be set later in `config.yaml` + `/auto-bmad reprovision`.
+   - **Spec approval** — `build.spec_approval`: *No (default — unattended)* / *Yes (pause after each plan for approval)*.
+   - `git.base_branch` is auto-detected, never asked. Quick fills all of these with the seeded values.
+4. **Write `config.yaml`** with the seeded blocks, the answers, and the detected `git` / `base_branch` values.
+   - Above the copied `profiles:` block, write the retune-paths pointer comment (config.yaml section above).
    - Stamp `profiles_source_version` with the `module_version` from `{skill-root}/assets/module.yaml`.
-   - **Then stop — do not start the pipeline this session** — because it would waste the context window that just did setup.
-   - Report what was configured, then tell the user how to begin the first story:
-     - **`custom-subagents` tier (Claude Code / Codex):** fully quit and relaunch the tool before `/auto-bmad` (a `/clear` or "new chat" is not enough) — see `delegation-runtime.md` → "Newly-rendered agents need a process restart".
-     - **Other tiers:** a fresh session/context is enough — no project agents to load.
+   - **Then sync the review layers:**
+     ```
+     python3 {skill-root}/scripts/build_auto_custom.py --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml --apply
+     ```
+     Surface its JSON (`layers`, `warnings`; `errors` / exit 2 ⇒ report the message — nothing was written — and still stop).
+   - **Then stop — do not start the pipeline this session** (it would waste the context window that just did setup). Report what was configured, then: "start a fresh session and run `/auto-bmad`".
 
 ## reset-defaults — restore shipped profile defaults
-`/auto-bmad reset-defaults [scope]` discards retunes in `config.yaml` and re-seeds the **asset-sourced** blocks from `{skill-root}/assets/agents/profiles.yaml`.
+`/auto-bmad reset-defaults [scope]` discards retunes in `config.yaml` and re-seeds the **asset-sourced** blocks from `{skill-root}/assets/profiles.yaml`.
 - It is also the one-shot fix for a `manual_review` item the heal won't auto-write — a sub-key missing from an existing profile.
 - **Config-only:** report what changed, then stop — never start a pipeline.
 
 **Scope** (the optional arg; bare = both asset blocks):
 - *(omitted)* — both `profiles` and `phase_profiles`.
 - `profiles` — every profile block.
-  - Also **prunes** a profile present in the config but absent from the asset — the renamed/dropped remedy; pruned names return on `removed_profiles`.
-  - Doesn't touch `phase_profiles` — so a *custom* mapping pointing at a pruned profile dangles (bare scope resets both).
+  - Also **prunes** a profile present in the config but absent from the asset — the renamed/dropped remedy; pruned names return on `removed_profiles`. Stale per-profile sub-keys (the persona strings of the removed-keys note) are dropped too (`would_change` entries with `default: null`).
+  - Doesn't touch `phase_profiles` — so a *custom* mapping pointing at a pruned profile dangles (bare scope resets both; a bare/`phase_profiles` reset also drops stale mappings).
 - `<profile-name>` (e.g. `ab-standard`) — that one profile. Never prunes — a user-added profile is left intact.
 - `phase_profiles` — the phase→profile mapping only.
 
 **Boundary (state it to the user).** reset-defaults touches **only** `profiles`, `phase_profiles`, and the `profiles_source_version` stamp.
-- It touches **never** `delegation`/`tea`/`git`/`code_review` — because those are setup answers, not shipped defaults, and reset *overwrites* where the Phase 0 heal only *appends*, so it would clobber them.
+- It touches **never** `delegation`/`tea`/`git`/`code_review`/`build` — because those are setup answers, not shipped defaults, and reset *overwrites* where the Phase 0 heal only *appends*, so it would clobber them.
 - Redoing those is `setup`/`configure`.
 
 **Flow:**
@@ -126,23 +125,21 @@ This is the single interactive episode in normal operation.
    ```
    python3 {skill-root}/scripts/config_plan.py --reset <scope> --config <output_folder>/auto-bmad/config.yaml
    ```
-   Empty `would_change`, empty `removed_profiles`, **and** no `version_restamp` → "Already at shipped defaults for `<scope>`." and stop.
+   (`status: error` + `valid_scopes` ⇒ unknown scope — surface and stop.) Empty `would_change`, empty `removed_profiles`, **and** no `version_restamp` → "Already at shipped defaults for `<scope>`." and stop.
 3. **Confirm** with `AskUserQuestion`. This is the sole interactive moment.
-   - Show the `current → default` diff (truncate long persona strings).
+   - Show the `current → default` diff from `would_change` (a `default: null` entry = a key the reset drops).
    - Call out **separately — never buried in the diff — any `removed_profiles`**: those blocks are deleted outright, so a user-added profile would be lost.
    - Options: **Reset** / **Cancel**.
    - Cancel → stop, write nothing.
-4. On confirm, write by re-running with `--write` (backs the prior config up to `config.yaml.bak`, then overwrites). Report the backup path and any `version_restamp`:
+4. On confirm, write by re-running with `--write` (backs the prior config up to `config.yaml.bak`, then overwrites; JSON `backup` = the path). Report the backup path and any `version_restamp`:
    - A **full** reset restamps `profiles_source_version` to the module version.
    - A **scoped** reset leaves it.
-5. **Re-render delegates iff the plan's `render_needed` is true** — the `ab-*` agent files are now stale. Use the **same reprovision path** the rest of the skill uses; don't re-derive it here:
-   - Resolve host/tier per `delegation-runtime.md`.
-   - Read `delegation.target_tools` from the config just written.
-   - Run the `reprovision` action exactly as `module-setup.md` describes.
-   - No-op off `custom-subagents`.
-   - A `phase_profiles`-only reset never sets `render_needed`.
-   - When agents were rendered, surface the **process-restart caveat** (`delegation-runtime.md` → "Newly-rendered agents need a process restart").
-6. Report scope, what was reset, the backup path, restamp, and whether a relaunch is needed. Stop.
+5. **Re-sync the review layers iff the plan's `layers_sync_needed` is true** — true when the plan changes or prunes any profile, or remaps `phase_profiles.security_layer` / `phase_profiles.cross_model_layer` (the two layers bake model + effort from the profiles those mappings name, so the managed TOML region is now stale). Use the same command as `reprovision`, never re-derive it:
+   ```
+   python3 {skill-root}/scripts/build_auto_custom.py --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml --apply
+   ```
+   Surface its JSON (`layers`, `warnings`, `errors`). A `phase_profiles`-only reset that touches neither layer mapping never sets `layers_sync_needed`.
+6. Report scope, what was reset, the backup path, restamp, and whether the review layers were re-synced. Stop.
 
 ## config-check — preview pending config/profile updates (and optionally apply them)
 `/auto-bmad config-check` reports how `config.yaml` differs from the shipped defaults — what an update would **add**, **everything you've changed**, and the heal-immune setup answers — then offers to bring the config up to date. **Read-only until you confirm.**
@@ -157,17 +154,18 @@ This is the single interactive episode in normal operation.
    ```
 3. Render the **drift report** exactly as `pipeline.md` → "Drift report rendering" specifies — the two sides (*New since v<config>* + *Your customisations*), preceded by a version line (`config v<config> → module v<module>`), read straight from the `--check` JSON — **never read code**.
    - `status: fresh` ⇒ the *New* side is empty (say "nothing new since v<module>"), but still render *Your customisations* so the user sees their retunes.
-4. **Setup answers (config-check only — NOT the Phase 0 pause).** After the two sides, render the `--check` JSON's `setup_answers` so the user sees *every* deviation — including the heal-immune answers the two diff-sides structurally cannot compare (they have no shipped default):
-   - Heading *Setup answers (no shipped default — untouched by any heal)* — one `path = value` per `setup_answers` entry (e.g. `delegation.cli_phases`, `tea.enabled`, `tea.framework_ci`, a forced `git.mode`).
-   - Then the note: *Note: your hand-edited `delegation.cli_phases` and `tea.framework_ci` are setup answers, not drift — they have no shipped default to compare against, so they're never flagged as customisations and never touched by any heal (`reset-defaults` leaves them too; redo them via `setup`).*
+   - After the two sides, add the informational stale surface (never part of the drift verdict, ignored by the heal, pruned only by `reset-defaults`): *Stale phase mappings (ignored)* from `stale_phase_profiles` and *Stale profile keys (ignored)* from `stale_profile_keys` (`{profile, key}` — e.g. an old persona string as `meta:<key>`); omit each heading when its list is empty. `legacy_mode_alias: true` ⇒ one line: *your `delegation.mode` still uses the legacy spelling — it is read as `subagents`; set it to `subagents` (or `auto`) when convenient.*
+4. **Setup answers (config-check only — NOT the Phase 0 pause).** After that, render the `--check` JSON's `setup_answers` so the user sees *every* deviation — including the heal-immune answers the two diff-sides structurally cannot compare (they have no shipped default):
+   - Heading *Setup answers (no shipped default — untouched by any heal)* — one `path = value` per `setup_answers` entry (`delegation.cli_phases`, `tea.enabled`, `tea.framework_ci`, a forced `git.mode`, `code_review.cross_model_layer`).
+   - Then the note: *Note: your hand-edited `delegation.cli_phases`, `tea.framework_ci` and `code_review.cross_model_layer` are setup answers, not drift — they have no shipped default to compare against, so they're never flagged as customisations and never touched by any heal (`reset-defaults` leaves them too; redo them via `setup`, or edit `config.yaml` + `/auto-bmad reprovision` for the cross-model tool).*
    - **Omit this whole block — heading and note — when `setup_answers` is empty** (nothing heal-immune to surface).
 5. **Offer to apply** — the on-demand equivalent of the Phase 0 pre-run pause's "Apply defaults & continue":
-   - **Pending predicate** — would `--apply` write anything: any of `missing_profiles` / `missing_phase_profiles` / `missing_setup` is non-empty, **OR** `version.drift` is true. (`manual_review` is NOT in it — the heal never auto-writes it; its fix is `reset-defaults`.)
+   - **Pending predicate** — would `--apply` write anything: any of `missing_profiles` / `missing_phase_profiles` / `missing_setup` is non-empty, **OR** `version.drift` is true. (`manual_review` is NOT in it — the heal never auto-writes it; its fix is `reset-defaults`. Neither are the stale lists.)
    - **Predicate false** → nothing to apply; show the **How to act** guidance below and stop.
    - **Predicate true** → open an `AskUserQuestion` (the sole interactive moment):
      - **Update config to v<module> now** *(recommended)* — append the new keys/profiles/mappings and restamp `profiles_source_version`; **append-only, so every value you've set and every profile you've added is preserved**.
      - **Leave it — just previewing** — write nothing.
-   - **Update** → re-run with `--apply`; confirm concisely from the `--apply` JSON — settings (`added_setup`) and preserved customisations (`kept_setup`) render exactly as the Phase 0 "Non-blocking live echo", plus the config-check-only adds the user already saw in step 3: added profiles/mappings (`reseeded_profiles` / `reseeded_phase_profiles`) and the `version_restamped` from→to. Then run the **same post-heal provisioning-freshness step Phase 0 uses** (`render-agents.py --check`, `pipeline.md`) — auto-reprovision any missing/stale `ab-*` agent (a no-op off `custom-subagents` and when nothing's stale), and on a re-render surface the **process-restart caveat** (`delegation-runtime.md` → "Newly-rendered agents need a process restart"). Stop.
+   - **Update** → re-run with `--apply`; confirm concisely from the `--apply` JSON — settings (`added_setup`) and preserved customisations (`kept_setup`) render exactly as the Phase 0 "Non-blocking live echo", plus the config-check-only adds the user already saw in step 3: added profiles/mappings (`reseeded_profiles` / `reseeded_phase_profiles`) and the `version_restamped` from→to. Then run the **same post-heal review-layers freshness step Phase 0 uses**: `build_auto_custom.py --check --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml` — `needs_apply` ⇒ re-run it with `--apply` and echo the regenerated `layers`; `errors` ⇒ surface them (the sync is refused, nothing written). No agent-file step exists. Stop.
    - **Leave it** → show the **How to act** guidance below and stop.
 
 **How to act** (shown whenever you don't apply):
@@ -175,7 +173,7 @@ This is the single interactive episode in normal operation.
 - **Accept the new defaults** — apply now (step 5), or just run the story/epic (it auto-applies at the pre-run pause, or with `skip config-pause`).
 - **Discard retunes** back to shipped values — `reset-defaults`.
 
-- **Read-only until you confirm:** writes `config.yaml` (append-only) and re-renders agents **only** on the explicit "Update" choice in step 5; the preview path restamps and renders nothing. Never starts a pipeline.
+- **Read-only until you confirm:** writes `config.yaml` (append-only) and re-syncs the review-layers TOML **only** on the explicit "Update" choice in step 5; the preview path restamps and writes nothing. Never starts a pipeline.
 
 ## state/{key}.yaml
 The state file is a **machine-readable contract**, not a prose log — the source of truth for resume.
@@ -285,6 +283,7 @@ Plus net-new epic fields that ride as **preserved extras** — NOT in the per-st
 - `active_story` — the loop cursor (the `{key}` being processed, or null before E5 / after E_final).
 - `stories_landed` — the `{key}`s this run actually processed (drives the batch BMAD-status flip + the report rollup; E0-skipped stories never join it).
 - `epic_slug` — the resolved branch/PR slug (stored so resume reuses it, never re-derives a different one).
+- `stories_skipped` — the E0 skip verdicts (`"{key} — <reason>"`, e.g. `already done` or the E0 no-spec note); persisted so a resume never re-asks and E5 never enters them (never flipped, never in the rollup, listed under **Skipped**). Like `stories_landed`, a read-modify-write list — `_append` does not apply.
 - `batch_flip_done` — idempotency marker for the E8b/E_final batch BMAD-status flip on resume.
 
 Ownership split — full flow: `epic-pipeline.md`.
@@ -292,7 +291,7 @@ Ownership split — full flow: `epic-pipeline.md`.
 - The epic anchor owns *which story / which E-step*.
 
 ## Target selection & resume logic
-No-arg `/auto-bmad` chooses the target story with this precedence (an explicit `--story <arg>` overrides both and targets that story directly):
+No-arg `/auto-bmad` chooses the target story with this precedence (an explicit `--story <arg>` overrides both and targets that story directly — resolved with `story_plan.py --resolve <arg> --sprint-status <impl>/sprint-status.yaml --planning-dir <planning>`; `hard_stop` ⇒ surface the reason — not found, or ambiguous with its `candidates` — and stop):
 1. **Incomplete auto-bmad pipeline first.** If any `state/*.yaml` has `status != done`, that story is the target — finish in-flight work before starting anything new.
    - State files are named `{key}.yaml` (e.g. `1-2-user-auth.yaml`) — **no `story-` prefix**.
    - The `story-{e}-{s}` form appears only in commit/PR scopes, never in a filename.
@@ -301,13 +300,20 @@ No-arg `/auto-bmad` chooses the target story with this precedence (an explicit `
      python3 {skill-root}/scripts/state_plan.py --state-dir {output_folder}/auto-bmad/state
      ```
    - Parse its JSON:
-     - `resume: true` ⇒ resume `target` (the most-recently-updated in-flight story); `extra_in_flight` lists any others to mention in the report.
-     - `resume: false` (empty/absent dir, or all `done`) ⇒ fall through to `story_plan.py`.
-2. **Else `story_plan.py`** picks the next actionable story — its precedence (`in-progress → review → ready-for-dev → backlog → retrospective`) resumes BMAD-level unfinished work first.
+     - `resume: true` ⇒ resume `target` (the most-recently-updated in-flight story; its record's `branch` feeds the resume preflight's `--expected-branch`); `extra_in_flight` lists any others to mention in the report.
+     - `resume: false` (empty/absent dir, or all `done`) ⇒ fall through to the sprint-status pick.
+   - Epic-ownership guard: `state_plan.py --state-dir … --scope epic` — an in-flight anchor whose `epic_num` matches the target's epic ⇒ hard-stop → `/auto-bmad epic --epic {e}`.
+2. **Else the upstream sprint-status picker** (runs after the full preflight, which supplies `skills.sprint_plan_script`):
+   ```
+   uv run <sprint_plan_script> status --status-file <impl>/sprint-status.yaml --date "<now MM-DD-YYYY HH:MM>"
+   ```
+   - `ok: false` ⇒ hard-stop with its `error`. `all_done: true` (⇔ `recommendation` null) or `recommendation.story_key` null ⇒ hard-stop `all stories are done — nothing for auto-bmad to run` (+ ` (retrospective for epic N is still optional: run /bmad-retrospective -H N)` when `recommendation.skill == bmad-retrospective`).
+   - Else target = `recommendation.story_key` (auto-bmad ignores `recommendation.skill`). Its precedence — `in-progress → review → ready-for-dev → backlog → retrospective` — resumes BMAD-level unfinished work first. Echo `risks` / `warnings` / `illegal` / `unrecognized` (warn: `sprint-status.yaml has illegal/unrecognized entries — run /bmad-sprint-planning validate`); keep `open_action_items` for the plan carry-over and the report.
+3. Then always `story_plan.py --epic {e} --sprint-status <impl>/sprint-status.yaml --planning-dir <planning>` for the target's `is_first_in_epic` / `is_last_in_epic` / `epic_story_count` / `stories_after_in_epic` / `epic_status` / `retrospective_status` / `title` / `epic_title` (the `--resolve` output already carries the story fields; the `--epic` read is the single source in epic mode).
 
 **Why a finished story doesn't re-stick (clean completions).**
-- Phase 9 flips the BMAD-level status (story file `Status:` + the `sprint-status.yaml` entry) to `done` on a clean completion — else `story_plan.py` would re-pick it (`state_plan.py --finalize` ⇒ `flip_bmad_status: true`, run by `story_plan.py --mark-done`; mechanics: `pipeline.md` Phase 9).
-- A **caveated** completion (draft PR / blocker / waived gate / CI red or timed-out) deliberately stays at `review` — it still needs a human, so it re-surfaces.
+- The sprint entry is flipped to `done` on a clean completion — Phase 8 (pre-retro flip, last story) or Phase 9 (`state_plan.py --finalize` ⇒ `flip_bmad_status: true`, run through `story_plan.py --mark-status {key} --to done`; mechanics: `pipeline.md`) — else the picker would re-recommend it. The state file goes `status: done` too.
+- A **caveated** completion (draft PR / blocker / waived gate / CI red or timed-out) deliberately stays at `review` — it still needs a human, so the picker re-surfaces it (upstream priority: `review` before `ready-for-dev`/`backlog`).
 - A re-run, finding state already `done`, reports it complete (rule below) instead of redoing the work.
 
 Once the target `story_key` is known, check its state with the same reader — an exact `{key}` lookup, never a glob:
@@ -316,35 +322,29 @@ python3 {skill-root}/scripts/state_plan.py --state-dir {output_folder}/auto-bmad
 ```
 - `resume: true` (file exists, `status != done`) → **resume**:
   - Skip phases already in `completed_phases`.
-  - If Phase 7 is in progress (`code_review_loop_done` false), re-run iteration `code_review_iterations` in full from step 1 — a fresh review pass.
-    - An iteration above `code_review.max_iterations` is a user-granted extension from the step-4 halt: gate it as the final iteration (pipeline.md step 3).
-    - Never reconstruct a half-finished iteration from the story file — post-fix check-offs would fake a clean pass, and one redundant pass is the cost of a rare mid-iteration crash.
-  - If `code_review_loop_done` is already `true`, re-open the Phase 7 HITL halt rather than re-iterating — the re-opened halt re-runs its git-only change check, so external changes made between runs get their single-shot re-review.
-    - But if the step-4 skip gate applies — `convergence_unverified` false, a clean convergence — proceed to the Phase 7 tail without re-opening.
-  - Re-detect git mode/branch (cheap) rather than trusting stale values if the branch is missing.
+  - Phase 3 routes by state `spec_path` + `story_plan.py --spec` status (the resume matrix in `pipeline.md` Phase 3): a null `spec_path` first probes `story_plan.py --find-spec`; a `draft` spec re-runs the plan; `ready-for-dev` skips the delegate; `blocked` ⇒ needs-human.
+  - Spec-approval re-open rule: `3 ∈ completed_phases`, `spec_approved: false` and approval required (`build.spec_approval` or `approve spec`) ⇒ re-open the approval halt before Phase 4/5.
+  - Phase 5 re-invokes build-auto with the spec path — build-auto routes by the spec's own status (`ready-for-dev` / `in-progress` / `in-review`); a `blocked` spec ⇒ needs-human (recovery text: `pipeline.md` Phase 5).
+  - Phase 7: a follow-up pass is atomic — re-run it in full (never reconstruct a half-finished pass). `hitl_halt` null and a halt is due ⇒ re-open it. **`hitl_halt: stopped` with 7 ∉ `completed_phases` ⇒ re-open the halt** — reset `hitl_halt` to null and re-ask; choosing Continue then runs the git-only external-change check as usual, so edits made while stopped get their single re-review (mirrors the spec-approval Stop rule).
+  - Phase 8 resumes by its `phase8_steps` markers (first null sub-step).
+  - Re-detect git mode/branch (cheap) rather than trusting stale values if the branch is missing — the resume preflight gets `--expected-branch <state branch>` (`state_plan.py --story-key` emits `branch`).
 - `exists: false` → start fresh (state file init in Phase 1) — **after the status-mismatch guard.**
-  - Check the story's BMAD status from the `story_plan.py` read (`current_status` / `next_action`).
-  - `backlog`/`ready-for-dev` ⇒ start fresh.
-  - **`review` or `in-progress` with NO state file** means the work happened outside auto-bmad (a hand-driven/brownfield story, or a lost state dir) — the full pipeline would re-create and re-implement an already-built story. **ASK the user** (`AskUserQuestion`):
-    - **Enter at the matching phase** *(recommended — `in-progress` ⇒ Phase 5 dev-story, `review` ⇒ Phase 7 code-review; first validate that phase's `start_phase` prerequisites per `overrides.md`, hard-stop if they fail)*.
+  - Check the story's BMAD status from the `story_plan.py --resolve`/`--epic` read (`current_status` / the epic entry's `status`).
+  - `backlog` ⇒ start fresh.
+  - `ready-for-dev` ⇒ start fresh; Phase 3 first probes `story_plan.py --find-spec --impl-dir <impl> --story-key {key} --sprint-status <impl>/sprint-status.yaml` (a spec may pre-exist from a bare `/bmad-build-auto` run): found at `ready-for-dev` ⇒ adopt the spec (no plan delegate); at `draft` ⇒ draft-spec plan run; `blocked` ⇒ needs-human; `ambiguous: true` ⇒ hard-stop listing `candidates`; `found: false` ⇒ fresh plan.
+  - **`review` or `in-progress` with NO state file** means the work happened outside auto-bmad (a hand-driven/brownfield story, or a lost state dir) — the full pipeline would re-plan and re-implement an already-built story. **ASK the user** (`AskUserQuestion`):
+    - **Enter at the matching phase** *(recommended — `in-progress` ⇒ Phase 5 Build (needs `--find-spec` to find the spec; hard-stop otherwise), `review` ⇒ Phase 7 follow-up review (spec must be `done`; else Phase 5); first validate that phase's `start_phase` prerequisites per `overrides.md`, hard-stop if they fail)*.
     - **Run the full pipeline anyway** (a deliberate redo).
     - **Stop**.
     - Record the chosen entry as `start_phase` in `overrides`.
-- A `done` status → tell the user it's already complete and show the recorded `pr_url`; do not redo it (unless they explicitly force a re-run).
-  - On a **no-arg** run — a *caveated* completion parked at `review` keeps being re-picked — also name the way forward: resolve the recorded caveat (then flip the BMAD status to `done`), or work another story via `/auto-bmad <story-id>`.
+  - **Sanctioned regress paths** — the ONLY places the orchestrator passes `story_plan.py --mark-status … --allow-regress`: "Run the full pipeline anyway" for an `in-progress`/`review` story (Phase 3 → `ready-for-dev`, Phase 5 → `in-progress`); entering Phase 5 for a `review` story whose spec is not `done`; a confirmed full re-run of a `done` story (below); a `start_phase` override that re-enters a phase whose target status is below the entry's current one. Any other `refusing to regress` exit is a hard-stop (the entry moved outside auto-bmad — surface the message).
+- State `status: done` for the target (a completed run) → never redo silently: print the recorded report tail + `pr_url` and stop.
+  - On a **no-arg** run this is the caveated case — the story sits at `review` (draft PR / blocker / waived gate / CI red), so the picker re-recommends it on every bare `/auto-bmad`. The stop text names the way forward explicitly: (1) resolve the recorded caveat, then flip the entry (`/auto-bmad --story {key}` re-opens Phase 9 only when the caveat is cleared, else it prints the same stop); (2) work another story: `/auto-bmad --story <next>` where `<next>` = the first `ready-for-dev`/`backlog` key after this one from `story_plan.py --epic {e}`, or, when the epic has none, "epic {e} has no unstarted stories — pick a key with `/auto-bmad --story <key>` or start the next epic with `/auto-bmad epic --epic <N>`". (`SKILL.md` lists this under not-silent stops.)
+  - An explicit `--story {key}` on a `done` state ⇒ ask "already complete (PR …) — re-run the full pipeline anyway?" (Yes ⇒ the sanctioned regress path; No ⇒ stop).
 
-Git commits are the secondary safety net: even if the state file is lost, the per-phase commits on the story branch show how far the pipeline got.
+Draft predicate (`state_plan.py --finalize`, Phase 9): clauses `blockers` non-empty; `review_unverified` true; `gate_decision == WAIVED`; `ci_status in {failed, timeout}` (`--ci-status` = the live post-CI-wait value); `--no-pr-draft` forces only `draft` false; `flip_bmad_status = clean_completion = no clause fired`.
 
-## retro-notes/epic-{e}.md
-The cross-story scratchpad the epic retrospective reads — **signal only, not a log.** After each phase, hand the agent's **Retro notes** to the deterministic writer — never append by hand:
-```
-python3 {skill-root}/scripts/state_update.py retro-append --retro-file <output_folder>/auto-bmad/retro-notes/epic-{e}.md --story-key {key} --json -
-```
-(`--json` is `{"lines": [...]}`; the script manages the one `## Story {key}` heading per story). Keep it small so it stays usable across a multi-story epic:
-- **Skip empty notes** — most phases run clean: filter routine "did the work" text with your own judgment and send `none` (the script drops empty/`none` lines and then writes nothing); only genuine signal lands here.
-- **One terse line per item** — a deviation / non-obvious decision / surprise / risk / deferred item; never a paragraph, never a recap of what the story file already records.
-
-Handed to `/bmad-retrospective` at epic end as primary input — the cross-step context (autonomy choices, why things were done a certain way) the story file alone doesn't capture.
+Git commits are the secondary safety net: even if the state file is lost, the per-phase commits on the story branch (and build-auto's own commits) show how far the pipeline got.
 
 ## reports/{key}.md
 The per-story report is a **log**, not a single overwritten document.
