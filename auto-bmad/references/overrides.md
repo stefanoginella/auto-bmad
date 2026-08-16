@@ -27,7 +27,7 @@ Parse the invocation text into the **normalized override set** below, **echo the
 - `spec_approval: true` — from `approve spec`: pause after Phase 3 for a human OK on the spec (same as `build.spec_approval: true`, this run only). Per-story only — rejected in epic mode.
 - `git_mode: local` — force local mode (no push/PR), regardless of detection.
 - `no_pr_draft: true` — open a normal (non-draft) PR even if caveats were recorded. (Also set mid-run by the Phase 7 halt's **Continue — ship as ready** option — see `pipeline.md`.)
-- `dry_run: true` — resolve everything and print the plan; execute nothing.
+- `dry_run: true` — run only Phase 0's **read-only** steps (no `--apply`, no `AskUserQuestion`, no delegate/`tea-triage`, no commit — drift / status-mismatch / retro-gate facts print as notes), print the plan (resolved target story, phase window/skips, per-phase profiles), then stop before Phase 1 (`pipeline.md` Phase 0 step 0). Epic mode: same rule at E0, stopping before E1.
 
 ## Not supported on the build lane (hard-stop)
 
@@ -74,7 +74,7 @@ Parse the invocation text into the **normalized override set** below, **echo the
 `epic` / `--epic N` is a **target selector** (like `--story`), not an override: it runs a whole epic via `epic-pipeline.md`. `--story` and `epic` are **mutually exclusive** — hard-stop if both are given ("`--story` picks one story; `epic` runs a whole epic — pick one").
 
 Overrides that **compose** with epic mode (echo + apply the same way):
-- `dry_run` — prints the epic plan + the ordered story list + per-step profiles, then stops.
+- `dry_run` — runs only the read-only E0 steps (no `--apply`, no `AskUserQuestion`, no commit), prints the epic plan + the ordered story list + per-step profiles, then stops before E1.
 - `skip tea`.
 - `skip merge-prompt`.
 - `git_mode local` (and `skip pr` — same effect at E_final).
@@ -103,6 +103,7 @@ Starting mid-pipeline requires the earlier outputs to already exist. Before skip
 - start at **4 (atdd)** or later → the story's build-auto spec must exist at `ready-for-dev` or later (never `draft`/`blocked`): `python3 {skill-root}/scripts/story_plan.py --find-spec --impl-dir <impl> --story-key {key} --sprint-status <impl>/sprint-status.yaml` (`found: false` ⇒ hard-stop; `ambiguous: true` ⇒ hard-stop listing `candidates`); record `spec_path` in state (or reuse the state's `spec_path` and read `--spec <spec_path>` for the status).
 - start at **5 (build)** or later → same.
 - start at **7 (review)** or later → the spec's `status` (`--spec <spec_path>`) is `done` and the sprint entry is `review` (`--resolve` → `current_status`, or the `--epic` read's `epic_stories[].status`; `--find-spec`'s `status` is the spec's frontmatter status, not the sprint entry).
+  - Entering Phase 7 with no Phase 5 result (this override, or the status-mismatch guard's `review` ⇒ Phase 7 route) first seeds `build.*` from `story_plan.py --spec <spec_path>`, then runs ONE follow-up pass **regardless of the recommendation gate**; `skip code-review` still wins (`pipeline.md` Phase 7).
 - start at **9 (finalize)** → there must be commits on the story branch to push.
 
 Prefer the normal resume path (`state-and-resume.md`) over `start_phase` when a state file exists. Use `start_phase` for deliberate manual control.
@@ -112,4 +113,4 @@ Prefer the normal resume path (`state-and-resume.md`) over `start_phase` when a 
 > **Overrides for this run:** start=Phase 5 (build); stop after Phase 7; approve spec = n/a (window).
 > **Phases that will run:** 5 → 6 → 7. **Will not run:** 0–4, 8, 9.
 
-If `dry_run`, print this plan (plus the resolved target story and per-phase profiles) and stop without executing.
+If `dry_run`, print this plan (plus the resolved target story and per-phase profiles) after Phase 0's read-only steps and stop before Phase 1 — nothing is applied, asked, delegated or committed.

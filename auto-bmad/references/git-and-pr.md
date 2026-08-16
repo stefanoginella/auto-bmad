@@ -22,7 +22,7 @@ Orchestrator-owned, never delegated:
 - the Phase 9 **merge prompt + `gh pr merge` execution** — opt-in via `git.offer_merge` (default on), only on a clean completion.
 - the Phase 8 **deferred-work archive** (+ the Phase 7 tail **harvest**) — `deferred_ledger.py`; the keep-vs-move judgment and the reconcile stay delegated.
 - the Phase 7 **HITL-halt handling**:
-  - detect external-review changes — a git-only check (`git status --porcelain` non-empty OR `git rev-parse HEAD` moved since the halt opened), never a code read.
+  - detect external-review changes — a git-only check, never a code read; auto-bmad's own writes are excluded (`pipeline.md` Phase 7 step 3, own-writes exclusion): changed := `git status --porcelain -- . ':(exclude)<output_folder>/auto-bmad' ':(exclude)<project_root>/_bmad/custom/bmad-build-auto.toml'` non-empty OR HEAD moved — `git rev-parse HEAD` ≠ the HEAD when the halt opened this session; on a halt re-opened after `stopped`, HEAD moved := `git log --format=%h --since=<state updated_at, read BEFORE the re-open reset write> HEAD -- . ':(exclude)<output_folder>/auto-bmad' ':(exclude)<project_root>/_bmad/custom/bmad-build-auto.toml'` non-empty.
   - commit them (`fix(story-{e}-{s}): external review changes`).
   - re-open the halt ONCE after the re-review.
   - the **re-review of those changes is delegated**, NOT orchestrator-owned — one more `followup-review` build-auto pass at `followup_review` (see `pipeline.md` Phase 7 step 3).
@@ -78,13 +78,13 @@ These stay orchestrator-owned because it already holds the full pipeline context
   - Phase 4: `test(story-{e}-{s}): ATDD acceptance scaffolds (red)` — MANDATORY before Phase 5 (build-auto needs a clean tree).
   - Phase 5: build-auto's own commits, then `chore(story-{e}-{s}): mark review` (sprint flip + state [+ stragglers]); `blocked` ⇒ `chore(story-{e}-{s}): build blocked (<blocking condition | reason>)`.
   - Phase 6: `test(story-{e}-{s}): expand automated coverage`.
-  - Phase 7: build-auto's own commits per pass; halt: `fix(story-{e}-{s}): external review changes`; tail: `test(story-{e}-{s}): trace coverage advisory` (also carries the harvest + state) — else `docs(story-{e}-{s}): harvest deferred work` when only the ledger changed — else the state write folds into the next commit.
+  - Phase 7: build-auto's own commits per pass; a pass HALTed `blocked` ⇒ `chore(story-{e}-{s}): review blocked (<blocking condition | reason>)`; halt: `fix(story-{e}-{s}): external review changes`; tail: `test(story-{e}-{s}): trace coverage advisory` (also carries the harvest + state) — else `docs(story-{e}-{s}): harvest deferred work` when only the ledger changed — else the state write folds into the next commit.
   - Phase 8: `test(epic-{e}): close trace coverage gaps (gate iter {i})` (per remediation pass); `docs(epic-{e}): gate, deferred-work reconcile + archive, retrospective` (the one end-of-phase commit; carries the pre-retro flip).
   - Phase 9: `docs(story-{e}-{s}): pipeline report`; `chore(story-{e}-{s}): finalize (mark done + BMAD status)`.
   - Clean-tree gate (below): `chore(story-{e}-{s}): pipeline state`; `chore(story-{e}-{s}): mark in-progress`.
 - **The state update folds into the phase's commit — never standalone.**
   - A phase mutates the project artifacts *and* the auto-bmad state file (`<output_folder>/auto-bmad/state/{key}.yaml`); stage **both together** and make a **single** commit.
-  - A phase with a documented multi-commit flow folds the state write into each such commit (Phase 8's separate remediation commits, Phase 3/5's `blocked` commits).
+  - A phase with a documented multi-commit flow folds the state write into each such commit (Phase 8's separate remediation commits, Phase 3/5/7's `blocked` commits — `plan blocked` / `build blocked` / `review blocked`).
     - The rule is *no state-only commits*, not one-commit-per-phase-number.
   - **Never** emit a standalone bookkeeping commit whose only change is the state file — no `chore(story-{e}-{s}): record Phase N in pipeline state`, no `chore(...): update state/timestamps`.
   - **The ONE sanctioned exception is the clean-tree gate below.**
@@ -242,6 +242,7 @@ Only the per-story-shaped items get an `epic-{e}` variant (below).
   - If that check holds → **ASK** before branching (`epic-pipeline.md` E0):
     - proceed off base — that story's work won't be in this epic's PR;
     - or stop and merge it first.
+  - The same git-only `merge-base --is-ancestor` check runs in `epic-pipeline.md` E0 step 7 on the `branch` of any in-flight per-story state: resume that story in E5 only when it is the epic branch or already merged into `<base>`; else ASK Skip / Stop.
 - **Commit taxonomy:**
   - Per-story commits keep their `story-{e}-{s}` scopes and subjects — they land on the epic branch unchanged (incl. the clean-tree gate commits and build-auto's own commits, recorded per the `commits[]` rule).
   - Epic-scoped commit subjects:

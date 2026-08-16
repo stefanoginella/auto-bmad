@@ -222,7 +222,7 @@ review_unverified: false         # draft-predicate clause 2: `skip code-review`,
 story_trace: null                # Phase 7 tail trace advisory: {verdict: PASS|CONCERNS|FAIL, uncovered: [..], ran: true}; non-null = done (resume marker); verdict is delegate-derived from the skill's coverage numbers — advisory only, never blocks/drafts
 commits: [a1b2c3d, e4f5g6h]      # orchestrator commits (sha-lag rule) + build-auto's own commits (git log <head_before>..HEAD around every build-auto invocation — pipeline.md cross-phase rules)
 phase8_steps:                    # per-sub-step epic-end resume markers, recorded in each sub-step's folded state write:
-  trace_gate: null               #   null (not yet run) | done; trace_gate may also be waived | failed. A mid-Phase-8 crash
+  trace_gate: null               #   null (not yet run) | done; trace_gate may also be waived | failed (failed = parked, not resolved: resume re-opens the gate — resume rules below). A mid-Phase-8 crash
   nfr: null                      #   resumes at the first null instead of re-running completed delegations; Phase 8 joins
   test_review: null              #   completed_phases only once all six markers resolve (ran, or its gate was false)
   reconcile: null                #   delegated pre-archive pass: mark ledger items whose deferred work fully landed but went unmarked
@@ -245,7 +245,7 @@ merge_commit: null               # full SHA of the merge commit on the base bran
 branch_deleted: false            # true if --delete-branch was used in the successful merge
 open_questions: []
 deferred_work: []
-blockers: []                     # each: short human-action description
+blockers: []                     # each: short human-action description; a blocked phase's entries are removed when that phase completes on resume ("Blockers clear on resume" below)
 overrides: {}                    # this run's normalized invocation overrides (see overrides.md); {} if none
 constraints: []                  # caller-supplied constraints carried in via invocation (e.g. exact-string requirements); [] if none
 ```
@@ -325,15 +325,16 @@ python3 {skill-root}/scripts/state_plan.py --state-dir {output_folder}/auto-bmad
   - Phase 3 routes by state `spec_path` + `story_plan.py --spec` status (the resume matrix in `pipeline.md` Phase 3): a null `spec_path` first probes `story_plan.py --find-spec`; a `draft` spec re-runs the plan; `ready-for-dev` skips the delegate; `blocked` ⇒ needs-human.
   - Spec-approval re-open rule: `3 ∈ completed_phases`, `spec_approved: false` and approval required (`build.spec_approval` or `approve spec`) ⇒ re-open the approval halt before Phase 4/5.
   - Phase 5 re-invokes build-auto with the spec path — build-auto routes by the spec's own status (`ready-for-dev` / `in-progress` / `in-review`); a `blocked` spec ⇒ needs-human (recovery text: `pipeline.md` Phase 5).
-  - Phase 7: a follow-up pass is atomic — re-run it in full (never reconstruct a half-finished pass). `hitl_halt` null and a halt is due ⇒ re-open it. **`hitl_halt: stopped` with 7 ∉ `completed_phases` ⇒ re-open the halt** — reset `hitl_halt` to null and re-ask; choosing Continue then runs the git-only external-change check as usual, so edits made while stopped get their single re-review (mirrors the spec-approval Stop rule).
-  - Phase 8 resumes by its `phase8_steps` markers (first null sub-step).
+  - Phase 7: a follow-up pass is atomic — re-run it in full (never reconstruct a half-finished pass). `hitl_halt` null and a halt is due ⇒ re-open it. **`hitl_halt: stopped` with 7 ∉ `completed_phases` ⇒ re-open the halt** — reset `hitl_halt` to null and re-ask; choosing Continue then runs the git-only external-change check as usual, so edits made while stopped get their single re-review (mirrors the spec-approval Stop rule). That check (`pipeline.md` Phase 7 step 3, own-writes exclusion): changed := `git status --porcelain -- . ':(exclude)<output_folder>/auto-bmad' ':(exclude)<project_root>/_bmad/custom/bmad-build-auto.toml'` non-empty OR HEAD moved — on a halt re-opened after `stopped`, HEAD moved := `git log --format=%h --since=<state updated_at, read BEFORE the re-open reset write> HEAD -- . ':(exclude)<output_folder>/auto-bmad' ':(exclude)<project_root>/_bmad/custom/bmad-build-auto.toml'` non-empty; auto-bmad's own writes (the halt's state write, the Step 3 fallback report) never count.
+  - Phase 8 resumes by its `phase8_steps` markers (first null sub-step) — except `trace_gate: failed`, a parked verdict, not a resolved one: re-delegate **`testarch-trace (epic gate)`** and re-apply its verdict handling under the same `gate_iterations` cap (`pipeline.md` Phase 8); a non-`FAIL` verdict removes the earlier FAIL entry from `blockers[]` and re-derives `gate_decision`.
+  - **Blockers clear on resume.** A blocked phase's `blockers[]` entries (a Phase 3 plan-time block's result-file path; a Phase 8 trace-gate `FAIL` Stop) are live only while the block stands: when that phase later completes on resume — the Phase 3 plan succeeds, a Phase 5 / Phase 7 build-auto run returns `done`, a re-run epic trace gate returns non-`FAIL` — remove that phase's entries via `state_update.py set` (`blockers: [<list without them>]`) before its `phase-done` write. Epic mode's E5h rollup then carries only live blockers.
   - Re-detect git mode/branch (cheap) rather than trusting stale values if the branch is missing — the resume preflight gets `--expected-branch <state branch>` (`state_plan.py --story-key` emits `branch`).
 - `exists: false` → start fresh (state file init in Phase 1) — **after the status-mismatch guard.**
   - Check the story's BMAD status from the `story_plan.py --resolve`/`--epic` read (`current_status` / the epic entry's `status`).
   - `backlog` ⇒ start fresh.
   - `ready-for-dev` ⇒ start fresh; Phase 3 first probes `story_plan.py --find-spec --impl-dir <impl> --story-key {key} --sprint-status <impl>/sprint-status.yaml` (a spec may pre-exist from a bare `/bmad-build-auto` run): found at `ready-for-dev` ⇒ adopt the spec (no plan delegate); at `draft` ⇒ draft-spec plan run; `blocked` ⇒ needs-human; `ambiguous: true` ⇒ hard-stop listing `candidates`; `found: false` ⇒ fresh plan.
   - **`review` or `in-progress` with NO state file** means the work happened outside auto-bmad (a hand-driven/brownfield story, or a lost state dir) — the full pipeline would re-plan and re-implement an already-built story. **ASK the user** (`AskUserQuestion`):
-    - **Enter at the matching phase** *(recommended — `in-progress` ⇒ Phase 5 Build (needs `--find-spec` to find the spec; hard-stop otherwise), `review` ⇒ Phase 7 follow-up review (spec must be `done`; else Phase 5); first validate that phase's `start_phase` prerequisites per `overrides.md`, hard-stop if they fail)*.
+    - **Enter at the matching phase** *(recommended — `in-progress` ⇒ Phase 5 Build (needs `--find-spec` to find the spec; hard-stop otherwise), `review` ⇒ Phase 7 follow-up review (spec must be `done`; else Phase 5) — entering Phase 7 with no Phase 5 result seeds `build.*` from `story_plan.py --spec <spec_path>` and runs ONE pass regardless of the recommendation gate, `skip code-review` still wins (`pipeline.md` Phase 7); first validate that phase's `start_phase` prerequisites per `overrides.md`, hard-stop if they fail)*.
     - **Run the full pipeline anyway** (a deliberate redo).
     - **Stop**.
     - Record the chosen entry as `start_phase` in `overrides`.

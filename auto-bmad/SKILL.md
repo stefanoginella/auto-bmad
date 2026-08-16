@@ -181,7 +181,7 @@ Each of these is a hard-stop (the preflight ones come from `preflight.py` — su
 - Ambiguous or not-found `--story` or `--epic`; an ambiguous spec match (`story_plan.py --find-spec` ⇒ `ambiguous: true`).
 - Both `--story` and `epic` in one invocation (pick one); an unknown override or `skip git-commits` (`overrides.md`).
 - A bare per-story run whose target is owned by an in-flight epic anchor (redirect to `/auto-bmad epic --epic {e}`).
-- Epic already `done`, or an epic with no stories.
+- **Epic mode only** (`epic` / `--epic <N>`): the epic is already `done`, or has no story for auto-bmad to run. Per-story, `story_plan.py --epic`'s `epic {e} is marked done` verdict is informational (a confirmed re-run of a `done` story in a `done` epic is sanctioned — `pipeline.md` Phase 0 step 5).
 - Dirty working tree off the story branch; detached HEAD; merge/rebase conflict; unexpected uncommitted changes before finalize.
 - The review-layers TOML (`_bmad/custom/bmad-build-auto.toml`) invalid, or one of auto-bmad's layer ids defined outside the managed region.
 - A delegated step returns `blocked`/`needs-human` — incl. a build-auto `status: blocked` (missing secret/credential, required external service, manual action, `no subagents`, non-convergence).
