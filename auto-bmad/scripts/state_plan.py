@@ -17,9 +17,10 @@ Three modes, all emitting a single JSON object on stdout:
   a glob — and report whether it exists and should be resumed (``status != done``).
 * **finalize** (``--story-key KEY --finalize``): evaluate the Phase 9 draft
   predicate (``git-and-pr.md`` → "PR") from the story's state file. The four
-  clauses: ``blockers`` non-empty; ``convergence_unverified`` true;
-  ``gate_decision`` is ``WAIVED``; ``ci_status`` in {failed, timeout}
-  (case-insensitive, like the sibling clauses).
+  clauses: ``blockers`` non-empty; ``review_unverified`` true (build-auto's last
+  review pass still recommended a follow-up review that was not run, or review
+  was skipped); ``gate_decision`` is ``WAIVED``; ``ci_status`` in {failed,
+  timeout} (case-insensitive, like the sibling clauses).
   ``ci_status`` comes from ``--ci-status`` when given (the live post-CI-wait
   value), else from the state file, else ``unknown`` — ``passed``/``none``/
   ``unknown`` do NOT fire clause 4 (``unknown`` means the wait never ran).
@@ -28,6 +29,10 @@ Three modes, all emitting a single JSON object on stdout:
   affected by ``--no-pr-draft``); ``flip_bmad_status`` = ``clean_completion``;
   ``reasons`` names each firing clause. Exit 0 = verdict delivered (draft or
   not), 1 = state file missing, 2 = usage errors.
+
+Every scan / epic-scan record and the story-mode result also carry the state's
+top-level ``branch`` scalar (``null`` when absent) so the orchestrator can pass
+``--expected-branch`` to the resume preflight without opening the state file.
 
 All three modes accept ``--scope epic`` to operate on the **epic anchors** under
 ``<state-dir>/epic`` instead of the per-story files: ``--scope epic`` (scan) lists
@@ -38,9 +43,9 @@ epic anchor. The per-story scan ignores the ``epic/`` subdirectory (it lists onl
 ``*.yaml`` files), so the two scopes never collide.
 
 Dependency-free: state files are flat ``key: value`` YAML, so the few top-level
-scalars we need (``status``, ``updated_at``) are read line by line — the
-finalize mode additionally reads the ``blockers`` list (inline ``[]`` or block
-items) and the ``convergence_unverified`` / ``gate_decision`` / ``ci_status``
+scalars we need (``status``, ``updated_at``, ``branch``) are read line by line —
+the finalize mode additionally reads the ``blockers`` list (inline ``[]`` or
+block items) and the ``review_unverified`` / ``gate_decision`` / ``ci_status``
 scalars. In-flight ordering uses ``updated_at`` (ISO-8601, sorts
 chronologically) with filesystem mtime as a tiebreaker.
 
@@ -64,6 +69,7 @@ import sys
 _SCALAR_RE = {
     "status": re.compile(r"^status:\s*(.*?)\s*(?:#.*)?$"),
     "updated_at": re.compile(r"^updated_at:\s*(.*?)\s*(?:#.*)?$"),
+    "branch": re.compile(r"^branch:\s*(.*)$"),   # value may be quoted; comment-stripped quote-aware below
 }
 
 
@@ -75,8 +81,8 @@ def _unquote(value: str) -> str:
 
 
 def read_state_file(path: str):
-    """Return {status, updated_at} read from a flat state YAML (values may be None)."""
-    fields: "dict[str, str | None]" = {"status": None, "updated_at": None}
+    """Return {status, updated_at, branch} read from a flat state YAML (values may be None)."""
+    fields: "dict[str, str | None]" = {"status": None, "updated_at": None, "branch": None}
     try:
         with open(path, "r", encoding="utf-8") as fh:
             for raw in fh:
@@ -85,7 +91,7 @@ def read_state_file(path: str):
                     if fields[name] is None:
                         m = pat.match(line)
                         if m:
-                            val = _unquote(m.group(1))
+                            val = _scalar_or_none(_strip_comment(m.group(1)))
                             fields[name] = val or None
                 if all(v is not None for v in fields.values()):
                     break
@@ -107,6 +113,7 @@ def _story_record(state_dir: str, filename: str):
         "status": status,
         "done": status == "done",
         "updated_at": fields["updated_at"],
+        "branch": fields["branch"],
         "file": path,
         "_mtime": mtime,  # internal sort tiebreaker; stripped before output
     }
@@ -233,7 +240,8 @@ def _scan_epics(epic_dir: str):
 def _story(state_dir: str, story_key: str):
     path = os.path.join(state_dir, story_key + ".yaml")
     exists = os.path.isfile(path)
-    status = read_state_file(path)["status"] if exists else None
+    fields = read_state_file(path) if exists else {"status": None, "branch": None}
+    status = fields["status"]
     return {
         "mode": "story",
         "state_dir": state_dir,
@@ -241,6 +249,7 @@ def _story(state_dir: str, story_key: str):
         "file": path,
         "exists": exists,
         "status": status,
+        "branch": fields["branch"],
         "resume": exists and status != "done",
     }
 
@@ -258,7 +267,7 @@ def build_result(state_dir: str, story_key=None):
 # (git-and-pr.md -> "PR"; the four clauses are the normative definition).
 # --------------------------------------------------------------------------- #
 _FINALIZE_SCALAR_RE = {
-    "convergence_unverified": re.compile(r"^convergence_unverified:\s*(.*?)\s*(?:#.*)?$"),
+    "review_unverified": re.compile(r"^review_unverified:\s*(.*?)\s*(?:#.*)?$"),
     "gate_decision": re.compile(r"^gate_decision:\s*(.*?)\s*(?:#.*)?$"),
     "ci_status": re.compile(r"^ci_status:\s*(.*?)\s*(?:#.*)?$"),
 }
@@ -326,8 +335,8 @@ def _split_flow(body: str) -> list:
 def read_finalize_fields(path: str):
     """Read the draft-predicate inputs from a flat state YAML: the ``blockers``
     list (inline ``[...]`` or block ``- item`` form) plus the
-    ``convergence_unverified`` / ``gate_decision`` / ``ci_status`` scalars."""
-    fields = {"convergence_unverified": None, "gate_decision": None, "ci_status": None}
+    ``review_unverified`` / ``gate_decision`` / ``ci_status`` scalars."""
+    fields = {"review_unverified": None, "gate_decision": None, "ci_status": None}
     blockers: "list[str]" = []
     in_blockers = False
     try:
@@ -387,7 +396,7 @@ def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_
         "no_pr_draft": bool(no_pr_draft),
         "clauses": {
             "blocker": False,
-            "convergence_unverified": False,
+            "review_unverified": False,
             "gate_waived": False,
             "ci_failed_or_timeout": False,
         },
@@ -415,7 +424,7 @@ def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_
 
     clauses = {
         "blocker": len(blockers) > 0,
-        "convergence_unverified": (fields["convergence_unverified"] or "").lower() == "true",
+        "review_unverified": (fields["review_unverified"] or "").lower() == "true",
         "gate_waived": (gate or "").upper() == "WAIVED",
         "ci_failed_or_timeout": ci.lower() in _CI_FIRES,
     }
@@ -424,8 +433,8 @@ def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_
     reasons = []
     if clauses["blocker"]:
         reasons.append(f"{len(blockers)} blocker(s) recorded")
-    if clauses["convergence_unverified"]:
-        reasons.append("convergence_unverified is true (review loop never verifiably converged, or review was skipped)")
+    if clauses["review_unverified"]:
+        reasons.append("review_unverified is true (build-auto's last review pass still recommended a follow-up review that was not run, or review was skipped)")
     if clauses["gate_waived"]:
         reasons.append("gate_decision is WAIVED (epic trace gate shipped despite coverage gaps)")
     if clauses["ci_failed_or_timeout"]:
@@ -470,8 +479,8 @@ def _run_self_test():
         with open(os.path.join(state_dir, name), "w", encoding="utf-8") as fh:
             fh.write(body)
 
-    write("1-1-user-auth.yaml", 'story_key: 1-1-user-auth\nstatus: done\nupdated_at: "2026-05-20T08:00:00Z"\n')
-    write("1-2-account-mgmt.yaml", 'story_key: 1-2-account-mgmt\nstatus: in-progress  # mid-review\nupdated_at: "2026-05-22T10:00:00Z"\n')
+    write("1-1-user-auth.yaml", 'story_key: 1-1-user-auth\nbranch: story/1-1-user-auth\nstatus: done\nupdated_at: "2026-05-20T08:00:00Z"\n')
+    write("1-2-account-mgmt.yaml", 'story_key: 1-2-account-mgmt\nbranch: "story/1-2-account-mgmt"  # quoted\nstatus: in-progress  # mid-review\nupdated_at: "2026-05-22T10:00:00Z"\n')
     write("1-3-plant-model.yaml", "story_key: 1-3-plant-model\nstatus: in-progress\nupdated_at: '2026-05-23T09:00:00Z'\n")
     write("malformed.yaml", "story_key: malformed\n# no status line at all\n")
     write("notes.txt", "not a state file\n")
@@ -489,20 +498,29 @@ def _run_self_test():
     check("scan: inline comment stripped from status", any(s["story_key"] == "1-2-account-mgmt" and s["status"] == "in-progress" for s in scan["stories"]))
     check("scan: malformed has null status", any(s["story_key"] == "malformed" and s["status"] is None for s in scan["stories"]))
     check("scan: no internal mtime leaks to output", all(not any(k.startswith("_") for k in s) for s in scan["stories"]))
+    check("scan: branch carried (quoted + comment stripped)", any(s["story_key"] == "1-2-account-mgmt" and s["branch"] == "story/1-2-account-mgmt" for s in scan["stories"]))
+    check("scan: branch null when absent", any(s["story_key"] == "1-3-plant-model" and s["branch"] is None for s in scan["stories"]))
+    check("scan: in_flight records carry branch", all("branch" in s for s in scan["in_flight"]))
 
     # Story mode: exact-path lookup, no glob.
     done = build_result(state_dir, "1-1-user-auth")
     check("story: done exists", done["exists"] is True)
     check("story: done status", done["status"] == "done")
     check("story: done not resumed", done["resume"] is False)
+    check("story: branch emitted", done["branch"] == "story/1-1-user-auth")
 
     live = build_result(state_dir, "1-2-account-mgmt")
     check("story: in-progress resumed", live["resume"] is True)
     check("story: in-progress status", live["status"] == "in-progress")
+    check("story: quoted branch unquoted", live["branch"] == "story/1-2-account-mgmt")
+
+    nobranch = build_result(state_dir, "1-3-plant-model")
+    check("story: branch null when absent", nobranch["branch"] is None)
 
     missing = build_result(state_dir, "9-9-nope")
     check("story: missing not exists", missing["exists"] is False)
     check("story: missing status null", missing["status"] is None)
+    check("story: missing branch null", missing["branch"] is None)
     check("story: missing not resumed", missing["resume"] is False)
 
     # Absent state dir (first run): empty, no resume, exit 0.
@@ -517,7 +535,7 @@ def _run_self_test():
     with open(os.path.join(epic_dir, "epic-1.yaml"), "w", encoding="utf-8") as fh:
         fh.write('story_key: epic-1\nepic_num: 1\nstatus: done\nactive_story: null\nupdated_at: "2026-05-20T08:00:00Z"\n')
     with open(os.path.join(epic_dir, "epic-2.yaml"), "w", encoding="utf-8") as fh:
-        fh.write('story_key: epic-2\nepic_num: 2\nstatus: in-progress\nactive_story: 2-3-widget\nupdated_at: "2026-05-25T12:00:00Z"\n')
+        fh.write('story_key: epic-2\nepic_num: 2\nbranch: epic/2-widgets\nstatus: in-progress\nactive_story: 2-3-widget\nupdated_at: "2026-05-25T12:00:00Z"\n')
     epscan = _scan_epics(epic_dir)
     check("epic-scan: mode", epscan["mode"] == "epic-scan")
     check("epic-scan: lists 2 epics", len(epscan["epics"]) == 2)
@@ -528,6 +546,8 @@ def _run_self_test():
     check("epic-scan: resume true", epscan["resume"] is True)
     check("epic-scan: done epic null active_story", any(e["epic_key"] == "epic-1" and e["active_story"] is None for e in epscan["epics"]))
     check("epic-scan: no internal mtime leak", all(not any(k.startswith("_") for k in e) for e in epscan["epics"]))
+    check("epic-scan: records carry branch", any(e["epic_key"] == "epic-2" and e["branch"] == "epic/2-widgets" for e in epscan["epics"]))
+    check("epic-scan: branch null when absent", any(e["epic_key"] == "epic-1" and e["branch"] is None for e in epscan["epics"]))
 
     # The epic/ subdir is invisible to the per-story scan (no collision).
     rescan = build_result(state_dir)
@@ -536,6 +556,7 @@ def _run_self_test():
     # An epic anchor resumes/finalizes via the epic subdir as the state dir.
     epstory = build_result(epic_dir, "epic-2")
     check("epic anchor resume via subdir", epstory["exists"] is True and epstory["resume"] is True)
+    check("epic anchor story mode carries branch", epstory["branch"] == "epic/2-widgets")
     epfin, epcode = build_finalize_result(epic_dir, "epic-1")
     check("epic finalize reads the anchor", epcode == 0 and epfin["story_key"] == "epic-1")
 
@@ -553,14 +574,14 @@ def _run_self_test():
 
     def write_fin(key, **over):
         body = {
-            "convergence_unverified": "false",
+            "review_unverified": "false",
             "gate_decision": "null",
             "ci_status": "passed",
             "blockers": "[]",
         }
         body.update(over)
         lines = [f"story_key: {key}", "status: done", 'updated_at: "2026-06-01T10:00:00Z"']
-        for k in ("convergence_unverified", "gate_decision", "ci_status"):
+        for k in ("review_unverified", "gate_decision", "ci_status"):
             lines.append(f"{k}: {body[k]}")
         if body["blockers"] is None:  # block-list form
             lines.append("blockers:")
@@ -587,7 +608,7 @@ def _run_self_test():
     write_fin("2-2-blocked", blockers=None)
     res, code = build_finalize_result(fin_dir, "2-2-blocked")
     check("finalize blocker: exit 0 (verdict delivered)", code == 0)
-    check("finalize blocker: clause fires alone", res["clauses"] == {"blocker": True, "convergence_unverified": False, "gate_waived": False, "ci_failed_or_timeout": False})
+    check("finalize blocker: clause fires alone", res["clauses"] == {"blocker": True, "review_unverified": False, "gate_waived": False, "ci_failed_or_timeout": False})
     check("finalize blocker: count 2", res["blocker_count"] == 2 and res["blockers"][0] == "rotate the API key manually")
     check("finalize blocker: draft", res["draft"] is True)
     check("finalize blocker: not clean", res["clean_completion"] is False and res["flip_bmad_status"] is False)
@@ -611,14 +632,14 @@ def _run_self_test():
     # Clause 1 — a quoted '#' is payload, not a comment (the state writer
     # double-quotes any value containing '#'; comment stripping must respect it).
     with open(os.path.join(fin_dir, "2-2c-hash.yaml"), "w", encoding="utf-8") as fh:
-        fh.write('story_key: 2-2c-hash\nstatus: done\nconvergence_unverified: false\n'
+        fh.write('story_key: 2-2c-hash\nstatus: done\nreview_unverified: false\n'
                  'gate_decision: null\nci_status: passed\nblockers:\n'
                  '  - "fix issue #123 upstream"\n  - "rotate key #2"  # urgent\n')
     res, _ = build_finalize_result(fin_dir, "2-2c-hash")
     check("finalize quoted-#: items intact",
           res["blockers"] == ["fix issue #123 upstream", "rotate key #2"])
     with open(os.path.join(fin_dir, "2-2d-hash.yaml"), "w", encoding="utf-8") as fh:
-        fh.write('story_key: 2-2d-hash\nstatus: done\nconvergence_unverified: false\n'
+        fh.write('story_key: 2-2d-hash\nstatus: done\nreview_unverified: false\n'
                  'gate_decision: null\nci_status: passed\n'
                  'blockers: ["fix issue #123 upstream"]  # one left\n')
     res, _ = build_finalize_result(fin_dir, "2-2d-hash")
@@ -636,10 +657,13 @@ def _run_self_test():
     _spec.loader.exec_module(_su)
     _rt = _su.default_state()
     _rt.update(
-        story_key="2-2f-roundtrip", status="review", convergence_unverified=True,
-        gate_decision="WAIVED", ci_status="timeout",
+        story_key="2-2f-roundtrip", status="review", review_unverified=True,
+        branch="story/2-2f-roundtrip", gate_decision="WAIVED", ci_status="timeout",
         blockers=['rotate key, then redeploy', 'fix issue #123 upstream', "plain"],
     )
+    # the writer must not emit the retired review-loop clause field at all
+    check("writer round-trip: no legacy clause field emitted",
+          "convergence_unverified" not in _su.dump_state(_rt))
     with open(os.path.join(fin_dir, "2-2f-roundtrip.yaml"), "w", encoding="utf-8") as fh:
         fh.write(_su.dump_state(_rt))
     res, code = build_finalize_result(fin_dir, "2-2f-roundtrip")
@@ -648,22 +672,39 @@ def _run_self_test():
           res["blockers"] == ['rotate key, then redeploy', 'fix issue #123 upstream', 'plain'])
     check("writer round-trip: scalars verbatim",
           res["gate_decision"] == "WAIVED" and res["ci_status"] == "timeout"
-          and res["clauses"]["convergence_unverified"] is True)
+          and res["clauses"]["review_unverified"] is True)
     check("writer round-trip: all four clauses fire",
           all(res["clauses"].values()) and res["draft"] is True)
     _rs = read_state_file(os.path.join(fin_dir, "2-2f-roundtrip.yaml"))
     check("writer round-trip: resume reader agrees", _rs.get("status") == "review")
+    check("writer round-trip: branch verbatim", _rs.get("branch") == "story/2-2f-roundtrip")
+    _rt2 = _su.default_state()
+    _rt2.update(story_key="2-2g-roundtrip", branch="story/2-2g #odd", review_unverified=False)
+    with open(os.path.join(fin_dir, "2-2g-roundtrip.yaml"), "w", encoding="utf-8") as fh:
+        fh.write(_su.dump_state(_rt2))
+    _rs2 = read_state_file(os.path.join(fin_dir, "2-2g-roundtrip.yaml"))
+    check("writer round-trip: quoted-# branch verbatim", _rs2.get("branch") == "story/2-2g #odd")
+    res, _ = build_finalize_result(fin_dir, "2-2g-roundtrip")
+    check("writer round-trip: default state is clean", res["clean_completion"] is True and not any(res["clauses"].values()))
 
-    # Clause 2 — convergence_unverified.
-    write_fin("2-3-unverified", convergence_unverified="true")
+    # Clause 2 — review_unverified.
+    write_fin("2-3-unverified", review_unverified="true")
     res, _ = build_finalize_result(fin_dir, "2-3-unverified")
-    check("finalize unverified: clause fires alone", res["clauses"] == {"blocker": False, "convergence_unverified": True, "gate_waived": False, "ci_failed_or_timeout": False})
+    check("finalize unverified: clause fires alone", res["clauses"] == {"blocker": False, "review_unverified": True, "gate_waived": False, "ci_failed_or_timeout": False})
     check("finalize unverified: draft, not clean", res["draft"] is True and res["clean_completion"] is False)
+    check("finalize unverified: reason names the field", any(r.startswith("review_unverified is true") for r in res["reasons"]))
+    # a pre-0.27 state file that only carries the retired review-loop flag does NOT
+    # fire clause 2 (the field is preserved as an extra by the writer, never re-read here)
+    with open(os.path.join(fin_dir, "2-3b-legacy.yaml"), "w", encoding="utf-8") as fh:
+        fh.write("story_key: 2-3b-legacy\nstatus: done\nconvergence_unverified: true\n"
+                 "gate_decision: null\nci_status: passed\nblockers: []\n")
+    res, _ = build_finalize_result(fin_dir, "2-3b-legacy")
+    check("finalize legacy flag ignored: clean", res["clean_completion"] is True and res["clauses"]["review_unverified"] is False)
 
     # Clause 3 — gate WAIVED.
     write_fin("2-4-waived", gate_decision="WAIVED")
     res, _ = build_finalize_result(fin_dir, "2-4-waived")
-    check("finalize waived: clause fires alone", res["clauses"] == {"blocker": False, "convergence_unverified": False, "gate_waived": True, "ci_failed_or_timeout": False})
+    check("finalize waived: clause fires alone", res["clauses"] == {"blocker": False, "review_unverified": False, "gate_waived": True, "ci_failed_or_timeout": False})
     check("finalize waived: gate_decision carried", res["gate_decision"] == "WAIVED")
     check("finalize waived: draft, no flip", res["draft"] is True and res["flip_bmad_status"] is False)
 
@@ -682,7 +723,7 @@ def _run_self_test():
     # Clause 4 — ci_status from the state file (timeout).
     write_fin("2-5-timeout", ci_status="timeout")
     res, _ = build_finalize_result(fin_dir, "2-5-timeout")
-    check("finalize ci timeout: clause fires alone", res["clauses"] == {"blocker": False, "convergence_unverified": False, "gate_waived": False, "ci_failed_or_timeout": True})
+    check("finalize ci timeout: clause fires alone", res["clauses"] == {"blocker": False, "review_unverified": False, "gate_waived": False, "ci_failed_or_timeout": True})
     check("finalize ci timeout: draft", res["draft"] is True)
 
     # Clause 4 — live --ci-status wins over the state file (both directions).
@@ -697,7 +738,7 @@ def _run_self_test():
     res, _ = build_finalize_result(fin_dir, "2-7-unknown")
     check("finalize ci unknown: does not fire", res["clauses"]["ci_failed_or_timeout"] is False and res["clean_completion"] is True)
     with open(os.path.join(fin_dir, "2-8-no-ci.yaml"), "w", encoding="utf-8") as fh:
-        fh.write("story_key: 2-8-no-ci\nstatus: done\nblockers: []\nconvergence_unverified: false\ngate_decision: null\n")
+        fh.write("story_key: 2-8-no-ci\nstatus: done\nblockers: []\nreview_unverified: false\ngate_decision: null\n")
     res, _ = build_finalize_result(fin_dir, "2-8-no-ci")
     check("finalize ci absent: defaults unknown, no fire", res["ci_status"] == "unknown" and res["ci_status_source"] == "default" and res["clean_completion"] is True)
     res, _ = build_finalize_result(fin_dir, "2-1-clean", ci_status="none")

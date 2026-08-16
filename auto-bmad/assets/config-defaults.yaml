@@ -1,7 +1,7 @@
 # Constant-default SETUP-block values for auto-bmad's runtime config.yaml.
 #
-# Unlike `profiles` / `phase_profiles` (whose single source is assets/agents/profiles.yaml),
-# config.yaml's `delegation` / `tea` / `git` / `code_review` blocks are SETUP ANSWERS: seeded
+# Unlike `profiles` / `phase_profiles` (whose single source is assets/profiles.yaml),
+# config.yaml's `delegation` / `tea` / `git` / `code_review` / `build` blocks are SETUP ANSWERS: seeded
 # by the first-run interview, not copied from a shipped asset. So when a release ADDS a new
 # setup key, nothing materialises it into an existing config — the orchestrator falls back to a
 # hardcoded default and the new key (and the feature it unlocks) stays invisible in the file.
@@ -16,10 +16,10 @@
 # DELIBERATELY ABSENT — environment-resolved / interviewed fields whose correct value is NOT a
 # universal constant, so writing a static guess would change behaviour:
 #   delegation.host, delegation.mode  (re-detected every run; the stored value is inert)
-#   delegation.target_tools           (detected from the installed skill dirs)
 #   tea.enabled, tea.framework_ci     (gated on whether TEA / a test framework / CI are present)
 #   git.mode                          (the detect|remote|local toggle; default sentinel `auto` = detect)
 #   git.base_branch                   (detected from the repo)
+#   code_review.cross_model_layer     (env-detected: codex when on PATH and != host, else ""; absent key ⇒ "")
 # These are always seeded at first run, so they are never "missing" in practice; keeping them
 # out of this asset guarantees the heal can never materialise a wrong static value for them.
 #
@@ -30,9 +30,9 @@ delegation:
                             # Map a phase_profiles key -> a tool (claude|codex|opencode) to run that
                             # phase via the tool's CLI instead of an in-tool sub-agent (model + effort
                             # still come from that phase's profile). A few examples:
-                            #   cli_phases: { code_review_review_secondary: opencode }  # 2nd-opinion review on a different vendor's model
-                            #   cli_phases: { retrospective: codex }                    # run the retro via `codex exec`
-                            #   cli_phases: { dev_story: claude, code_review_review: codex }
+                            #   cli_phases: { followup_review: codex }   # the follow-up review pass on Codex (Codex reviews AND triages/patches)
+                            #   cli_phases: { retrospective: codex }     # run the retro via `codex exec`
+                            #   cli_phases: { build: claude }            # run bmad-build-auto itself via `claude -p` (needs no nesting)
 tea:
   gate_max_iterations: 2    # Phase 8 trace-gate remediation cap before only waive/stop remain
   story_trace_advisory:     # per-story, non-blocking trace pass; self-activating on long high-risk epics
@@ -45,14 +45,11 @@ git:
   offer_merge: true         # Phase 9: ask whether to merge a clean-completion PR
   ci_wait_minutes: 30       # max wait for in-progress CI before deciding (only when offer_merge is on)
 code_review:
-  max_iterations: 2
-  security_review: true     # run the dedicated per-story security review inside the Phase 7 loop
-                            # (auto-bmad-local; the ab-security delegate, gated here). false => skip it.
-  verification_gap: true    # run the verification-gap review inside the Phase 7 loop (upstream
-                            # bmad-review-verification-gap, single-instance like security). false => skip it.
-  epic_review: true         # epic mode: run the Tier-B epic integration review (the heavy adversarial
-                            # pass; no halt — decisions auto-resolved). false => skip it (per-story thin review only).
-  tier_a_lenses: [auditor, security]  # epic mode: the per-story thin-review lens set (no loop/halt).
-                            # security gated by security_review above; drop blind/edge — Tier B's job.
-  epic_diff_chunk_threshold_lines: 6000  # epic mode: chunk the Tier-B review when the epic diff exceeds
-                            # this many lines (per-story sub-diffs + joint triage). 0 => never chunk.
+  followup: recommended     # Phase 7 follow-up review pass (a fresh bmad-build-auto review pass on the done spec at
+                            # the followup_review profile's model): recommended => only when the spec says
+                            # followup_review_recommended: true; always => every story; never => skip.
+  security_layer: true      # write auto-bmad's security review layer (id auto-bmad-security) into the project's
+                            # _bmad/custom/bmad-build-auto.toml managed region — build-auto runs it with its own layers.
+build:
+  spec_approval: false      # opt-in per-story human approval of the spec between Phase 3 (plan) and Phase 5 (build);
+                            # per-run override: `approve spec`. Epic mode never halts here.

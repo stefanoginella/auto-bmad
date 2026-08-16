@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Deterministic writer for auto-bmad's per-story state file, report sections, and retro notes.
+"""Deterministic writer for auto-bmad's per-story state file and report sections.
 
 Replaces the YAML/markdown the orchestrator used to hand-write after every phase. Every state
 write re-emits the FULL ``state/{key}.yaml`` schema from ``references/state-and-resume.md`` —
 every field always present with an explicit ``null``/``false``/``[]``/``{}`` default — and stamps
 ``updated_at`` (ISO-8601 UTC). Reading an older state file missing fields migrates it to the full
-shape on the next write; unknown fields it already carries (e.g. ``planning_drift``, which
-``pipeline.md`` Phase 8 records but the schema block doesn't list) are preserved verbatim after
-the schema fields, never dropped. ``--self-test`` parses the live schema block out of
-``../references/state-and-resume.md`` and asserts its field-name set equals this writer's, so a
-doc edit that drifts the schema fails loud (the lockstep pattern from ``config_plan.py``).
+shape on the next write; unknown fields it already carries (epic-anchor extras such as
+``stories_landed``, or fields an older schema wrote) are preserved verbatim after the schema
+fields, never dropped. ``--self-test`` parses the live schema block out of
+``../references/state-and-resume.md`` and asserts its field-name set equals this writer's — top
+level plus the ``phase8_steps`` / ``build`` / ``retro`` sub-keys — so a doc edit that drifts the
+schema fails loud (the lockstep pattern from ``config_plan.py``).
 
 Subcommands (each emits a single JSON object on stdout):
 
 * ``init``          — create the state file from a full ``--json`` payload. Stamps ``started_at``
                       ONCE; refuses (exit 1) if the file already exists — resume must never re-init.
 * ``set``           — apply a JSON patch: one-level-deep merge for the map fields
-                      (``story_trace``/``overrides``/``phase8_steps``); reserved key ``_append``
-                      extends list fields (``{"_append": {"commits": ["a1b2c3d"]}}``); a patch that
-                      sets ``status: "done"`` auto-stamps ``completed_at``; any attempt to CHANGE
+                      (``story_trace``/``overrides``/``phase8_steps``/``build``/``retro`` — a map
+                      value may itself be a flat list, e.g. ``build.warnings``, and round-trips);
+                      reserved key ``_append`` extends list fields
+                      (``{"_append": {"commits": ["a1b2c3d"]}}``); a patch that sets
+                      ``status: "done"`` auto-stamps ``completed_at``; any attempt to CHANGE
                       ``started_at`` is refused (exit 1, error in JSON).
 * ``phase-done``    — add ``--phase N`` to ``completed_phases`` (idempotent, kept sorted) and apply
                       an optional simultaneous ``--json`` patch (the folded write). The patch must
@@ -32,29 +35,27 @@ Subcommands (each emits a single JSON object on stdout):
                       (and each AskUserQuestion prompt) with start/pause.
 * ``report-section``— APPEND a ``## Report — <ISO ts> (<tag>)`` section to ``reports/{key}.md``,
                       rendering the state-and-resume.md "Section template" literally (same headings,
-                      same order, ``(none)`` for empties). Story/Branch/Timing lines (elapsed,
-                      ≈AI-run = active_seconds, ≈wait = elapsed−active, resumed N×) derive from the
-                      state file; the prose snippets come from ``--json``, whose keys must be from
-                      ``REPORT_PAYLOAD_KEYS`` — an unknown key is REJECTED (exit 2), because every
-                      missing key renders ``(none)`` and a misspelled one would silently drop its
-                      content from the committed report. Creates the file with a one-line H1 if
+                      same order, ``(none)`` for empties). Story/Spec/Branch/Timing lines (spec path,
+                      elapsed, ≈AI-run = active_seconds, ≈wait = elapsed−active, resumed N×) derive
+                      from the state file; the prose snippets come from ``--json``, whose keys must
+                      be from ``REPORT_PAYLOAD_KEYS`` — an unknown key is REJECTED (exit 2), because
+                      every missing key renders ``(none)`` and a misspelled one would silently drop
+                      its content from the committed report. Creates the file with a one-line H1 if
                       absent; NEVER overwrites existing sections — a full rewrite requires
                       ``--overwrite-confirmed``. ``--allow-missing-state`` covers the pre-init
                       hard-stop (Phase 0 — "always produce a report" before ``init`` ever ran):
                       renders against a default state keyed off the state file's name.
                       With ``--epic`` it renders the *epic-rollup* template instead (epic header +
-                      per-story rollup + integration-review/gate + open-findings/deferred checklist),
-                      keyed off the epic anchor, with its own ``EPIC_REPORT_PAYLOAD_KEYS`` allowlist.
-* ``retro-append``  —``--json {"lines": [...]}``: drop empty/``none``/whitespace lines; append the
-                      survivors as ``- `` bullets under ``## Story {KEY}`` (reuse the heading if
-                      present, else create at EOF; create the file lazily). If nothing survives,
-                      write NOTHING — not even the heading.
+                      per-story rollup + epic gate / TEA / retrospective + open-questions/deferred
+                      checklist), keyed off the epic anchor, with its own
+                      ``EPIC_REPORT_PAYLOAD_KEYS`` allowlist.
 
 Exit codes: 0 ok; 1 contract violation (init-exists, started_at rewrite, pause-without-anchor,
 a patch value the emit/parse round-trip or the timing math could not honor — un-re-readable map
-keys, non-int INT fields, off-schema ``phase8_steps`` keys/markers, set+``_append`` overlap);
-2 usage/parse error. Dependency-free (stdlib only); state parsing is a small block-structured
-reader in the ``state_plan.py`` spirit — flat scalars, flat lists, one-level maps.
+keys, non-int INT fields, off-schema ``phase8_steps``/``build``/``retro`` keys or markers,
+set+``_append`` overlap); 2 usage/parse error. Dependency-free (stdlib only); state parsing is a
+small block-structured reader in the ``state_plan.py`` spirit — flat scalars, flat lists,
+one-level maps (whose values may be scalars or flat lists).
 
 Usage:
     state_update.py init           --state-file PATH --json -|FILE
@@ -64,7 +65,6 @@ Usage:
     state_update.py timing-pause   --state-file PATH
     state_update.py report-section --report-file PATH --state-file PATH --json -|FILE
                                    [--epic] [--overwrite-confirmed] [--allow-missing-state]
-    state_update.py retro-append   --retro-file PATH --story-key KEY --json -|FILE
     state_update.py --self-test
 """
 from __future__ import annotations
@@ -91,36 +91,50 @@ class UsageError(Exception):
 # --------------------------------------------------------------------------- #
 # Schema (lockstep with references/state-and-resume.md -> "## state/{key}.yaml")
 # --------------------------------------------------------------------------- #
-PHASE8_KEYS = ("trace_gate", "nfr", "test_review", "project_context", "reconcile", "archive", "retro")
+PHASE8_KEYS = ("trace_gate", "nfr", "test_review", "reconcile", "archive", "retro")
+BUILD_KEYS = ("status", "blocking_condition", "followup_review_recommended",
+              "review_loop_iteration", "deferred_count", "warnings")   # last bmad-build-auto result
+RETRO_KEYS = ("doc", "verdict", "open_action_items")                    # epic-end retrospective
 
 SCHEMA_ORDER = (
-    "story_key", "epic_num", "story_num", "branch", "status",
+    "story_key", "epic_num", "story_num", "story_suffix", "branch", "status",
     "updated_at", "started_at", "completed_at", "active_seconds", "timing_anchor",
-    "is_first_in_epic", "is_last_in_epic", "needs_project_context_bootstrap",
+    "is_first_in_epic", "is_last_in_epic",
     "git_mode", "base_branch",
     "tea_risk", "tea_selected", "tea_rationale", "epic_story_count", "stories_after_in_epic",
     "completed_phases",
-    "code_review_iterations", "code_review_loop_done", "hitl_halt",
-    "external_review_iterations", "convergence_unverified", "story_trace",
+    "spec_path", "spec_approved", "build", "followup_passes", "hitl_halt",
+    "review_unverified", "story_trace",
     "commits", "phase8_steps",
     "gate_decision", "gate_iterations", "deferred_work_archived",
+    "retro", "bmad_status_flipped_at",
     "pr_url", "ci_run_url", "ci_status",
     "pr_merged", "merge_method", "merge_commit", "branch_deleted",
     "open_questions", "deferred_work", "blockers", "overrides", "constraints",
 )
 
 INT_FIELDS = {"epic_num", "story_num", "active_seconds", "timing_anchor", "epic_story_count",
-              "stories_after_in_epic", "code_review_iterations", "external_review_iterations",
-              "gate_iterations", "deferred_work_archived"}
-BOOL_FIELDS = {"is_first_in_epic", "is_last_in_epic", "needs_project_context_bootstrap",
-               "code_review_loop_done", "convergence_unverified", "pr_merged", "branch_deleted"}
+              "stories_after_in_epic", "followup_passes", "gate_iterations",
+              "deferred_work_archived", "bmad_status_flipped_at"}
+BOOL_FIELDS = {"is_first_in_epic", "is_last_in_epic", "spec_approved", "review_unverified",
+               "pr_merged", "branch_deleted"}
 FLOW_LIST_FIELDS = {"tea_selected", "completed_phases", "commits"}   # short tokens: emit [a, b]
 BLOCK_LIST_FIELDS = {"open_questions", "deferred_work", "blockers", "constraints"}  # free text
 LIST_FIELDS = FLOW_LIST_FIELDS | BLOCK_LIST_FIELDS
-MAP_FIELDS = {"story_trace", "overrides", "phase8_steps"}
+MAP_FIELDS = {"story_trace", "overrides", "phase8_steps", "build", "retro"}
 _MAP_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")   # what load_state's map reader can parse back
 _PHASE8_MARKERS = (None, "done")                      # closed vocabulary (pipeline.md Phase 8) …
 _PHASE8_TRACE_GATE_EXTRA = ("waived", "failed")       # … which trace_gate alone extends
+_FIXED_MAP_KEYS = {"phase8_steps": PHASE8_KEYS, "build": BUILD_KEYS, "retro": RETRO_KEYS}
+
+
+def default_build() -> dict:
+    return {"status": None, "blocking_condition": None, "followup_review_recommended": False,
+            "review_loop_iteration": 0, "deferred_count": 0, "warnings": []}
+
+
+def default_retro() -> dict:
+    return {"doc": None, "verdict": None, "open_action_items": 0}
 
 
 def default_state() -> dict:
@@ -131,13 +145,15 @@ def default_state() -> dict:
         d[k] = False
     for k in LIST_FIELDS:
         d[k] = []
-    for k in ("code_review_iterations", "external_review_iterations",
-              "gate_iterations", "deferred_work_archived"):
+    for k in ("followup_passes", "gate_iterations", "deferred_work_archived"):
         d[k] = 0
+    d["story_suffix"] = ""                      # "" when the key has no split suffix
     d["ci_status"] = "unknown"
     d["story_trace"] = None                     # null until the trace advisory runs
     d["overrides"] = {}
     d["phase8_steps"] = {k: None for k in PHASE8_KEYS}
+    d["build"] = default_build()
+    d["retro"] = default_retro()
     return d
 
 
@@ -441,12 +457,16 @@ def _validate_patch(patch: dict) -> None:
                         "[A-Za-z_][A-Za-z0-9_]*")
         elif k in MAP_FIELDS and v is not None:
             raise ContractError(f"{k} must be a map (or null), got {v!r}")
+        if k in _FIXED_MAP_KEYS and isinstance(v, dict):
+            # phase8_steps / build / retro have a closed key set: a typo'd sub-key
+            # would ride along silently while the real one stayed at its default.
+            for sub in v:
+                if sub not in _FIXED_MAP_KEYS[k]:
+                    raise ContractError(
+                        f"unknown {k} key {sub!r} — expected one of: "
+                        + ", ".join(_FIXED_MAP_KEYS[k]))
         if k == "phase8_steps" and isinstance(v, dict):
             for sub, marker in v.items():
-                if sub not in PHASE8_KEYS:
-                    raise ContractError(
-                        f"unknown phase8_steps key {sub!r} — expected one of: "
-                        + ", ".join(PHASE8_KEYS))
                 allowed = _PHASE8_MARKERS + (_PHASE8_TRACE_GATE_EXTRA if sub == "trace_gate" else ())
                 if marker not in allowed:
                     raise ContractError(
@@ -622,6 +642,8 @@ def _prose(payload: dict, key: str, default: str) -> str:
 
 
 def _list_block(label: str, items, trailing: str = "") -> list:
+    if isinstance(items, str):                  # a single prose line: one item, not per-char
+        items = [items]
     clean = [str(x).strip() for x in (items or []) if str(x).strip()]
     if not clean and not trailing:
         return [f"{label} (none)"]
@@ -630,6 +652,11 @@ def _list_block(label: str, items, trailing: str = "") -> list:
     if trailing:
         out.append(trailing)
     return out
+
+
+def _story_label(state: dict) -> str:
+    """``story_num`` plus the split suffix when the key carries one (``6`` / ``6a``)."""
+    return f"{state.get('story_num')}{state.get('story_suffix') or ''}"
 
 
 def _short_sha(sha) -> str:
@@ -645,8 +672,8 @@ def _short_sha(sha) -> str:
 # silently drop its content from the committed, PR-visible report.
 REPORT_PAYLOAD_KEYS = frozenset((
     "disposition_tag", "pipeline_status", "continues", "phases_run", "skipped",
-    "overrides", "tea", "code_review", "uat", "open_questions", "deferred_work",
-    "deferred_archived_note", "planning_drift", "needs_human", "next", "head_sha",
+    "overrides", "tea", "build", "review", "retro", "open_questions", "deferred_work",
+    "deferred_archived_note", "needs_human", "next", "head_sha",
 ))
 
 
@@ -667,7 +694,8 @@ def render_section(state: dict, payload: dict, timestamp: str, resumed: int) -> 
         f"## Report — {timestamp} ({tag})",
         "",
         f"**Story:** `{state.get('story_key')}` (epic {state.get('epic_num')}, "
-        f"story {state.get('story_num')}) — {pos}.",
+        f"story {_story_label(state)}) — {pos}.",
+        f"**Spec:** `{state.get('spec_path')}`" if state.get("spec_path") else "**Spec:** (none)",
         f"**Branch:** `{state.get('branch') or '(unknown)'}` "
         f"(HEAD `{_short_sha(payload.get('head_sha'))}`).",
         f"**Pipeline status:** {_prose(payload, 'pipeline_status', '(none)')}",
@@ -682,16 +710,16 @@ def render_section(state: dict, payload: dict, timestamp: str, resumed: int) -> 
         "",
         f"**TEA:** {_prose(payload, 'tea', '(none)')}",
         "",
-        f"**Code review:** {_prose(payload, 'code_review', 'skipped')}",
+        f"**Build:** {_prose(payload, 'build', 'not run')}",
         "",
-        *_list_block("**UAT:**", payload.get("uat")),
+        f"**Review:** {_prose(payload, 'review', 'skipped')}",
+        "",
+        f"**Retrospective:** {_prose(payload, 'retro', '(none)')}",
         "",
         *_list_block("**Open questions:**", payload.get("open_questions")),
         "",
         *_list_block("**Deferred work:**", payload.get("deferred_work"),
                      str(payload.get("deferred_archived_note") or "").strip()),
-        "",
-        f"**Planning drift:** {_prose(payload, 'planning_drift', '(none)')}",
         "",
         *_list_block("**⚠️ Needs human:**", payload.get("needs_human")),
         "",
@@ -705,9 +733,9 @@ def render_section(state: dict, payload: dict, timestamp: str, resumed: int) -> 
 # silently drop its content from the committed, PR-visible epic report.
 EPIC_REPORT_PAYLOAD_KEYS = frozenset((
     "disposition_tag", "pipeline_status", "continues", "epic_summary",
-    "story_rollup", "stories_skipped", "integration_review", "epic_gate", "tea", "uat",
+    "story_rollup", "stories_skipped", "epic_gate", "tea", "retro",
     "overrides", "open_questions", "deferred_work", "deferred_archived_note",
-    "auto_decided", "planning_drift", "needs_human", "next", "head_sha",
+    "needs_human", "next", "head_sha",
 ))
 
 
@@ -740,15 +768,13 @@ def render_epic_section(state: dict, payload: dict, timestamp: str, resumed: int
         "",
         *_list_block("**Stories:**", payload.get("story_rollup")),
         "",
-        f"**Skipped (already done):** {_prose(payload, 'stories_skipped', '(none)')}",
-        "",
-        f"**Integration review:** {_prose(payload, 'integration_review', '(none)')}",
+        *_list_block("**Skipped:**", payload.get("stories_skipped")),
         "",
         f"**Epic gate:** {_prose(payload, 'epic_gate', '(none)')}",
         "",
         f"**TEA:** {_prose(payload, 'tea', '(none)')}",
         "",
-        *_list_block("**UAT:**", payload.get("uat")),
+        f"**Retrospective:** {_prose(payload, 'retro', '(none)')}",
         "",
         f"**Overrides:** {_prose(payload, 'overrides', 'none')}",
         "",
@@ -756,10 +782,6 @@ def render_epic_section(state: dict, payload: dict, timestamp: str, resumed: int
         "",
         *_list_block("**Deferred work:**", payload.get("deferred_work"),
                      str(payload.get("deferred_archived_note") or "").strip()),
-        "",
-        *_list_block("**Auto-decided (epic mode):**", payload.get("auto_decided")),
-        "",
-        f"**Planning drift:** {_prose(payload, 'planning_drift', '(none)')}",
         "",
         *_list_block("**⚠️ Needs human:**", payload.get("needs_human")),
         "",
@@ -799,80 +821,35 @@ def cmd_report_section(report_file: Path, state_file: Path, payload: dict,
             "overwrote": bool(overwrite_confirmed and existing.strip())}
 
 
-# ----- retro-append ----------------------------------------------------------- #
-_RETRO_NOISE = {"none", "(none)", "none.", "n/a", "-"}
-
-
-def _retro_survivors(lines) -> list:
-    out = []
-    for raw in (lines or []):
-        s = str(raw).strip()
-        s = re.sub(r"^[-*]\s+", "", s).strip()
-        if not s or s.lower() in _RETRO_NOISE:
-            continue
-        out.append(s)
-    return out
-
-
-def cmd_retro_append(retro_file: Path, story_key: str, payload: dict) -> dict:
-    if not isinstance(payload, dict) or not isinstance(payload.get("lines", []), list):
-        raise UsageError('retro-append payload must be {"lines": [...]}')
-    survivors = _retro_survivors(payload.get("lines", []))
-    skipped = len(payload.get("lines", []) or []) - len(survivors)
-    if not survivors:                                    # nothing real: write NOTHING
-        return {"ok": True, "action": "retro-append", "retro_file": str(retro_file),
-                "story_key": story_key, "appended": 0, "skipped": skipped,
-                "created_file": False, "created_heading": False}
-    heading = f"## Story {story_key}"
-    bullets = [f"- {s}" for s in survivors]
-    existed = retro_file.is_file()
-    lines = retro_file.read_text(encoding="utf-8").splitlines() if existed else []
-    created_heading = False
-    idx = next((i for i, ln in enumerate(lines) if ln.rstrip() == heading), None)
-    if idx is None:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append(heading)
-        lines.extend(bullets)
-        created_heading = True
-    else:
-        end = next((j for j in range(idx + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
-        last = idx
-        for j in range(idx, end):
-            if lines[j].strip():
-                last = j
-        lines[last + 1: last + 1] = bullets
-    _atomic_write(retro_file, "\n".join(lines).rstrip("\n") + "\n")
-    return {"ok": True, "action": "retro-append", "retro_file": str(retro_file),
-            "story_key": story_key, "appended": len(survivors), "skipped": skipped,
-            "created_file": not existed, "created_heading": created_heading}
-
-
 # --------------------------------------------------------------------------- #
 # Lockstep: parse the live schema block out of references/state-and-resume.md
 # --------------------------------------------------------------------------- #
 def _doc_schema_fields() -> tuple:
+    """Return (top-level fields, {map_field: [sub-keys]}) parsed from the doc's fenced
+    ``state/{key}.yaml`` block — the 2-space sub-keys are collected for every map
+    field with a closed key set (``phase8_steps`` / ``build`` / ``retro``)."""
     doc = Path(__file__).resolve().parent.parent / "references" / "state-and-resume.md"
     text = doc.read_text(encoding="utf-8")
     sec = text.index("## state/{key}.yaml")
     fence = text.index("```yaml", sec)
     body_start = text.index("\n", fence) + 1
     body = text[body_start: text.index("```", body_start)]
-    fields, phase8 = [], []
-    in_phase8 = False
+    fields: list = []
+    subkeys: dict = {k: [] for k in _FIXED_MAP_KEYS}
+    current = None
     for line in body.splitlines():
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):", line)
         if m:
             fields.append(m.group(1))
-            in_phase8 = m.group(1) == "phase8_steps"
+            current = m.group(1) if m.group(1) in subkeys else None
             continue
-        if in_phase8:
+        if current:
             sm = re.match(r"^  ([A-Za-z_][A-Za-z0-9_]*):", line)
             if sm:
-                phase8.append(sm.group(1))
+                subkeys[current].append(sm.group(1))
             elif line.strip() and not line.lstrip().startswith("#"):
-                in_phase8 = False
-    return fields, phase8
+                current = None
+    return fields, subkeys
 
 
 # --------------------------------------------------------------------------- #
@@ -893,13 +870,36 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             tmp = Path(td)
 
             # --- lockstep with the live doc schema block -------------------- #
-            doc_fields, doc_phase8 = _doc_schema_fields()
+            doc_fields, doc_sub = _doc_schema_fields()
             assert set(doc_fields) == set(SCHEMA_ORDER), (
                 "schema drift vs state-and-resume.md: doc-only="
                 f"{sorted(set(doc_fields) - set(SCHEMA_ORDER))} writer-only="
                 f"{sorted(set(SCHEMA_ORDER) - set(doc_fields))}")
             assert len(doc_fields) == len(set(doc_fields)), "duplicate field in doc schema block"
-            assert tuple(doc_phase8) == PHASE8_KEYS, f"phase8_steps sub-keys drifted: {doc_phase8}"
+            assert tuple(doc_fields) == SCHEMA_ORDER, (
+                f"doc field ORDER drifted from SCHEMA_ORDER: {doc_fields}")
+            assert tuple(doc_sub["phase8_steps"]) == PHASE8_KEYS, (
+                f"phase8_steps sub-keys drifted: {doc_sub['phase8_steps']}")
+            assert tuple(doc_sub["build"]) == BUILD_KEYS, f"build sub-keys drifted: {doc_sub['build']}"
+            assert tuple(doc_sub["retro"]) == RETRO_KEYS, f"retro sub-keys drifted: {doc_sub['retro']}"
+            # removed review-loop / project-context / retro-notes fields must stay gone
+            for gone in ("code_review_iterations", "code_review_loop_done",
+                         "external_review_iterations", "convergence_unverified",
+                         "needs_project_context_bootstrap"):
+                assert gone not in SCHEMA_ORDER and gone not in doc_fields, gone
+                assert gone not in INT_FIELDS and gone not in BOOL_FIELDS, gone
+            assert "project_context" not in PHASE8_KEYS
+            assert set(default_build()) == set(BUILD_KEYS) and set(default_retro()) == set(RETRO_KEYS)
+            assert INT_FIELDS <= set(SCHEMA_ORDER) and BOOL_FIELDS <= set(SCHEMA_ORDER)
+            assert MAP_FIELDS <= set(SCHEMA_ORDER) and LIST_FIELDS <= set(SCHEMA_ORDER)
+            assert not (INT_FIELDS & BOOL_FIELDS) and not (MAP_FIELDS & LIST_FIELDS)
+            assert set(_FIXED_MAP_KEYS) <= MAP_FIELDS
+            dflt = default_state()
+            assert dflt["story_suffix"] == "" and dflt["spec_path"] is None, dflt
+            assert dflt["spec_approved"] is False and dflt["review_unverified"] is False, dflt
+            assert dflt["followup_passes"] == 0 and dflt["bmad_status_flipped_at"] is None, dflt
+            assert dflt["hitl_halt"] is None and dflt["build"]["warnings"] == [], dflt
+            assert dflt["retro"] == {"doc": None, "verdict": None, "open_action_items": 0}, dflt
 
             # --- init: full shape, started_at stamped once ------------------ #
             sf = tmp / "state" / "1-2-user-auth.yaml"
@@ -914,10 +914,13 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             text = sf.read_text(encoding="utf-8")
             for k in SCHEMA_ORDER:
                 assert re.search(rf"^{k}:", text, re.M), f"init dropped schema field {k}"
+            assert re.search(r'^story_suffix: ""$', text, re.M), "empty suffix must be an explicit \"\""
             st = full_state(load_state(sf))
             assert st["status"] == "in-progress" and st["active_seconds"] == 0, st
             assert st["timing_anchor"] is None and st["completed_at"] is None, st
             assert st["phase8_steps"] == {k: None for k in PHASE8_KEYS}, st["phase8_steps"]
+            assert st["build"] == default_build() and st["retro"] == default_retro(), st
+            assert st["story_suffix"] == "" and st["spec_path"] is None, st
             assert st["tea_selected"] == ["atdd", "automate"], st["tea_selected"]
             assert st["ci_status"] == "unknown" and st["overrides"] == {"start_phase": "5"}, st
             # re-init refused (contract: resume must never re-init)
@@ -928,17 +931,19 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
                 pass
 
             # --- set: merge, _append, started_at guard, done stamp ---------- #
-            cmd_set(sf, {"code_review_iterations": 1, "overrides": {"skip": "tea"},
+            cmd_set(sf, {"followup_passes": 1, "overrides": {"skip": "tea"},
+                         "spec_path": "/abs/impl/spec-1-2-user-auth.md",
                          "_append": {"commits": ["a1b2c3d"],
                                      "open_questions": ["Should X use Y: or Z?"]}})
             st = full_state(load_state(sf))
             assert st["overrides"] == {"start_phase": "5", "skip": "tea"}, st["overrides"]
             assert st["commits"] == ["a1b2c3d"], st["commits"]
             assert st["open_questions"] == ["Should X use Y: or Z?"], st["open_questions"]
+            assert st["spec_path"] == "/abs/impl/spec-1-2-user-auth.md", st["spec_path"]
             cmd_set(sf, {"_append": {"commits": ["e4f5g6h"]}})
             st = full_state(load_state(sf))
             assert st["commits"] == ["a1b2c3d", "e4f5g6h"], st["commits"]
-            assert st["code_review_iterations"] == 1, st
+            assert st["followup_passes"] == 1, st
             try:
                 cmd_set(sf, {"started_at": "1999-01-01T00:00:00Z"})
                 raise AssertionError("started_at rewrite must raise ContractError")
@@ -954,11 +959,43 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert st["phase8_steps"]["retro"] is None, st["phase8_steps"]
             assert st["story_trace"] == {"verdict": "CONCERNS",
                                          "uncovered": ["AC3: rate limit"], "ran": True}, st["story_trace"]
-            # unknown field (e.g. planning_drift, recorded by pipeline.md) is kept verbatim
-            cmd_set(sf, {"planning_drift": "PRD assumed a single tenant — epic built multi-tenant"})
+            # build / retro: one-level merge keeps the untouched sub-keys; a list value
+            # inside a MAP field (build.warnings) round-trips through emit/parse
+            cmd_set(sf, {"build": {"status": "done", "review_loop_iteration": 2,
+                                   "warnings": ["oversized", "multiple-goals"],
+                                   "deferred_count": 3}})
+            st = full_state(load_state(sf))
+            assert st["build"] == {"status": "done", "blocking_condition": None,
+                                   "followup_review_recommended": False,
+                                   "review_loop_iteration": 2, "deferred_count": 3,
+                                   "warnings": ["oversized", "multiple-goals"]}, st["build"]
+            bl = next(ln for ln in sf.read_text(encoding="utf-8").splitlines()
+                      if ln.startswith("  warnings:"))
+            assert bl == "  warnings: [oversized, multiple-goals]", bl
+            cmd_set(sf, {"build": {"status": "blocked",
+                                   "blocking_condition": "unclear intent: which API? #2",
+                                   "warnings": []}})
+            st = full_state(load_state(sf))
+            assert st["build"]["status"] == "blocked" and st["build"]["warnings"] == [], st["build"]
+            assert st["build"]["blocking_condition"] == "unclear intent: which API? #2", st["build"]
+            assert st["build"]["review_loop_iteration"] == 2, "merge must keep untouched sub-keys"
+            cmd_set(sf, {"retro": {"doc": "/abs/impl/epic-1-retro-2026-05-28.md",
+                                   "verdict": "accepted-with-open-items", "open_action_items": 2},
+                         "hitl_halt": "auto-continued (epic — no halt)",
+                         "review_unverified": True, "bmad_status_flipped_at": 8,
+                         "spec_approved": True, "story_suffix": "a"})
+            st = full_state(load_state(sf))
+            assert st["retro"] == {"doc": "/abs/impl/epic-1-retro-2026-05-28.md",
+                                   "verdict": "accepted-with-open-items",
+                                   "open_action_items": 2}, st["retro"]
+            assert st["hitl_halt"] == "auto-continued (epic — no halt)", st["hitl_halt"]
+            assert st["review_unverified"] is True and st["spec_approved"] is True, st
+            assert st["bmad_status_flipped_at"] == 8 and st["story_suffix"] == "a", st
+            # unknown field (an epic-anchor extra, or a field an older schema wrote) is kept verbatim
+            cmd_set(sf, {"batch_flip_done": True})
             cmd_set(sf, {"git_mode": "remote"})
             st = full_state(load_state(sf))
-            assert st["planning_drift"].startswith("PRD assumed"), "extra field dropped on rewrite"
+            assert st["batch_flip_done"] is True, "extra field dropped on rewrite"
             try:
                 cmd_set(sf, {"_append": {"status": ["x"]}})
                 raise AssertionError("_append to a non-list field must raise UsageError")
@@ -972,13 +1009,13 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             # --- phase-done: sorted, idempotent, folded patch ---------------- #
             sf2 = tmp / "state" / "1-3-plant-model.yaml"
             cmd_init(sf2, {"story_key": "1-3-plant-model", "epic_num": 1, "story_num": 3})
-            cmd_phase_done(sf2, 7, {"code_review_loop_done": True, "hitl_halt": "continued"})
+            cmd_phase_done(sf2, 7, {"followup_passes": 1, "hitl_halt": "continued"})
             r = cmd_phase_done(sf2, 3, None)
             assert r["completed_phases"] == [3, 7], r
             r = cmd_phase_done(sf2, 7, None)
             assert r["already_done"] and r["completed_phases"] == [3, 7], r
             st2 = full_state(load_state(sf2))
-            assert st2["code_review_loop_done"] is True and st2["hitl_halt"] == "continued", st2
+            assert st2["followup_passes"] == 1 and st2["hitl_halt"] == "continued", st2
             # a folded patch carrying completed_phases would clobber the phase
             # this very call records — rejected before any write
             before2 = sf2.read_text(encoding="utf-8")
@@ -1012,12 +1049,16 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert r["added_seconds"] == 100 and r["active_seconds"] == 160, r
 
             # --- migration: older partial file -> full shape on next write --- #
+            # (a pre-0.27 file: fields the schema no longer lists ride along as
+            # preserved extras — never dropped, never re-interpreted)
             old = tmp / "state" / "9-9-legacy.yaml"
             old.parent.mkdir(parents=True, exist_ok=True)
             old.write_text("story_key: 9-9-legacy\nstatus: in-progress  # mid\n"
                            'updated_at: "2026-01-01T00:00:00Z"\n'
                            'started_at: "2026-01-01T00:00:00Z"\n'
                            "completed_phases: [0, 1]\nactive_seconds: 120\n"
+                           "code_review_iterations: 2\nconvergence_unverified: true\n"
+                           "phase8_steps:\n  trace_gate: done\n  project_context: done\n"
                            "legacy_note: keep me\n", encoding="utf-8")
             cmd_set(old, {"git_mode": "local"})
             mtext = old.read_text(encoding="utf-8")
@@ -1027,47 +1068,67 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert mst["completed_phases"] == [0, 1] and mst["active_seconds"] == 120, mst
             assert mst["started_at"] == "2026-01-01T00:00:00Z", mst
             assert mst["legacy_note"] == "keep me", "unknown legacy field dropped"
-            assert mst["phase8_steps"] == {k: None for k in PHASE8_KEYS}, mst["phase8_steps"]
+            assert mst["code_review_iterations"] == 2 and mst["convergence_unverified"] is True, (
+                "pre-0.27 fields must be preserved verbatim as extras")
+            assert mst["review_unverified"] is False, "a legacy field must not feed the new one"
+            assert mst["build"] == default_build() and mst["retro"] == default_retro(), mst
+            # a legacy phase8 sub-key already in the file is tolerated on read (merge keeps
+            # it; the patch validator only guards NEW writes) and the six live markers resolve
+            assert mst["phase8_steps"]["trace_gate"] == "done", mst["phase8_steps"]
+            assert all(k in mst["phase8_steps"] for k in PHASE8_KEYS), mst["phase8_steps"]
 
             # --- report-section ---------------------------------------------- #
             rf = tmp / "reports" / "1-2-user-auth.md"
             payload = {"disposition_tag": "final",
                        "pipeline_status": "✅ clean completion.",
-                       "phases_run": "Phase 0, Phase 1, Phase 3 (ab-deep), Phase 5 (ab-deep).",
+                       "phases_run": "Phase 0, Phase 1, Phase 3 (build / ab-deep), Phase 5 (build / ab-deep).",
                        "skipped": "Phase 2 (not epic start), Phase 4 (atdd not selected).",
                        "overrides": "none.", "tea": "automate ran — 6 tests added.",
-                       "code_review": "2 iterations; iter 1: Critical 0 / High 1 / Medium 2 / Low 1; "
-                                      "iter 2: clean; HITL halt: continued.",
-                       "uat": ["Register with a valid email → account created, redirected to dashboard",
-                               "Submit the login form with a wrong password → inline error, no redirect"],
+                       "build": "build-auto: done; review_loop_iteration 2; deferred 3 (harvested "
+                                "to ledger); warnings: none; commits by build-auto: 2.",
+                       "review": "follow-up passes 1 (followup_review / ab-alt-deep); last pass "
+                                 "patch 1 / bad_spec 0 / defer 0 / reject 0; followup still "
+                                 "recommended: no; HITL: continued; review_unverified: false.",
+                       "retro": "verdict accepted-with-open-items; 2 open action items "
+                                "(AI-1 rotate keys; AI-2 index tuning); "
+                                "/abs/impl/epic-1-retro-2026-05-28.md",
                        "open_questions": [], "deferred_work": ["Index tuning deferred to 1-4"],
                        "deferred_archived_note": "Phase 8 archived 2 resolved → deferred-work-resolved.md.",
-                       "planning_drift": "(none)", "needs_human": [],
-                       "next": "1-3-plant-model.", "head_sha": "a1b2c3d4e5f6"}
+                       "needs_human": [],
+                       "next": "Human review: `/bmad-checkpoint-preview https://github.com/o/r/pull/7` "
+                               "(spec: `/abs/impl/spec-1-2-user-auth.md`); then `/auto-bmad`.",
+                       "head_sha": "a1b2c3d4e5f6"}
             clock["iso"] = "2026-05-28T16:05:00Z"
             r = cmd_report_section(rf, sf, payload, False)
             assert r["section_written"] and r["timestamp"] == "2026-05-28T16:05:00Z", r
             rt = rf.read_text(encoding="utf-8")
             assert rt.startswith("# auto-bmad report log — 1-2-user-auth\n"), rt.splitlines()[0]
             assert "## Report — 2026-05-28T16:05:00Z (final)" in rt, rt
-            assert "**Story:** `1-2-user-auth` (epic 1, story 2) — last-in-epic." in rt, rt
+            # story_suffix "a" (set above) renders into the story label
+            assert "**Story:** `1-2-user-auth` (epic 1, story 2a) — last-in-epic." in rt, rt
+            assert "**Spec:** `/abs/impl/spec-1-2-user-auth.md`" in rt, rt
             assert "**Branch:** `story/1-2-user-auth` (HEAD `a1b2c3d`)." in rt, rt
             assert "**Continues:** (none — first run)" in rt, rt
             # elapsed 13:55:02->16:01:02 = 2h 06m; AI-run 0m; wait 2h 06m; no resume suffix
             assert ("**Timing:** started 2026-05-28T13:55:02Z; completed 2026-05-28T16:01:02Z — "
                     "elapsed 2h 06m (≈0m AI-run, ≈2h 06m human/idle wait).") in rt, rt
-            assert "1. Register with a valid email → account created, redirected to dashboard" in rt, rt
+            assert "**Build:** build-auto: done; review_loop_iteration 2" in rt, rt
+            assert "**Review:** follow-up passes 1" in rt, rt
+            assert "**Retrospective:** verdict accepted-with-open-items" in rt, rt
             assert "**Open questions:** (none)" in rt, rt
             assert "1. Index tuning deferred to 1-4" in rt, rt
             assert "Phase 8 archived 2 resolved" in rt, rt
             assert "**⚠️ Needs human:** (none)" in rt, rt
-            labels = ["## Report — ", "**Story:**", "**Branch:**", "**Pipeline status:**",
-                      "**Continues:**", "**Timing:**", "**Phases run:**", "**Skipped:**",
-                      "**Overrides:**", "**TEA:**", "**Code review:**", "**UAT:**",
-                      "**Open questions:**", "**Deferred work:**", "**Planning drift:**",
+            assert "/bmad-checkpoint-preview" in rt, rt
+            labels = ["## Report — ", "**Story:**", "**Spec:**", "**Branch:**",
+                      "**Pipeline status:**", "**Continues:**", "**Timing:**", "**Phases run:**",
+                      "**Skipped:**", "**Overrides:**", "**TEA:**", "**Build:**", "**Review:**",
+                      "**Retrospective:**", "**Open questions:**", "**Deferred work:**",
                       "**⚠️ Needs human:**", "**Next:**"]
             idxs = [rt.index(lb) for lb in labels]
             assert idxs == sorted(idxs), "section headings out of template order"
+            for dead in ("**Code review:**", "**UAT:**", "**Planning drift:**"):
+                assert dead not in rt, f"removed heading still rendered: {dead}"
             # second append: prior section preserved, resumed 1×, in-progress timing branch
             cmd_set(sf, {"completed_at": None, "active_seconds": 4200})
             clock["iso"] = "2026-05-28T17:55:02Z"
@@ -1078,8 +1139,10 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert "(halted — needs-human)" in rt2, rt2
             assert ("completed in progress — elapsed 4h 00m (≈1h 10m AI-run, "
                     "≈2h 50m human/idle wait); resumed 1×.") in rt2, rt2
-            assert "**Code review:** skipped" in rt2 and "**Overrides:** none" in rt2, rt2
-            assert "**UAT:** (none)" in rt2, rt2          # absent uat key -> the "say so" fallback
+            # renderer defaults: Build `not run`, Review `skipped`, Retrospective `(none)`,
+            # Overrides `none`
+            assert "**Build:** not run" in rt2 and "**Review:** skipped" in rt2, rt2
+            assert "**Retrospective:** (none)" in rt2 and "**Overrides:** none" in rt2, rt2
             assert "1. Set the STRIPE_KEY secret" in rt2, rt2
             # overwrite requires the flag; with it, the file is rebuilt from scratch
             r = cmd_report_section(rf, sf, {"disposition_tag": "final"}, True)
@@ -1102,6 +1165,13 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             except UsageError as exc:
                 assert "blockers" in str(exc) and "needs_human" in str(exc), exc
             assert rf.read_text(encoding="utf-8") == before_rt, "rejection must not write"
+            # the removed per-story keys are unknown now (allowlist discipline)
+            for dead_key in ("code_review", "uat", "planning_drift"):
+                try:
+                    cmd_report_section(rf, sf, {"disposition_tag": "final", dead_key: "x"}, False)
+                    raise AssertionError(f"removed payload key {dead_key} must be rejected")
+                except UsageError as exc:
+                    assert dead_key in str(exc), exc
             # pre-init hard-stop: --allow-missing-state renders against a default
             # state (story key from the state file name); without it, exit 2 path
             rf0 = tmp / "reports" / "0-9-prestop.md"
@@ -1119,6 +1189,7 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             rt0 = rf0.read_text(encoding="utf-8")
             assert rt0.startswith("# auto-bmad report log — 0-9-prestop\n"), rt0
             assert "(halted — hard-stop)" in rt0 and "⛔ dirty tree." in rt0, rt0
+            assert "**Spec:** (none)" in rt0, rt0                 # no spec before Phase 3
             assert "**Timing:** (none — started_at not recorded)." in rt0, rt0
             assert "1. commit or stash, then re-run" in rt0, rt0
             assert not sf0.exists(), "report fallback must never create the state file"
@@ -1128,30 +1199,40 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             clock["iso"] = "2026-05-28T13:55:02Z"
             cmd_init(esf, {"story_key": "epic-1", "epic_num": 1,
                            "branch": "epic/1-account-system", "epic_story_count": 4,
-                           "active_story": None, "stories_landed": ["1-2-mgmt", "1-3-model"]})
+                           "epic_slug": "account-system",
+                           "active_story": None, "stories_landed": ["1-2-mgmt", "1-3-model"],
+                           "batch_flip_done": False})
             # the net-new epic fields ride as preserved extras (no SCHEMA_ORDER change)
             est = full_state(load_state(esf))
             assert est["stories_landed"] == ["1-2-mgmt", "1-3-model"], est.get("stories_landed")
             assert est["active_story"] is None and est["epic_num"] == 1, est
+            assert est["epic_slug"] == "account-system" and est["batch_flip_done"] is False, est
+            cmd_set(esf, {"review_unverified": True, "bmad_status_flipped_at": 82,
+                          "retro": {"verdict": "rejected", "open_action_items": 4},
+                          "batch_flip_done": True})
+            est = full_state(load_state(esf))
+            assert est["bmad_status_flipped_at"] == 82 and est["batch_flip_done"] is True, est
+            assert est["retro"]["verdict"] == "rejected" and est["retro"]["open_action_items"] == 4
             erf = tmp / "reports" / "epic-1.md"
             epic_payload = {
                 "disposition_tag": "final",
                 "pipeline_status": "✅ clean epic completion.",
                 "epic_summary": "Delivered the account system across 4 stories.",
-                "story_rollup": ["`1-2-mgmt` — done; thin review: Crit 0/High 1 (fixed).",
-                                 "`1-3-model` — done; thin review: clean."],
-                "stories_skipped": "1-1-auth (already done, in base).",
-                "integration_review": "2 iterations; converged; Crit 0 / High 0.",
+                "story_rollup": ["`1-2-mgmt` — build done; review passes 1; deferred 0; trace PASS.",
+                                 "`1-3-model` — build done; review passes 1; deferred 2; trace CONCERNS."],
+                "stories_skipped": ["`1-1-auth` — already done",
+                                    "`1-4-audit` — in-progress outside auto-bmad and has no "
+                                    "build-auto spec — skipped"],
                 "epic_gate": "trace PASS; nfr CONCERNS; test-review PASS.",
                 "tea": "epic automate: 14 tests.",
-                "uat": ["Sign up, then log out and back in → session persists",
-                        "Open the account page as an admin → user list renders"],
+                "retro": "verdict rejected; 4 open action items; /abs/impl/epic-1-retro-2026-05-28.md",
                 "open_questions": [],
                 "deferred_work": ["Index tuning -> next epic"],
                 "deferred_archived_note": "Archived 3 resolved.",
-                "auto_decided": ["Token TTL [Med] → fix: default 15m (Tier A, 1-2-mgmt)",
-                                 "Retry policy [High] → defer: out of epic scope (E_review, epic-1)"],
-                "needs_human": [], "next": "epic 2.", "head_sha": "abcdef1234"}
+                "needs_human": ["⚠️ Retrospective verdict: rejected — /abs/impl/epic-1-retro-2026-05-28.md"],
+                "next": "`/auto-bmad epic --epic 2`. Project context: run /bmad-project-context "
+                        "refresh (recommended after an epic).",
+                "head_sha": "abcdef1234"}
             clock["iso"] = "2026-05-28T15:00:00Z"
             r = cmd_report_section(erf, esf, epic_payload, False, epic=True)
             assert r["section_written"], r
@@ -1160,24 +1241,37 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert "## Report — 2026-05-28T15:00:00Z (final)" in et, et
             assert "**Epic:** `1` — 4 stories." in et, et
             assert "**Branch:** `epic/1-account-system` (HEAD `abcdef1`)." in et, et
-            assert "1. `1-2-mgmt` — done; thin review: Crit 0/High 1 (fixed)." in et, et
-            assert "**Integration review:** 2 iterations; converged" in et, et
+            assert "1. `1-2-mgmt` — build done; review passes 1; deferred 0; trace PASS." in et, et
+            assert "**Skipped:**\n1. `1-1-auth` — already done\n2. `1-4-audit`" in et, et
             assert "**Epic gate:** trace PASS" in et, et
-            assert "**Skipped (already done):** 1-1-auth (already done, in base)." in et, et
-            assert "1. Sign up, then log out and back in → session persists" in et, et
+            assert "**Retrospective:** verdict rejected; 4 open action items" in et, et
             assert "1. Index tuning -> next epic" in et and "Archived 3 resolved." in et, et
-            assert "**Auto-decided (epic mode):**" in et, et
-            assert "1. Token TTL [Med] → fix: default 15m (Tier A, 1-2-mgmt)" in et, et
-            assert "2. Retry policy [High] → defer: out of epic scope (E_review, epic-1)" in et, et
-            # the per-story template has no auto_decided key (epic-only) — rejected there
+            assert "1. ⚠️ Retrospective verdict: rejected" in et, et
+            assert "/bmad-project-context refresh" in et, et
+            elabels = ["## Report — ", "**Epic:**", "**Branch:**", "**Pipeline status:**",
+                       "**Continues:**", "**Summary:**", "**Timing:**", "**Stories:**",
+                       "**Skipped:**", "**Epic gate:**", "**TEA:**", "**Retrospective:**",
+                       "**Overrides:**", "**Open questions:**", "**Deferred work:**",
+                       "**⚠️ Needs human:**", "**Next:**"]
+            eidxs = [et.index(lb) for lb in elabels]
+            assert eidxs == sorted(eidxs), "epic section headings out of template order"
+            for dead in ("**Integration review:**", "**UAT:**", "**Auto-decided", "**Planning drift:**"):
+                assert dead not in et, f"removed epic heading still rendered: {dead}"
+            # a prose stories_skipped renders as ONE item, not per character
+            cmd_report_section(erf, esf, {"disposition_tag": "x",
+                                          "stories_skipped": "`1-1-auth` — already done"},
+                               False, epic=True)
+            et2 = erf.read_text(encoding="utf-8")
+            assert "**Skipped:**\n1. `1-1-auth` — already done\n" in et2, et2
+            # the per-story template has no story_rollup key (epic-only) — rejected there
             psf = tmp / "state" / "ps-1.yaml"
             cmd_init(psf, {"story_key": "ps-1", "epic_num": 1, "story_num": 1})
             try:
                 cmd_report_section(tmp / "reports" / "ps-1.md", psf,
-                                   {"disposition_tag": "x", "auto_decided": ["y"]}, False)
-                raise AssertionError("auto_decided is epic-only; per-story payload must reject it")
+                                   {"disposition_tag": "x", "story_rollup": ["y"]}, False)
+                raise AssertionError("story_rollup is epic-only; per-story payload must reject it")
             except UsageError as exc:
-                assert "auto_decided" in str(exc), exc
+                assert "story_rollup" in str(exc), exc
             # the epic template rejects a per-story-only payload key (allowlist discipline)
             try:
                 cmd_report_section(erf, esf, {"disposition_tag": "x", "phases_run": "Phase 5"},
@@ -1185,26 +1279,14 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
                 raise AssertionError("a per-story key in an epic payload must raise UsageError")
             except UsageError as exc:
                 assert "phases_run" in str(exc), exc
-
-            # --- retro-append ------------------------------------------------- #
-            rn = tmp / "retro-notes" / "epic-1.md"
-            r = cmd_retro_append(rn, "1-2-user-auth", {"lines": ["none", "  ", "None.", "- (none)"]})
-            assert r["appended"] == 0 and not rn.exists(), "noise-only notes must write NOTHING"
-            r = cmd_retro_append(rn, "1-2-user-auth",
-                                 {"lines": ["deviated: used argon2 instead of bcrypt", "none"]})
-            assert r["appended"] == 1 and r["created_file"] and r["created_heading"], r
-            nt = rn.read_text(encoding="utf-8")
-            assert "## Story 1-2-user-auth\n- deviated: used argon2 instead of bcrypt" in nt, nt
-            r = cmd_retro_append(rn, "1-2-user-auth", {"lines": ["- risk: token TTL unverified"]})
-            assert r["appended"] == 1 and not r["created_heading"], r
-            nt = rn.read_text(encoding="utf-8")
-            assert nt.count("## Story 1-2-user-auth") == 1, "heading duplicated"
-            assert nt.count("- ") == 2, nt
-            # a later story gets its own heading; appending to the FIRST story inserts inside
-            cmd_retro_append(rn, "1-3-plant-model", {"lines": ["surprise: fixture flake"]})
-            cmd_retro_append(rn, "1-2-user-auth", {"lines": ["late note for story 1-2"]})
-            nt = rn.read_text(encoding="utf-8")
-            assert nt.index("late note for story 1-2") < nt.index("## Story 1-3-plant-model"), nt
+            # …and the removed epic keys are unknown now
+            for dead_key in ("integration_review", "uat", "auto_decided", "planning_drift"):
+                try:
+                    cmd_report_section(erf, esf, {"disposition_tag": "x", dead_key: ["y"]},
+                                       False, epic=True)
+                    raise AssertionError(f"removed epic payload key {dead_key} must be rejected")
+                except UsageError as exc:
+                    assert dead_key in str(exc), exc
 
             # --- CLI surface: single JSON object on stdout + exit codes ------- #
             def run_cli(argv):
@@ -1240,6 +1322,18 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert rc == 0 and out["appended"] == {"blockers": 1}, (rc, out)
             rc, out = run_cli(["phase-done", "--state-file", str(sf3), "--phase", "5"])
             assert rc == 0 and out["completed_phases"] == [5], (rc, out)
+            # the retro-notes writer is gone: its old subcommand is an argparse error (exit 2)
+            err_buf = io.StringIO()
+            with contextlib.redirect_stderr(err_buf):
+                try:
+                    main(["retro-append", "--retro-file", str(tmp / "r.md"),
+                          "--story-key", "2-1-cli", "--json", str(jf)])
+                    raise AssertionError("retro-append must no longer parse")
+                except SystemExit as exc:
+                    assert exc.code == 2, exc.code
+            rc, out = run_cli(["report-section", "--report-file", str(tmp / "reports" / "2-1-cli.md"),
+                               "--state-file", str(sf3), "--json", str(jf)])
+            assert rc == 2 and "story_key" in out["error"], (rc, out)  # unknown report key -> 2
 
             # --- patch validation + emit round-trips (findings F1–F6) ---------- #
             def cli_json(payload, *argv0):
@@ -1251,9 +1345,9 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             cmd_init(sfv, {"story_key": "3-1-validate", "epic_num": 3, "story_num": 1})
             pristine = sfv.read_text(encoding="utf-8")
             # F1: a map key the reader regex can't parse back is rejected, file untouched
-            rc, out = cli_json({"overrides": {"max-review-iterations": 5}},
+            rc, out = cli_json({"overrides": {"max-followup-passes": 5}},
                                "set", "--state-file", str(sfv))
-            assert rc == 1 and "max-review-iterations" in out["error"], (rc, out)
+            assert rc == 1 and "max-followup-passes" in out["error"], (rc, out)
             assert sfv.read_text(encoding="utf-8") == pristine, "F1 rejection must not write"
             rc, out = cli_json({"overrides": {"good_key": 1, "bad key": 2}},
                                "set", "--state-file", str(sfv))
@@ -1273,10 +1367,21 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert rc == 1 and "build-time" in out["error"], (rc, out)
             assert sfv.read_text(encoding="utf-8") == pristine, "unknown-field rejection must not write"
             # …and a MAP field set to a non-map shape is rejected (a flat scalar would
-            # wipe the phase8 resume markers):
+            # wipe the phase8 resume markers / the build result):
             rc, out = cli_json({"phase8_steps": "done"}, "set", "--state-file", str(sfv))
             assert rc == 1 and "phase8_steps" in out["error"], (rc, out)
+            rc, out = cli_json({"build": "done"}, "set", "--state-file", str(sfv))
+            assert rc == 1 and "build" in out["error"], (rc, out)
             assert sfv.read_text(encoding="utf-8") == pristine, "non-map rejection must not write"
+            # …a typo'd build / retro sub-key is rejected (closed key sets, like phase8_steps)
+            rc, out = cli_json({"build": {"satus": "done"}}, "set", "--state-file", str(sfv))
+            assert rc == 1 and "satus" in out["error"], (rc, out)
+            rc, out = cli_json({"retro": {"verdicts": "accepted"}}, "set", "--state-file", str(sfv))
+            assert rc == 1 and "verdicts" in out["error"], (rc, out)
+            assert sfv.read_text(encoding="utf-8") == pristine, "sub-key rejection must not write"
+            rc, out = cli_json({"build": {"status": "in-review", "followup_review_recommended": True},
+                                "retro": {"verdict": "accepted"}}, "set", "--state-file", str(sfv))
+            assert rc == 0, (rc, out)                     # the documented sub-keys pass
             # F2: legacy quoted ints in completed_phases are coerced, not dropped
             leg = tmp / "state" / "9-8-quoted.yaml"
             leg.write_text('story_key: 9-8-quoted\nstarted_at: "2026-01-01T00:00:00Z"\n'
@@ -1286,9 +1391,13 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             # F3: non-int-coercible INT_FIELD patch rejected at set time …
             rc, out = cli_json({"timing_anchor": "soon"}, "set", "--state-file", str(sfv))
             assert rc == 1 and "timing_anchor" in out["error"], (rc, out)
-            rc, out = cli_json({"active_seconds": "120"}, "set", "--state-file", str(sfv))
+            rc, out = cli_json({"bmad_status_flipped_at": "nine"}, "set", "--state-file", str(sfv))
+            assert rc == 1 and "bmad_status_flipped_at" in out["error"], (rc, out)
+            rc, out = cli_json({"active_seconds": "120", "bmad_status_flipped_at": "9"},
+                               "set", "--state-file", str(sfv))
             assert rc == 0, (rc, out)                     # int-coercible string: stored as int
-            assert full_state(load_state(sfv))["active_seconds"] == 120
+            stv = full_state(load_state(sfv))
+            assert stv["active_seconds"] == 120 and stv["bmad_status_flipped_at"] == 9, stv
             # … and a hand-corrupted stored anchor pauses with a clean ContractError JSON
             sfv.write_text(sfv.read_text(encoding="utf-8").replace(
                 "timing_anchor: null", "timing_anchor: half past nine"), encoding="utf-8")
@@ -1299,6 +1408,9 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             rc, out = cli_json({"phase8_steps": {"trace_gates": "done"}},
                                "set", "--state-file", str(sfv))
             assert rc == 1 and "trace_gates" in out["error"], (rc, out)
+            rc, out = cli_json({"phase8_steps": {"project_context": "done"}},
+                               "set", "--state-file", str(sfv))
+            assert rc == 1 and "project_context" in out["error"], (rc, out)  # removed sub-step
             rc, out = cli_json({"phase8_steps": {"nfr": "waived"}},
                                "set", "--state-file", str(sfv))
             assert rc == 1 and "waived" in out["error"], (rc, out)    # waived is trace_gate-only
@@ -1319,6 +1431,10 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             assert "{'" not in cline, cline               # no Python repr in the file
             els = full_state(load_state(sfv))["commits"]
             assert els[0] == "a1b2c3d" and json.loads(els[1]) == {"sha": "e4f5", "n": 2}, els
+            # F7: a list value inside a MAP field with quoted/awkward elements round-trips too
+            cmd_set(sfv, {"build": {"warnings": ["oversized", "needs: review", "x #1", ""]}})
+            wl = full_state(load_state(sfv))["build"]["warnings"]
+            assert wl == ["oversized", "needs: review", "x #1", ""], wl
 
         print("SELF-TEST PASSED (all assertions)")
         return 0
@@ -1348,7 +1464,7 @@ def _load_json_arg(spec: str | None) -> dict | None:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Deterministic writer for auto-bmad state files, report sections, and retro notes.")
+        description="Deterministic writer for auto-bmad state files and report sections.")
     parser.add_argument("--self-test", action="store_true", help="run built-in fixtures and exit")
     sub = parser.add_subparsers(dest="cmd")
 
@@ -1376,8 +1492,6 @@ def main(argv=None) -> int:
         allow_missing_state={"action": "store_true",
                              "help": "pre-init hard-stop (Phase 0): render with a "
                                      "default state instead of erroring"})
-    add("retro-append", state=False, js=True,
-        retro_file={"required": True}, story_key={"required": True})
 
     args = parser.parse_args(argv)
     if args.self_test:
@@ -1397,12 +1511,10 @@ def main(argv=None) -> int:
             result = cmd_timing_start(Path(args.state_file))
         elif args.cmd == "timing-pause":
             result = cmd_timing_pause(Path(args.state_file))
-        elif args.cmd == "report-section":
+        else:  # report-section
             result = cmd_report_section(Path(args.report_file), Path(args.state_file),
                                         payload, args.overwrite_confirmed,
                                         args.allow_missing_state, args.epic)
-        else:  # retro-append
-            result = cmd_retro_append(Path(args.retro_file), args.story_key, payload)
     except ContractError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1

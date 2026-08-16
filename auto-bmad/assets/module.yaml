@@ -1,44 +1,28 @@
 code: abm
 name: "Auto-BMAD Orchestrator"
-description: "Drive the full BMAD story workflow end-to-end — for one story at a time, or a whole epic in one run (`/auto-bmad epic`) — delegating each step to model- and effort-tuned subagents on Claude Code, Codex, or opencode."
+description: "Drive the BMAD build lane end-to-end — bmad-build-auto plan → build → follow-up review per story, or a whole epic in one run (`/auto-bmad epic`) — with risk-gated TEA, epic-boundary gates + retrospective, git branch/commits/PR/CI and a report; every step delegated to a model-tuned subagent on Claude Code, Codex, or opencode."
 module_version: 0.26.1
 default_selected: false
 module_greeting: >
   auto-bmad is installed. Run `/auto-bmad` in a BMAD project to drive the next story
-  end-to-end (create-story -> dev-story -> code-review plus risk-gated TEA and
+  end-to-end (bmad-build-auto plan -> build -> follow-up review, plus risk-gated TEA and
   epic-boundary work), or `/auto-bmad epic` to drive a WHOLE epic in one run (one branch,
   one PR; it warns + confirms first). You can pass override instructions, e.g.
-  `/auto-bmad stop before code-review` or `/auto-bmad --story 1-3 skip git commits`.
-  Retune delegate model/effort in `{output_folder}/auto-bmad/config.yaml`, then run
-  `/auto-bmad reprovision` to regenerate the tool-native agent files.
+  `/auto-bmad stop before review` or `/auto-bmad --story 1-3 approve spec`. Prerequisites:
+  BMAD >= 6.11, `uv` + Python 3.11, and nested subagents enabled for your host (preflight
+  tells you the exact fix). Retune delegate models in `{output_folder}/auto-bmad/config.yaml`;
+  run `/auto-bmad reprovision` after changing review-layer settings.
 
-# --- Install-time variables (captured at setup; persisted to auto-bmad's own runtime config
-#     {output_folder}/auto-bmad/config.yaml by the first-run flow — NOT the installer-owned
-#     central BMAD config, which auto-bmad never reads or writes) ---
-
-target_tools:
-  prompt: >
-    Which AI tools should auto-bmad provision delegate agents for? This defaults to the AIs your
-    BMAD install already targets (detected from where the auto-bmad skill is installed —
-    .claude/skills for Claude Code, .agents/skills for Codex, .opencode/skills for opencode);
-    confirm or adjust. Select more than one to run this project in any of those tools without
-    reconfiguring — the running tool is auto-detected each run. This only controls which agent
-    files get generated.
-  multi-select:
-    - value: claude-code
-      label: "Claude Code  (.claude/agents — model + thinking effort)"
-    - value: codex
-      label: "Codex  (.codex/agents — model + reasoning effort)"
-    - value: opencode
-      label: "opencode  (.opencode/agent — any provider/model; ships inheriting your default)"
-  default:
-    - claude-code
+# --- No install-time variables. auto-bmad's runtime settings (models, TEA, git, review layers)
+#     live exclusively in its own runtime config {output_folder}/auto-bmad/config.yaml, written by
+#     the skill's first-run flow — NOT the installer-owned central BMAD config, which auto-bmad never
+#     writes (it only reads output_folder + the BMM artifact paths from _bmad/config.toml). ---
 
 post-install-notes: >
-  Delegate agents were rendered for the tools you selected. To change which model or
-  thinking/reasoning effort each pipeline step uses, edit the `profiles` block in
-  `{output_folder}/auto-bmad/config.yaml` and run `/auto-bmad reprovision`. The generated
-  agent files (`.claude/agents/ab-*.md`, `.codex/agents/ab-*.toml`, `.opencode/agent/ab-*.md`) are
-  local artifacts — add them to your `.gitignore` if you do not want them committed. opencode
-  delegates ship inheriting your opencode default model; set `opencode.model` per profile for
-  per-phase model tiering and cross-vendor review diversity.
+  auto-bmad delegates every step to your host's native subagents (Claude Code / Codex / opencode)
+  using the models in the `profiles` block of `{output_folder}/auto-bmad/config.yaml` — nothing is
+  rendered into your repo. Its extra review layers (security + cross-model) live in a marker-fenced
+  region of `_bmad/custom/bmad-build-auto.toml` (project-wide: they also run for a manual
+  `/bmad-build-auto`); `/auto-bmad reprovision` re-syncs that region. Requires `uv` + Python 3.11
+  (bmad-build-auto renders through uv) and nested subagents (Codex: `[agents] max_depth = 2` or
+  multi_agent_v2; opencode: `subagent_depth: 2`).

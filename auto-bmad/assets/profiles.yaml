@@ -1,0 +1,86 @@
+# Default delegate profiles for auto-bmad — model + effort ONLY (no persona text: every prompt in
+# references/delegation.md is self-contained). A profile is how the orchestrator picks the model for a
+# phase's delegate subagent:
+#   - Claude Code -> Agent tool `model:` = claude.model (the Agent tool has no per-call effort: claude.effort is
+#                    used ONLY when a phase is routed to `claude -p` via delegation.cli_phases, or by the
+#                    cross-model review layer);
+#   - Codex       -> spawn_agent per-call `model` + `reasoning_effort` = codex.model / codex.reasoning_effort
+#                    (also `codex exec -m … -c model_reasoning_effort=…` on the CLI route);
+#   - opencode    -> the default subagent, which inherits your opencode model; opencode.model / opencode.variant
+#                    are used ONLY by the CLI route (`opencode run -m … --variant …`) and the cross-model layer.
+# To retune: edit the `profiles` copy in {output_folder}/auto-bmad/config.yaml (first run copies this file in);
+# `/auto-bmad reset-defaults` re-seeds it; `/auto-bmad reprovision` re-syncs the review-layers TOML that bakes
+# the security / cross-model models from these profiles. You may add custom profiles (any name, same field set)
+# and point phase_profiles entries at them.
+#
+# Codex reasoning effort (gpt-5.x): low | medium | high | xhigh (xhigh is the ceiling). Claude effort (CLI route
+# only): low | medium | high | xhigh | max. Model names are environment-specific — retune if your install differs.
+# opencode is multi-provider: `provider/model` strings; ships BLANK (inherit).
+profiles:
+  ab-deep:                 # highest-stakes: bmad-build-auto plan + build runs; epic test design; epic-end trace gate
+    claude:
+      model: opus
+      effort: xhigh        # CLI route / cross-model layer only
+    codex:
+      model: gpt-5.5
+      reasoning_effort: xhigh
+    opencode:
+      model: ""            # provider/model, e.g. anthropic/claude-opus-4-5. BLANK => inherit (CLI route only)
+      variant: ""          # OPTIONAL, CLI route only: --variant high|max|minimal
+  ab-standard:             # substantive, well-scoped: TEA per-story (atdd/automate/trace advisory), epic-end audits, framework/CI setup, deferred-work reconcile
+    claude:
+      model: opus
+      effort: high
+    codex:
+      model: gpt-5.5
+      reasoning_effort: high
+    opencode:
+      model: ""
+      variant: ""
+  ab-alt-deep:             # second opinion on a DIFFERENT model at full depth: the follow-up review pass; the cross-model layer's model source
+    claude:
+      model: sonnet
+      effort: xhigh
+    codex:
+      model: gpt-5.4
+      reasoning_effort: xhigh
+    opencode:
+      model: ""            # point this at a DIFFERENT vendor than ab-deep for a genuine cross-model second opinion (CLI route / cross-model layer)
+      variant: ""
+  ab-alt-standard:         # lighter-weight, faster model: per-story risk triage; the headless epic retrospective
+    claude:
+      model: sonnet
+      effort: high
+    codex:
+      model: gpt-5.4
+      reasoning_effort: high
+    opencode:
+      model: ""
+      variant: ""
+  ab-security:             # the security review layer inside build-auto (auto-bmad-security): models baked into _bmad/custom/bmad-build-auto.toml.
+                           # Keep it at least as capable as `build`'s profile: build-auto's own rule is that review subagents run at
+                           # the session's model capability (step-04 RULES) — the baked model is a preference the parent may honour, never a downgrade.
+    claude:
+      model: opus
+      effort: xhigh
+    codex:
+      model: gpt-5.5
+      reasoning_effort: xhigh
+    opencode:
+      model: ""
+      variant: ""
+
+# Phase -> profile mapping. This is the SINGLE source of the phase->profile binding: pipeline.md /
+# delegation.md name these keys, never raw profile names. Copied alongside `profiles` into config.yaml
+# at first run; retune there. delegation.cli_phases keys are exactly these keys.
+phase_profiles:
+  build: ab-deep                    # Phase 3 plan run + Phase 5 build run of bmad-build-auto (highest-stakes coding step)
+  followup_review: ab-alt-deep      # Phase 7 follow-up review pass — a fresh bmad-build-auto review pass on the done spec, on a DIFFERENT model than `build`; may also be routed via delegation.cli_phases (e.g. followup_review: codex)
+  security_layer: ab-security       # models baked into the auto-bmad-security review layer's "Launch a context-free subagent … (if your platform lets you choose its model: Claude Code model …; Codex model …, reasoning effort …)" instruction (gated by code_review.security_layer); must not be weaker than `build`
+  cross_model_layer: ab-alt-deep    # the profile whose claude:/codex:/opencode: block gives model + effort for the auto-bmad-cross-model layer's external CLI (the tool is code_review.cross_model_layer)
+  tea_triage: ab-alt-standard       # Phase 0 story-risk classification (cheap)
+  tea_per_story: ab-standard        # Phase 4 ATDD, Phase 6 automate, Phase 7 tail trace advisory
+  tea_epic: ab-deep                 # Phase 2 epic test design, Phase 8 blocking trace gate (+ its remediation)
+  tea_epic_audit: ab-standard       # Phase 8 advisory gates (nfr + test-review) — one effort tier below the blocking trace gate
+  retrospective: ab-alt-standard    # Phase 8 headless retrospective (-H {e})
+  deferred_reconcile: ab-standard   # Phase 8 (epic-end, pre-archive): verify-against-code which unmarked/partial deferred items are now fully resolved and mark them

@@ -1,74 +1,176 @@
 #!/usr/bin/env python3
-"""Deterministic sprint-status reader for the auto-bmad orchestrator.
+"""auto-bmad's single story-source adapter: sprint-status reader, BMAD-status
+flip, and bmad-build-auto spec discovery/reader. Dependency-free (stdlib only);
+every mode prints ONE JSON object on stdout.
 
-Parses a BMAD ``sprint-status.yaml`` and decides which story the pipeline should
-work next (or inspects a story passed explicitly), including the epic-boundary
-facts the orchestrator needs (first/last story of an epic, retrospective state).
+The orchestrator never parses ``sprint-status.yaml``, the epics documents, a
+build-auto spec, or a retrospective document itself — it reads them ONLY
+through this script, so every BMAD file-format assumption lives here.
 
-Output is a single JSON object on stdout so the orchestrator never has to parse
-YAML with an LLM. Dependency-free: the ``development_status`` block is a flat
-``key: value`` map, so we read it line by line and preserve file order.
+Modes (exactly one per call):
 
-A second mode, ``--mark-status KEY --to STATUS`` (with ``--mark-done KEY`` kept
-as an alias for ``--to done``), scripts a BMAD-status flip — Phase 5 write-back
-to ``review`` and the Phase 9 flip to ``done`` (``pipeline.md``): it rewrites
-KEY's ``development_status`` value to STATUS as a line-level edit — leading
-whitespace, the key, and any inline ``#`` comment are preserved, every other
-line byte-identical — and, with ``--story-file``, also flips the story file's
-status line (``Status: x`` / ``**Status:** x`` / ``status: x``, key
-case-insensitive, first match wins, only the value replaced). STATUS must be one
-of ``backlog|ready-for-dev|in-progress|review|done``. Idempotent: a target
-already at STATUS is not rewritten (``already_at_status`` true when nothing
-needed writing, and ``already_done`` when that status is ``done``). Lookup
-validation happens before any write; the write phase then renders both new
-contents, stages each as a temp file in its target's directory, and commits
-with back-to-back atomic ``os.replace`` calls — so a staging failure (e.g. an
-unwritable directory) reports a JSON ``error`` (exit 1) with NEITHER file
-changed, and no write can ever truncate a target. The only divergence window
-left is the instant between the two replaces; the ``sprint_updated`` /
-``story_file_updated`` flags always report exactly what was committed.
-Exit 0 on success/no-op; 1 when the key or the Status line can't be found or
-a write fails; 2 on usage errors.
+``--resolve REF --sprint-status PATH [--planning-dir DIR]``
+    Resolve an explicit ``--story`` argument to ONE sprint-status story entry.
+    REF forms: ``E-S``, ``E.S``, ``E-Sx``, ``E.Sx`` (``x`` = the optional split
+    suffix ``[a-z]``), the full key (``2-6a-digest-delivery``), or a slug/title
+    fragment (case-insensitive substring of the key's slug part). Precedence:
+    exact key > numeric (epic, story, suffix — a REF without a suffix matches
+    only keys with an empty suffix; when only suffixed keys exist for (E,S) the
+    result is ambiguous with the candidates listed) > substring. JSON:
+    ``{ref, story_key, epic_num, story_num, story_suffix, slug, current_status,
+    epic_status, epic_story_count, is_first_in_epic, is_last_in_epic,
+    stories_after_in_epic, retrospective_status, title, epic_title,
+    candidates: [], hard_stop, hard_stop_reason, error}``. Not found or
+    ambiguous ⇒ ``hard_stop`` + exit 1 (also missing/empty sprint file).
 
-A third mode, ``--epic N`` (N or ``epic-N``), enumerates every story in epic N
-ordered by story number, each with its status, story-file path, and next BMAD
-action — the reader the auto-bmad *epic* pipeline loops over. Like the default
-reader it never writes and returns a single JSON object (exit 0); ``hard_stop``
-is set when the epic is unknown/empty or already ``done``.
+``--epic N --sprint-status PATH [--planning-dir DIR]``
+    Enumerate epic N (``N`` or ``epic-N``): ``{epic_num, epic_status,
+    epic_title, epic_story_count, epic_stories: [{key, story_num, story_suffix,
+    slug, status, title, is_first_in_epic, is_last_in_epic,
+    stories_after_in_epic}], retrospective_status, hard_stop, hard_stop_reason,
+    error}`` sorted by (story_num, suffix). ``hard_stop`` when the arg is
+    unparseable, the file is missing/empty, the epic has no stories, or the
+    epic is already ``done`` (its stories are still listed). Never writes;
+    exit 0 (the verdict is in the JSON).
+
+``--planning-dir DIR`` (optional on both readers)
+    ``title`` / ``epic_title`` are read from the epics documents — every file
+    under DIR (``os.walk``, sorted) whose basename matches ``epics*.md`` or
+    ``epic-{e}*.md`` — with upstream ``sprint_plan.py``'s heading grammar
+    mirrored exactly (``EPICS_DOC_EPIC_RE`` = ``^#{1,3}\\s*Epic\\s+(\\d+)\\s*:?\\s*
+    (.*?)\\s*#*\\s*$``, ``EPICS_DOC_STORY_RE`` = ``^#{2,4}\\s*Story\\s+(\\d+)\\.
+    (\\d+[a-z]?)\\s*:?\\s*(.*?)\\s*#*\\s*$``, both IGNORECASE; lines inside
+    triple-backtick / ``~~~`` fences ignored). A story matches on (epic, story number
+    incl. suffix); first match wins; not found / no ``--planning-dir`` ⇒
+    ``null`` (the orchestrator falls back to the slug). Never a hard-stop.
+
+``--mark-status KEY --to STATUS --sprint-status PATH [--allow-regress]``
+    Script a BMAD-status flip (Phase 3 → ``ready-for-dev``, Phase 5 →
+    ``in-progress`` then ``review``, Phase 8/9 → ``done``). STATUS ∈
+    ``backlog|ready-for-dev|in-progress|review|done``. The value token of KEY's
+    ``development_status`` line is replaced byte-preservingly (indent, key,
+    inline ``# comment`` and every other line untouched), PLUS:
+    (a) regress guard — ``STATUS_RANK[target] < STATUS_RANK[current]`` is
+    refused (exit 1 ``refusing to regress KEY from X to Y (pass
+    --allow-regress)``) unless ``--allow-regress``;
+    (b) on every real write the top-level ``last_updated:`` scalar is rewritten
+    to ``datetime.now().strftime("%m-%d-%Y %H:%M")`` (indent/comment/quoting
+    style preserved — quoted iff it was quoted); if absent it is inserted as
+    ``last_updated: "<stamp>"`` on the line before ``development_status:``;
+    (c) epic lift — ``--to in-progress`` lifts a ``backlog`` ``epic-{e}`` entry
+    to ``in-progress``; ``--to done`` sets ``epic-{e}`` to ``done`` when every
+    story of the epic is ``done`` after this flip (and the entry exists and is
+    not ``done`` yet);
+    (d) all edits are staged in ONE temp file and swapped atomically
+    (``os.replace``); a staging failure reports ``error`` (exit 1) with the
+    file byte-identical. Idempotent: ``already_at_status`` ⇒ nothing written
+    (no stamp, no lift). JSON: ``{key, target_status, previous_status,
+    sprint_updated, already_at_status, last_updated: {previous, new, added},
+    epic_lift: {key, previous, new}|null, error}``. Exit 0 ok/no-op; 1 lookup,
+    regress or write failure; 2 usage.
+
+``--find-spec --impl-dir DIR --story-key KEY [--sprint-status PATH]``
+    Locate the story's bmad-build-auto spec: candidates = files in DIR whose
+    basename matches ``^spec-{e}-{s}{suffix}-.+\\.md$`` (with ``--sprint-status``,
+    names that also match another story's spec regex are dropped); each
+    candidate's frontmatter ``status`` + mtime are read; ranking: drop ``done``
+    when a non-``done`` remains → drop ``blocked`` when a non-``blocked``
+    remains → exactly one ⇒ found; several with the same slug stem modulo a
+    ``-N`` collision suffix (build-auto appends ``-2``, ``-3``, … when a
+    non-draft spec of that slug already exists) ⇒ newest mtime wins,
+    ``siblings`` listed; several with different stems ⇒ ``ambiguous: true``
+    (``hard_stop`` + exit 1); none ⇒ ``found: false``. JSON: ``{story_key,
+    impl_dir, candidates: [{path, status, mtime}], spec_path, status, found,
+    ambiguous, siblings: [], hard_stop, hard_stop_reason, error}``.
+
+``--spec PATH``
+    Dependency-free reader of a build-auto spec (or a ``bmad-build-auto-result-*``
+    skeleton). Frontmatter: scalars (``'quoted'``/``"quoted"``, ``# comments``),
+    ``[]``/``[a, b]`` flow lists, ``- item`` block lists, and block lists of
+    mappings with ``>-``/``|-`` block scalars (the ``deferred:`` shape). JSON:
+    ``{spec_path, exists, frontmatter: {title, type, created, status,
+    review_loop_iteration, followup_review_recommended, baseline_revision,
+    context: [], warnings: [], deferred: [{summary, evidence, location,
+    severity}], deferred_count}, auto_run_result: {present, status,
+    blocking_condition}, last_review_pass: {date, intent_gap, bad_spec, patch,
+    defer, reject}|null, status, parse_warnings: [], error}``. ``status`` = the
+    frontmatter status (AUTHORITATIVE); on a frontmatter parse failure it falls
+    back to ``^status:\\s*['"]?([a-z-]+)`` and records a ``parse_warnings``
+    entry. ``auto_run_result`` is optional corroboration: ``present`` = the
+    ``## Auto Run Result`` heading exists; ``status`` / ``blocking_condition``
+    = the ``Status:`` / ``Blocking condition:`` lines under it when present
+    (else null; upstream guarantees those lines only in the no-spec skeleton);
+    a ``status`` that disagrees with the frontmatter adds a ``parse_warnings``
+    entry, never overrides. ``last_review_pass`` = the LAST ``### … — Review
+    pass`` block under ``## Review Triage Log``; each count is the leading
+    integer of ``- <cat>: N…``; unparseable ⇒ null. Everything else under
+    ``## Auto Run Result`` is advisory and NOT emitted. Missing file ⇒
+    ``exists: false`` + ``error`` + exit 1.
+
+``--retro-verdict --impl-dir DIR --epic N``
+    Newest ``<impl>/epic-{N}-retro-*.md`` by mtime (searched recursively) ⇒
+    ``{epic, doc, verdict, date, headless, found, warnings, error}``
+    (frontmatter regex reads; ``verdict`` must be one of
+    ``accepted|accepted-with-open-items|rejected`` else ``verdict: null`` +
+    warning). Not found ⇒ ``found: false``, exit 0.
+
+``--self-test``
+    Runs the built-in fixtures (temp dirs) and exits 0/1.
+
+Public helpers other scripts import (``deferred_ledger.py harvest`` via
+``importlib``): ``read_spec(path)`` (the ``--spec`` JSON dict),
+``parse_frontmatter(text)`` (→ ``(mapping, warnings)``).
 
 Usage:
-    story_plan.py --sprint-status PATH [--story 1-3|1-3-slug] [--impl-dir DIR]
-    story_plan.py --epic N --sprint-status PATH [--impl-dir DIR]
-    story_plan.py --mark-status KEY --to STATUS --sprint-status PATH [--story-file PATH]
-    story_plan.py --mark-done KEY --sprint-status PATH [--story-file PATH]
+    story_plan.py --resolve REF --sprint-status PATH [--planning-dir DIR]
+    story_plan.py --epic N --sprint-status PATH [--planning-dir DIR]
+    story_plan.py --mark-status KEY --to STATUS --sprint-status PATH [--allow-regress]
+    story_plan.py --find-spec --impl-dir DIR --story-key KEY [--sprint-status PATH]
+    story_plan.py --spec PATH
+    story_plan.py --retro-verdict --impl-dir DIR --epic N
     story_plan.py --self-test
 """
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import fnmatch
 import json
 import os
 import re
 import sys
 import tempfile
 
+# --------------------------------------------------------------------------- #
+# Grammar (mirrors upstream bmad-sprint-planning/scripts/sprint_plan.py)
+# --------------------------------------------------------------------------- #
 EPIC_RE = re.compile(r"^epic-(\d+)$")
 RETRO_RE = re.compile(r"^epic-(\d+)-retrospective$")
-STORY_RE = re.compile(r"^(\d+)-(\d+)-(.+)$")
+# Story keys carry an optional split suffix: 2-6a-digest-delivery.
+STORY_RE = re.compile(r"^(\d+)-(\d+)([a-z]?)-(.+)$")
 
-# Legacy status aliases BMAD still honours.
+# Legacy status aliases BMAD still honours (upstream LEGACY_STATUS).
 STATUS_ALIASES = {"drafted": "ready-for-dev", "contexted": "in-progress"}
 
-# Story status -> the BMAD action that advances it.
-ACTION_FOR_STATUS = {
-    "backlog": "create-story",
-    "ready-for-dev": "dev-story",
-    "in-progress": "dev-story",
-    "review": "code-review",
-    "done": "done",
-}
+# The story status vocabulary the orchestrator may script, in lifecycle order.
+STORY_STATUSES = ("backlog", "ready-for-dev", "in-progress", "review", "done")
+STATUS_RANK = {status: rank for rank, status in enumerate(STORY_STATUSES)}
+
+# Epics-document heading grammar (upstream EPIC_RE / STORY_RE / FENCE_RE).
+EPICS_DOC_EPIC_RE = re.compile(r"^#{1,3}\s*Epic\s+(\d+)\s*:?\s*(.*?)\s*#*\s*$", re.IGNORECASE)
+EPICS_DOC_STORY_RE = re.compile(r"^#{2,4}\s*Story\s+(\d+)\.(\d+[a-z]?)\s*:?\s*(.*?)\s*#*\s*$", re.IGNORECASE)
+FENCE_RE = re.compile(r"^\s{0,3}(?:```|~~~)")
+
+# last_updated stamp format (upstream DATE_FORMAT).
+DATE_FORMAT = "%m-%d-%Y %H:%M"
+
+# Retro-document verdict vocabulary (upstream retro-document.md frontmatter).
+RETRO_VERDICTS = ("accepted", "accepted-with-open-items", "rejected")
 
 
+# --------------------------------------------------------------------------- #
+# sprint-status.yaml parsing
+# --------------------------------------------------------------------------- #
 def parse_development_status(text: str):
     """Return an ordered list of (key, status) from the development_status block."""
     entries = []
@@ -80,7 +182,6 @@ def parse_development_status(text: str):
             if stripped == "development_status:" or re.match(r"^development_status:\s*$", raw):
                 in_block = True
             continue
-        # Inside the block.
         if not stripped or stripped.startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip())
@@ -100,10 +201,11 @@ def parse_development_status(text: str):
 
 
 def classify(entries):
+    """Split entries into epics {n: status}, stories [dict], retros {n: status}."""
     epics, stories, retros = {}, [], {}
     for key, status in entries:
-        em = EPIC_RE.match(key)
         rm = RETRO_RE.match(key)
+        em = EPIC_RE.match(key)
         sm = STORY_RE.match(key)
         if rm:
             retros[int(rm.group(1))] = status
@@ -115,43 +217,116 @@ def classify(entries):
                     "key": key,
                     "epic_num": int(sm.group(1)),
                     "story_num": int(sm.group(2)),
-                    "slug": sm.group(3),
+                    "story_suffix": sm.group(3),
+                    "slug": sm.group(4),
                     "status": status,
                 }
             )
     return epics, stories, retros
 
 
-def pick_next(stories, retros):
-    """Mirror BMAD sprint-status next-action precedence. Stories are in file order."""
-    for want in ("in-progress", "review", "ready-for-dev", "backlog"):
-        for s in stories:
-            if s["status"] == want:
-                return s, ACTION_FOR_STATUS[want]
-    # All stories done -> first optional retrospective.
-    for epic_num in sorted(retros):
-        if retros[epic_num] == "optional":
-            return None, "retrospective"
-    return None, "done"
+def _story_sort_key(s):
+    return (s["story_num"], s["story_suffix"])
 
 
-def match_explicit(stories, story_arg):
-    m = re.match(r"^(\d+)-(\d+)(?:-(.+))?$", story_arg.strip())
-    if not m:
-        return None, f"could not parse --story '{story_arg}' (expected N-N or N-N-slug)"
-    epic_num, story_num = int(m.group(1)), int(m.group(2))
-    for s in stories:
-        if s["epic_num"] == epic_num and s["story_num"] == story_num:
-            return s, None
-    return None, f"story {epic_num}-{story_num} not found in sprint-status"
+def _load_sprint(sprint_status_path):
+    """Read + parse a sprint file. Returns (text, epics, stories, retros,
+    hard_stop_reason|None, error|None)."""
+    if not sprint_status_path or not os.path.isfile(sprint_status_path):
+        return None, {}, [], {}, "no sprint-status.yaml; run /bmad-sprint-planning first", (
+            f"sprint-status file not found: {sprint_status_path}"
+        )
+    with open(sprint_status_path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    entries = parse_development_status(text)
+    if not entries:
+        return text, {}, [], {}, "empty/invalid sprint-status; run /bmad-sprint-planning", (
+            "no development_status entries found"
+        )
+    epics, stories, retros = classify(entries)
+    return text, epics, stories, retros, None, None
 
 
-def build_result(sprint_status_path, story_arg, impl_dir):
+def _epic_facts(story, stories):
+    """Positional facts of ``story`` inside its epic (sorted by story_num, suffix)."""
+    same = sorted((s for s in stories if s["epic_num"] == story["epic_num"]), key=_story_sort_key)
+    me = _story_sort_key(story)
+    return {
+        "epic_story_count": len(same),
+        "is_first_in_epic": _story_sort_key(same[0]) == me,
+        "is_last_in_epic": _story_sort_key(same[-1]) == me,
+        "stories_after_in_epic": sum(1 for s in same if _story_sort_key(s) > me),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Epics documents: story / epic titles (--planning-dir)
+# --------------------------------------------------------------------------- #
+def _epics_doc_files(planning_dir, epic_num):
+    """Every file under planning_dir (os.walk, sorted) whose basename matches
+    ``epics*.md`` or ``epic-{e}*.md``."""
+    if not planning_dir or not os.path.isdir(planning_dir):
+        return []
+    patterns = ("epics*.md", f"epic-{epic_num}*.md")
+    found = []
+    for root, dirs, files in os.walk(planning_dir):
+        dirs.sort()
+        for name in sorted(files):
+            if any(fnmatch.fnmatchcase(name, pat) for pat in patterns):
+                found.append(os.path.join(root, name))
+    return found
+
+
+def read_epic_titles(planning_dir, epic_num):
+    """Return (epic_title|None, {(story_num:int, suffix:str): title}) for epic
+    ``epic_num`` from the epics documents. First match wins; empty ⇒ null."""
+    epic_title = None
+    stories = {}
+    for path in _epics_doc_files(planning_dir, epic_num):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            continue
+        in_fence = False
+        for line in lines:
+            if FENCE_RE.match(line):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            em = EPICS_DOC_EPIC_RE.match(line)
+            if em:
+                if int(em.group(1)) == epic_num and epic_title is None and em.group(2).strip():
+                    epic_title = em.group(2).strip()
+                continue
+            sm = EPICS_DOC_STORY_RE.match(line)
+            if sm and int(sm.group(1)) == epic_num:
+                num_m = re.match(r"^(\d+)([a-z]?)$", sm.group(2))
+                if not num_m:
+                    continue
+                skey = (int(num_m.group(1)), num_m.group(2))
+                title = sm.group(3).strip()
+                if skey not in stories and title:
+                    stories[skey] = title
+    return epic_title, stories
+
+
+# --------------------------------------------------------------------------- #
+# --resolve
+# --------------------------------------------------------------------------- #
+_NUMERIC_REF_RE = re.compile(r"^(\d+)[-.](\d+)([a-z]?)$")
+
+
+def build_resolve_result(sprint_status_path, ref, planning_dir=None):
+    """Resolve REF to exactly one story entry. Returns (result, exit_code)."""
     result = {
+        "ref": ref,
         "story_key": None,
         "epic_num": None,
         "story_num": None,
-        "story_file": None,
+        "story_suffix": None,
+        "slug": None,
         "current_status": None,
         "epic_status": None,
         "epic_story_count": None,
@@ -159,97 +334,93 @@ def build_result(sprint_status_path, story_arg, impl_dir):
         "is_last_in_epic": None,
         "stories_after_in_epic": None,
         "retrospective_status": None,
-        "next_action": None,
+        "title": None,
+        "epic_title": None,
+        "candidates": [],
         "hard_stop": False,
         "hard_stop_reason": None,
         "error": None,
     }
 
-    if not os.path.isfile(sprint_status_path):
-        result["error"] = f"sprint-status file not found: {sprint_status_path}"
+    def stop(reason, error=None):
         result["hard_stop"] = True
-        result["hard_stop_reason"] = "no sprint-status.yaml; run /bmad-sprint-planning first"
-        return result
+        result["hard_stop_reason"] = reason
+        result["error"] = error or reason
+        return result, 1
 
-    with open(sprint_status_path, "r", encoding="utf-8") as fh:
-        text = fh.read()
+    _text, epics, stories, retros, hs_reason, error = _load_sprint(sprint_status_path)
+    if hs_reason:
+        return stop(hs_reason, error)
 
-    entries = parse_development_status(text)
-    if not entries:
-        result["error"] = "no development_status entries found"
-        result["hard_stop"] = True
-        result["hard_stop_reason"] = "empty/invalid sprint-status; run /bmad-sprint-planning"
-        return result
+    ref_s = (ref or "").strip()
+    if not ref_s:
+        return stop("empty story reference")
 
-    epics, stories, retros = classify(entries)
+    # 1. exact key
+    matches = [s for s in stories if s["key"] == ref_s]
+    # 2. numeric E-S / E.S / E-Sx / E.Sx
+    if not matches:
+        nm = _NUMERIC_REF_RE.match(ref_s)
+        if nm:
+            e, n, suf = int(nm.group(1)), int(nm.group(2)), nm.group(3)
+            same_num = [s for s in stories if s["epic_num"] == e and s["story_num"] == n]
+            matches = [s for s in same_num if s["story_suffix"] == suf]
+            if not matches and same_num:
+                # Only suffixed keys exist for (E,S): ambiguous, list them.
+                result["candidates"] = [s["key"] for s in sorted(same_num, key=_story_sort_key)]
+                return stop(
+                    f"story reference '{ref_s}' is ambiguous — candidates: "
+                    + ", ".join(result["candidates"])
+                )
+    # 3. slug substring (case-insensitive)
+    if not matches:
+        low = ref_s.lower()
+        matches = [s for s in stories if low in s["slug"].lower()]
 
-    if story_arg:
-        target, err = match_explicit(stories, story_arg)
-        if target is None:
-            result["error"] = err
-            result["hard_stop"] = True
-            result["hard_stop_reason"] = err
-            return result
-        next_action = ACTION_FOR_STATUS.get(target["status"], "dev-story")
-    else:
-        target, next_action = pick_next(stories, retros)
-        if target is None:
-            result["next_action"] = next_action  # retrospective or done
-            if next_action == "done":
-                result["hard_stop"] = True
-                result["hard_stop_reason"] = "all stories and retrospectives complete"
-            return result
+    if not matches:
+        return stop(f"story '{ref_s}' not found in sprint-status")
+    if len(matches) > 1:
+        result["candidates"] = [s["key"] for s in matches]
+        return stop(
+            f"story reference '{ref_s}' is ambiguous — candidates: " + ", ".join(result["candidates"])
+        )
 
-    epic_num = target["epic_num"]
-    same_epic = [s for s in stories if s["epic_num"] == epic_num]
-    min_story = min(s["story_num"] for s in same_epic)
-    max_story = max(s["story_num"] for s in same_epic)
-
+    story = matches[0]
     result.update(
         {
-            "story_key": target["key"],
-            "epic_num": epic_num,
-            "story_num": target["story_num"],
-            "story_file": os.path.join(impl_dir, target["key"] + ".md") if impl_dir else target["key"] + ".md",
-            "current_status": target["status"],
-            "epic_status": epics.get(epic_num),
-            "epic_story_count": len(same_epic),
-            "is_first_in_epic": target["story_num"] == min_story,
-            "is_last_in_epic": target["story_num"] == max_story,
-            # Stories in this epic ordered after the target (higher story_num). 0 for the last
-            # story, 1 for second-to-last, etc. — drives the trace-advisory "skip the last N
-            # stories" distance gate (see tea-policy.md §3), which subsumes is_last_in_epic.
-            "stories_after_in_epic": sum(1 for s in same_epic if s["story_num"] > target["story_num"]),
-            "retrospective_status": retros.get(epic_num),
-            "next_action": next_action,
+            "story_key": story["key"],
+            "epic_num": story["epic_num"],
+            "story_num": story["story_num"],
+            "story_suffix": story["story_suffix"],
+            "slug": story["slug"],
+            "current_status": story["status"],
+            "epic_status": epics.get(story["epic_num"]),
+            "retrospective_status": retros.get(story["epic_num"]),
         }
     )
-
-    if result["epic_status"] == "done" and next_action == "create-story":
-        result["hard_stop"] = True
-        result["hard_stop_reason"] = f"epic {epic_num} is marked done; cannot create new story"
-
-    return result
+    result.update(_epic_facts(story, stories))
+    if planning_dir:
+        epic_title, titles = read_epic_titles(planning_dir, story["epic_num"])
+        result["epic_title"] = epic_title
+        result["title"] = titles.get((story["story_num"], story["story_suffix"]))
+    return result, 0
 
 
 # --------------------------------------------------------------------------- #
-# --epic: enumerate every story in one epic (ordered), for the epic pipeline.
+# --epic
 # --------------------------------------------------------------------------- #
 def parse_epic_arg(epic_arg):
-    """Parse an --epic argument (``N`` or ``epic-N``) -> int, or None if invalid."""
     m = re.match(r"^(?:epic-)?(\d+)$", str(epic_arg).strip())
     return int(m.group(1)) if m else None
 
 
-def build_epic_result(sprint_status_path, epic_arg, impl_dir):
-    """Enumerate every story in epic N ordered by story_num — the list the
-    auto-bmad epic pipeline loops over. Each story carries its key, status,
-    absolute story_file, and next BMAD action. ``hard_stop`` is set when the
-    epic arg is unparseable, the epic is unknown/empty, or it is already
-    ``done`` (nothing to complete). Never writes; exit 0 (verdict in JSON)."""
+def build_epic_result(sprint_status_path, epic_arg, planning_dir=None):
+    """Enumerate every story in epic N ordered by (story_num, suffix). Never
+    writes; the verdict (``hard_stop``) is in the JSON (exit 0)."""
     result = {
         "epic_num": None,
         "epic_status": None,
+        "epic_title": None,
         "epic_story_count": None,
         "epic_stories": [],
         "retrospective_status": None,
@@ -266,27 +437,14 @@ def build_epic_result(sprint_status_path, epic_arg, impl_dir):
         return result
     result["epic_num"] = epic_num
 
-    if not os.path.isfile(sprint_status_path):
-        result["error"] = f"sprint-status file not found: {sprint_status_path}"
+    _text, epics, stories, retros, hs_reason, error = _load_sprint(sprint_status_path)
+    if hs_reason:
+        result["error"] = error
         result["hard_stop"] = True
-        result["hard_stop_reason"] = "no sprint-status.yaml; run /bmad-sprint-planning first"
+        result["hard_stop_reason"] = hs_reason
         return result
 
-    with open(sprint_status_path, "r", encoding="utf-8") as fh:
-        text = fh.read()
-
-    entries = parse_development_status(text)
-    if not entries:
-        result["error"] = "no development_status entries found"
-        result["hard_stop"] = True
-        result["hard_stop_reason"] = "empty/invalid sprint-status; run /bmad-sprint-planning"
-        return result
-
-    epics, stories, retros = classify(entries)
-    same_epic = sorted(
-        (s for s in stories if s["epic_num"] == epic_num),
-        key=lambda s: s["story_num"],
-    )
+    same_epic = sorted((s for s in stories if s["epic_num"] == epic_num), key=_story_sort_key)
     result["epic_status"] = epics.get(epic_num)
     result["retrospective_status"] = retros.get(epic_num)
 
@@ -296,17 +454,23 @@ def build_epic_result(sprint_status_path, epic_arg, impl_dir):
         result["error"] = result["hard_stop_reason"]
         return result
 
+    epic_title, titles = (None, {})
+    if planning_dir:
+        epic_title, titles = read_epic_titles(planning_dir, epic_num)
+    result["epic_title"] = epic_title
     result["epic_story_count"] = len(same_epic)
-    result["epic_stories"] = [
-        {
+    for s in same_epic:
+        item = {
             "key": s["key"],
             "story_num": s["story_num"],
+            "story_suffix": s["story_suffix"],
+            "slug": s["slug"],
             "status": s["status"],
-            "story_file": os.path.join(impl_dir, s["key"] + ".md") if impl_dir else s["key"] + ".md",
-            "next_action": ACTION_FOR_STATUS.get(s["status"], "dev-story"),
+            "title": titles.get((s["story_num"], s["story_suffix"])),
         }
-        for s in same_epic
-    ]
+        item.update(_epic_facts(s, stories))
+        item.pop("epic_story_count")
+        result["epic_stories"].append(item)
 
     if result["epic_status"] == "done":
         result["hard_stop"] = True
@@ -316,15 +480,8 @@ def build_epic_result(sprint_status_path, epic_arg, impl_dir):
 
 
 # --------------------------------------------------------------------------- #
-# --mark-done: flip one development_status entry (and optionally the story
-# file's Status line) to done — byte-preserving everywhere else.
+# --mark-status: byte-preserving sprint-status flip
 # --------------------------------------------------------------------------- #
-# The story file's status line: `Status: x`, `**Status:** x`, or `status: x`
-# (key case-insensitive). Group 1 = everything through the value's start,
-# group 2 = the value (trailing whitespace dropped on rewrite).
-_STORY_STATUS_RE = re.compile(r"^(\s*(?:\*\*status:\*\*|status:)\s*)(.*?)\s*$", re.IGNORECASE)
-
-
 def _find_sprint_status_line(lines, key):
     """Locate KEY's line inside the development_status block, using the same
     block-boundary rules as parse_development_status. ``lines`` keep their
@@ -367,7 +524,7 @@ def _stage_write(path, content):
     directory = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(dir=directory, prefix="." + os.path.basename(path) + ".", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(content)
         # mkstemp creates 0600; carry the target's own mode so the replace
         # doesn't silently drop group/other bits from a user file.
@@ -379,25 +536,51 @@ def _stage_write(path, content):
     return tmp
 
 
-# BMAD development_status values the orchestrator may script. LLM-only write-backs
-# (bmad-dev-story step 9) are the root cause of recurring ready-for-dev↔review drift.
-# Derived from ACTION_FOR_STATUS (the canonical status vocabulary) so a new or
-# renamed status can't drift the two lists apart.
-_ALLOWED_MARK_STATUSES = frozenset(ACTION_FOR_STATUS)
+_LAST_UPDATED_RE = re.compile(r"^(last_updated:)(\s*)(.*)$")
+_DEV_STATUS_LINE_RE = re.compile(r"^development_status:\s*(#.*)?$")
 
 
-def mark_status(sprint_status_path, key, status, story_file=None):
-    """Flip KEY's sprint-status entry (and optionally the story file's Status
-    line) to ``status``. Returns (result, exit_code).
+def _split_scalar_comment(value):
+    """Split a raw scalar token into (quote_char|'' , inner_value, trailing) where
+    ``trailing`` is any inline comment (with its leading whitespace)."""
+    if value.startswith(("'", '"')):
+        q = value[0]
+        end = value.find(q, 1)
+        if end != -1:
+            return q, value[1:end], value[end + 1:]
+        return "", value, ""
+    m = re.match(r"^(.*?)(\s+#.*)?$", value)
+    return "", m.group(1).rstrip(), (m.group(2) or "")
 
-    Lookup failures (exit 1) happen before any write; writes stage both temp
-    files first and commit with back-to-back atomic ``os.replace`` calls, so a
-    write failure (exit 1, JSON ``error``) leaves every uncommitted target
-    byte-identical — only the instant between the two replaces can observe a
-    half-flip, and the ``*_updated`` flags report exactly what was committed.
 
-    Used by Phase 5 (→ ``review`` / ``in-progress``) and Phase 9 (→ ``done``)
-    so sprint-status write-back is scripted, not LLM-instruction-only.
+def _find_top_level_line(lines, regex, first_dev_status_only=False):
+    """Index + match of the first indent-0 line matching ``regex`` OUTSIDE the
+    development_status block (top-level scalars only)."""
+    in_block = False
+    for i, raw in enumerate(lines):
+        body = raw.rstrip("\r\n")
+        if in_block:
+            if body.strip() and (len(body) - len(body.lstrip())) == 0:
+                in_block = False
+            else:
+                continue
+        if _DEV_STATUS_LINE_RE.match(body):
+            in_block = True
+            if first_dev_status_only:
+                return i, None
+            continue
+        m = regex.match(body)
+        if m:
+            return i, m
+    return None, None
+
+
+def mark_status(sprint_status_path, key, status, allow_regress=False, now=None):
+    """Flip KEY's sprint-status entry to ``status``. Returns (result, exit_code).
+
+    Lookup/guard failures (exit 1) happen before any write; the write stages
+    the whole new file as one temp file and commits with a single atomic
+    ``os.replace``, so a failure leaves the target byte-identical.
     """
     target = (status or "").strip().lower()
     result = {
@@ -405,91 +588,686 @@ def mark_status(sprint_status_path, key, status, story_file=None):
         "target_status": target,
         "previous_status": None,
         "sprint_updated": False,
-        "story_previous_status": None,
-        "story_file_updated": False,
         "already_at_status": False,
+        "last_updated": {"previous": None, "new": None, "added": False},
+        "epic_lift": None,
         "error": None,
     }
-    # Backward-compat alias used by older Phase-9 callers / self-tests.
-    result["already_done"] = False
 
-    if target not in _ALLOWED_MARK_STATUSES:
-        result["error"] = (
-            f"invalid status '{status}' — allowed: {sorted(_ALLOWED_MARK_STATUSES)}"
-        )
+    if target not in STATUS_RANK:
+        result["error"] = f"invalid status '{status}' — allowed: {list(STORY_STATUSES)}"
         return result, 1
 
     if not os.path.isfile(sprint_status_path):
         result["error"] = f"sprint-status file not found: {sprint_status_path}"
         return result, 1
 
-    with open(sprint_status_path, "r", encoding="utf-8") as fh:
-        sprint_lines = fh.read().splitlines(keepends=True)
+    with open(sprint_status_path, "r", encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    lines = text.splitlines(keepends=True)
 
-    sprint_idx, sprint_m = _find_sprint_status_line(sprint_lines, key)
-    if sprint_idx is None:
+    idx, m = _find_sprint_status_line(lines, key)
+    if idx is None:
         result["error"] = f"key '{key}' not found in development_status of {sprint_status_path}"
         return result, 1
-    result["previous_status"] = sprint_m.group(2)
-    sprint_needs_write = sprint_m.group(2).strip().lower() != target
+    previous_raw = m.group(2)
+    result["previous_status"] = previous_raw
+    current = STATUS_ALIASES.get(previous_raw.strip().lower(), previous_raw.strip().lower())
 
-    story_lines = None
-    story_idx = None
-    story_m = None
-    story_needs_write = False
-    if story_file:
-        if not os.path.isfile(story_file):
-            result["error"] = f"story file not found: {story_file}"
-            return result, 1
-        with open(story_file, "r", encoding="utf-8") as fh:
-            story_lines = fh.read().splitlines(keepends=True)
-        for i, raw in enumerate(story_lines):
-            m = _STORY_STATUS_RE.match(raw.rstrip("\r\n"))
-            if m:
-                story_idx, story_m = i, m
-                break
-        if story_idx is None:
-            result["error"] = f"no Status line found in {story_file}"
-            return result, 1
-        result["story_previous_status"] = story_m.group(2)
-        story_needs_write = story_m.group(2).strip().lower() != target
+    lu_idx, lu_m = _find_top_level_line(lines, _LAST_UPDATED_RE)
+    if lu_m is not None:
+        _q, prev_stamp, _trail = _split_scalar_comment(lu_m.group(3))
+        result["last_updated"]["previous"] = prev_stamp or None
 
-    # All targets validated — write only what actually changes (idempotent).
-    # Stage BOTH new contents as temp files first (any I/O error here aborts
-    # with neither file changed), then commit with back-to-back atomic
-    # os.replace calls so a crash can never truncate either target.
-    staged = []  # (temp_path, final_path, result flag) in commit order
-    try:
-        if sprint_needs_write:
-            _rewrite_line(
-                sprint_lines,
-                sprint_idx,
-                sprint_m.group(1) + target + (sprint_m.group(3) or ""),
-            )
-            staged.append((_stage_write(sprint_status_path, "".join(sprint_lines)), sprint_status_path, "sprint_updated"))
-        if story_needs_write:
-            _rewrite_line(story_lines, story_idx, story_m.group(1) + target)
-            staged.append((_stage_write(story_file, "".join(story_lines)), story_file, "story_file_updated"))
-        for tmp, final_path, flag in staged:
-            os.replace(tmp, final_path)
-            result[flag] = True
-    except OSError as exc:
-        for tmp, _final, flag in staged:
-            if not result[flag] and os.path.exists(tmp):
-                os.unlink(tmp)
-        result["error"] = f"write failed: {exc} (the sprint_updated/story_file_updated flags report what was committed)"
+    if current == target:
+        result["already_at_status"] = True
+        return result, 0
+
+    if current in STATUS_RANK and STATUS_RANK[target] < STATUS_RANK[current] and not allow_regress:
+        result["error"] = f"refusing to regress {key} from {current} to {target} (pass --allow-regress)"
         return result, 1
 
-    already = not (result["sprint_updated"] or result["story_file_updated"])
-    result["already_at_status"] = already
-    result["already_done"] = already and target == "done"
+    # --- stage every edit in memory ------------------------------------- #
+    _rewrite_line(lines, idx, m.group(1) + target + (m.group(3) or ""))
+
+    # Epic lift (needs the parsed view of the whole block, with this flip applied).
+    sm = STORY_RE.match(key)
+    if sm:
+        epic_num = int(sm.group(1))
+        epic_key = f"epic-{epic_num}"
+        e_idx, e_m = _find_sprint_status_line(lines, epic_key)
+        if e_idx is not None:
+            e_current = STATUS_ALIASES.get(e_m.group(2).strip().lower(), e_m.group(2).strip().lower())
+            lift_to = None
+            if target == "in-progress" and e_current == "backlog":
+                lift_to = "in-progress"
+            elif target == "done" and e_current != "done":
+                _epics, stories, _retros = classify(parse_development_status("".join(lines)))
+                mine = [s for s in stories if s["epic_num"] == epic_num]
+                if mine and all(s["status"] == "done" for s in mine):
+                    lift_to = "done"
+            if lift_to:
+                _rewrite_line(lines, e_idx, e_m.group(1) + lift_to + (e_m.group(3) or ""))
+                result["epic_lift"] = {"key": epic_key, "previous": e_m.group(2), "new": lift_to}
+
+    # last_updated stamp (top-level scalar; rewrite in place or insert).
+    stamp = (now or _dt.datetime.now()).strftime(DATE_FORMAT)
+    if lu_m is not None:
+        q, _prev, trailing = _split_scalar_comment(lu_m.group(3))
+        if not q and not _prev:
+            q = '"'
+        _rewrite_line(lines, lu_idx, lu_m.group(1) + lu_m.group(2) + q + stamp + q + trailing)
+        result["last_updated"]["new"] = stamp
+    else:
+        d_idx, _ = _find_top_level_line(lines, _DEV_STATUS_LINE_RE, first_dev_status_only=True)
+        if d_idx is None:
+            d_idx = 0
+        eol = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+        lines.insert(d_idx, f'last_updated: "{stamp}"{eol}')
+        result["last_updated"]["new"] = stamp
+        result["last_updated"]["added"] = True
+
+    # --- one atomic swap --------------------------------------------------- #
+    tmp = None
+    try:
+        tmp = _stage_write(sprint_status_path, "".join(lines))
+        os.replace(tmp, sprint_status_path)
+    except OSError as exc:
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
+        result["error"] = f"write failed: {exc} (sprint-status left unchanged)"
+        result["last_updated"] = {"previous": result["last_updated"]["previous"], "new": None, "added": False}
+        result["epic_lift"] = None
+        return result, 1
+    result["sprint_updated"] = True
     return result, 0
 
 
-def mark_done(sprint_status_path, key, story_file=None):
-    """Flip KEY to ``done`` — Phase 9 BMAD-status flip. Thin wrapper over
-    ``mark_status`` kept for backward-compatible CLI / callers."""
-    return mark_status(sprint_status_path, key, "done", story_file)
+# --------------------------------------------------------------------------- #
+# Frontmatter parser (build-auto spec / retro doc)
+# --------------------------------------------------------------------------- #
+def _frontmatter_block(text):
+    """Return (frontmatter_lines, body_text) or (None, text) when there is no
+    closed ``---`` frontmatter at the top of the file."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None, text
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            return lines[1:i], "\n".join(lines[i + 1:])
+    return None, text
+
+
+def _typed(value):
+    """Bare-scalar typing: null/bool/int, else the string itself."""
+    low = value.lower()
+    if low in ("null", "~", ""):
+        return None
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    if re.match(r"^-?\d+$", value):
+        return int(value)
+    return value
+
+
+def _parse_scalar(raw):
+    """Parse an inline scalar: quoted ('' / \"\"), or bare with a trailing
+    ``# comment`` stripped, then typed."""
+    s = raw.strip()
+    if s.startswith("'"):
+        end = -1
+        i = 1
+        while i < len(s):
+            if s[i] == "'":
+                if i + 1 < len(s) and s[i + 1] == "'":
+                    i += 2
+                    continue
+                end = i
+                break
+            i += 1
+        if end != -1:
+            return s[1:end].replace("''", "'")
+        return s[1:]
+    if s.startswith('"'):
+        end = s.find('"', 1)
+        while end != -1 and s[end - 1] == "\\":
+            end = s.find('"', end + 1)
+        inner = s[1:end] if end != -1 else s[1:]
+        try:
+            return json.loads('"' + inner + '"')
+        except ValueError:
+            return inner
+    q, inner, _trail = _split_scalar_comment(s)
+    return _typed(inner.strip())
+
+
+def _parse_flow_list(raw):
+    """``[]`` / ``[a, 'b c', "d"]`` → list of parsed scalars."""
+    inner = raw.strip()[1:-1].strip()
+    if not inner:
+        return []
+    items, buf, quote = [], "", None
+    for ch in inner:
+        if quote:
+            buf += ch
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            buf += ch
+        elif ch == ",":
+            items.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    items.append(buf)
+    return [_parse_scalar(x) for x in items if x.strip()]
+
+
+def _flow_list_prefix(raw):
+    """Return the ``[...]`` flow-list token at the start of ``raw`` (quote-aware),
+    tolerating a trailing ``# comment``; None when the bracket never closes."""
+    quote = None
+    for i, ch in enumerate(raw):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "]":
+            rest = raw[i + 1:].strip()
+            if rest == "" or rest.startswith("#"):
+                return raw[: i + 1]
+            return None
+    return None
+
+
+_BLOCK_SCALAR_RE = re.compile(r"^([>|])([+-]?)(\d*)([+-]?)\s*(#.*)?$")
+
+
+def _read_block_scalar(lines, i, parent_indent, indicator):
+    """Collect the block-scalar body starting at line ``i`` (lines more
+    indented than ``parent_indent``). Returns (value, next_index)."""
+    style, chomp = indicator.group(1), indicator.group(2) or indicator.group(4)
+    body = []
+    j = i
+    while j < len(lines):
+        line = lines[j]
+        if line.strip() == "":
+            body.append("")
+            j += 1
+            continue
+        ind = len(line) - len(line.lstrip())
+        if ind <= parent_indent:
+            break
+        body.append(line)
+        j += 1
+    # Trailing blank lines are chomped unless keep (+).
+    while body and body[-1] == "" and chomp != "+":
+        body.pop()
+    if not body:
+        return "", j
+    base = min(len(l) - len(l.lstrip()) for l in body if l.strip())
+    stripped = [l[base:] if l.strip() else "" for l in body]
+    if style == "|":
+        value = "\n".join(stripped)
+    else:  # folded: join non-blank lines with a space, blank line ⇒ newline
+        out, para = [], []
+        for l in stripped:
+            if l == "":
+                out.append(" ".join(para))
+                para = []
+            else:
+                para.append(l.strip())
+        out.append(" ".join(para))
+        value = "\n".join(out)
+    if chomp != "-":
+        value += "\n"
+    return value, j
+
+
+_KV_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_-]*):(?:\s+(.*)|\s*)$")
+
+
+def _parse_value_at(lines, i, indent, raw_value, warnings):
+    """Parse the value of a ``key:`` at line ``i`` (key indent ``indent``,
+    inline part ``raw_value``). Returns (value, next_index)."""
+    rv = (raw_value or "").strip()
+    if rv:
+        bs = _BLOCK_SCALAR_RE.match(rv)
+        if bs:
+            return _read_block_scalar(lines, i + 1, indent, bs)
+        if rv.startswith("["):
+            fl = _flow_list_prefix(rv)
+            if fl is not None:
+                return _parse_flow_list(fl), i + 1
+        if rv.startswith("#"):
+            rv = ""
+        else:
+            return _parse_scalar(rv), i + 1
+    # Empty inline value: a nested block follows (list / mapping) or null.
+    j = i + 1
+    while j < len(lines) and lines[j].strip() == "":
+        j += 1
+    if j >= len(lines):
+        return None, j
+    nxt = lines[j]
+    n_ind = len(nxt) - len(nxt.lstrip())
+    if n_ind == indent and nxt.lstrip().startswith("- "):
+        # YAML allows a block list at the parent key's own indent.
+        return _parse_block_list(lines, j, n_ind, warnings)
+    if n_ind <= indent:
+        return None, i + 1
+    if nxt.lstrip().startswith("- "):
+        return _parse_block_list(lines, j, n_ind, warnings)
+    if _KV_RE.match(nxt):
+        return _parse_mapping(lines, j, n_ind, warnings)
+    warnings.append(f"unparseable block at frontmatter line {j + 1}: {nxt.strip()!r}")
+    return None, j
+
+
+def _parse_mapping(lines, i, indent, warnings):
+    """Parse ``key: value`` lines at exactly ``indent`` until a dedent."""
+    result = {}
+    j = i
+    while j < len(lines):
+        line = lines[j]
+        if line.strip() == "" or line.strip().startswith("#"):
+            j += 1
+            continue
+        ind = len(line) - len(line.lstrip())
+        if ind < indent:
+            break
+        if ind > indent:
+            warnings.append(f"unexpected indent at frontmatter line {j + 1}: {line.strip()!r}")
+            j += 1
+            continue
+        km = _KV_RE.match(line)
+        if not km:
+            break
+        value, j = _parse_value_at(lines, j, indent, km.group(3), warnings)
+        result[km.group(2)] = value
+    return result, j
+
+
+def _parse_block_list(lines, i, indent, warnings):
+    """Parse ``- item`` lines at ``indent`` (items are scalars or mappings)."""
+    items = []
+    j = i
+    while j < len(lines):
+        line = lines[j]
+        if line.strip() == "" or line.strip().startswith("#"):
+            j += 1
+            continue
+        ind = len(line) - len(line.lstrip())
+        if ind < indent or not line.lstrip().startswith("- ") and not line.strip() == "-":
+            break
+        if ind > indent:
+            warnings.append(f"unexpected list indent at frontmatter line {j + 1}")
+            j += 1
+            continue
+        rest = line[ind + 1:]  # after the dash
+        rest_stripped = rest.lstrip()
+        item_indent = ind + 1 + (len(rest) - len(rest_stripped))
+        km = _KV_RE.match(" " * item_indent + rest_stripped)
+        if km:
+            # A mapping item: first key on the dash line, then continuation keys
+            # at item_indent. Splice the dash line into a virtual key line.
+            virtual = lines[:j] + [" " * item_indent + rest_stripped] + lines[j + 1:]
+            mapping, j = _parse_mapping(virtual, j, item_indent, warnings)
+            items.append(mapping)
+        else:
+            if rest_stripped.strip() == "":
+                items.append(None)
+            else:
+                bs = _BLOCK_SCALAR_RE.match(rest_stripped.strip())
+                if bs:
+                    value, j = _read_block_scalar(lines, j + 1, ind, bs)
+                    items.append(value)
+                    continue
+                items.append(_parse_scalar(rest_stripped))
+            j += 1
+    return items, j
+
+
+def parse_frontmatter(text):
+    """Parse a document's YAML frontmatter with the small dependency-free
+    subset build-auto/retro docs use. Returns (mapping|None, warnings)."""
+    warnings = []
+    fm_lines, _body = _frontmatter_block(text)
+    if fm_lines is None:
+        return None, ["no closed --- frontmatter block"]
+    try:
+        mapping, _ = _parse_mapping(fm_lines, 0, 0, warnings)
+    except Exception as exc:  # defensive: never crash the reader
+        return None, [f"frontmatter parse error: {exc}"]
+    return mapping, warnings
+
+
+# --------------------------------------------------------------------------- #
+# --spec
+# --------------------------------------------------------------------------- #
+_H2_RE = re.compile(r"^##\s+(.*?)\s*#*\s*$")
+_REVIEW_PASS_RE = re.compile(r"^###\s+(.*?)\s*[—–-]+\s*Review pass\s*$", re.IGNORECASE)
+_COUNT_RE = re.compile(r"^\s*[-*+]\s*\**(intent_gap|bad_spec|patch|defer|reject)\**\s*:\s*\**\s*(\d+)", re.IGNORECASE)
+_RESULT_STATUS_RE = re.compile(r"^\s*(?:[-*+]\s*)?\**\s*Status\s*\**\s*:\s*\**\s*(.*?)\s*\**\s*$", re.IGNORECASE)
+_RESULT_BLOCK_RE = re.compile(r"^\s*(?:[-*+]\s*)?\**\s*Blocking condition\s*\**\s*:\s*\**\s*(.*?)\s*\**\s*$", re.IGNORECASE)
+_STATUS_FALLBACK_RE = re.compile(r"^status:\s*['\"]?([a-z-]+)", re.MULTILINE)
+_NONE_WORDS = frozenset({"", "none", "(none)", "none.", "n/a", "-", "—", "null"})
+
+
+def _sections(body_text):
+    """Split the markdown body into {h2 title: [lines]} (first occurrence wins)."""
+    sections = {}
+    current = None
+    in_fence = False
+    for line in body_text.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+        if not in_fence:
+            hm = _H2_RE.match(line)
+            if hm:
+                current = hm.group(1)
+                sections.setdefault(current, [])
+                continue
+        if current is not None:
+            sections[current].append(line)
+    return sections
+
+
+def _as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _normalize_deferred(items, warnings):
+    out = []
+    for n, item in enumerate(_as_list(items)):
+        if not isinstance(item, dict):
+            warnings.append(f"deferred item {n + 1} is not a mapping; kept as summary")
+            out.append({"summary": None if item is None else str(item), "evidence": None, "location": None, "severity": None})
+            continue
+        entry = {}
+        for k in ("summary", "evidence", "location", "severity"):
+            v = item.get(k)
+            if isinstance(v, str):
+                v = v.strip()
+            entry[k] = v if v not in (None, "") else None
+        out.append(entry)
+    return out
+
+
+def read_spec(spec_path):
+    """The ``--spec`` reader. Returns the JSON dict (see module docstring)."""
+    result = {
+        "spec_path": spec_path,
+        "exists": False,
+        "frontmatter": {
+            "title": None,
+            "type": None,
+            "created": None,
+            "status": None,
+            "review_loop_iteration": None,
+            "followup_review_recommended": None,
+            "baseline_revision": None,
+            "context": [],
+            "warnings": [],
+            "deferred": [],
+            "deferred_count": 0,
+        },
+        "auto_run_result": {"present": False, "status": None, "blocking_condition": None},
+        "last_review_pass": None,
+        "status": None,
+        "parse_warnings": [],
+        "error": None,
+    }
+    if not spec_path or not os.path.isfile(spec_path):
+        result["error"] = f"spec file not found: {spec_path}"
+        return result
+    result["exists"] = True
+    with open(spec_path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    warnings = result["parse_warnings"]
+
+    fm, fm_warnings = parse_frontmatter(text)
+    warnings.extend(fm_warnings)
+    fmr = result["frontmatter"]
+    if fm is not None:
+        for k in ("title", "type", "created", "status", "review_loop_iteration",
+                  "followup_review_recommended", "baseline_revision"):
+            v = fm.get(k)
+            if isinstance(v, str):
+                v = v.strip()
+            fmr[k] = v
+        if isinstance(fmr["status"], str):
+            fmr["status"] = fmr["status"].lower() or None
+        fmr["context"] = [x for x in _as_list(fm.get("context")) if x is not None]
+        fmr["warnings"] = [x for x in _as_list(fm.get("warnings")) if x is not None]
+        fmr["deferred"] = _normalize_deferred(fm.get("deferred"), warnings)
+        fmr["deferred_count"] = len(fmr["deferred"])
+    else:
+        sm = _STATUS_FALLBACK_RE.search(text)
+        if sm:
+            fmr["status"] = sm.group(1).lower()
+            warnings.append("frontmatter unparseable — status read by regex fallback")
+        else:
+            warnings.append("frontmatter unparseable and no status: line found")
+    result["status"] = fmr["status"]
+
+    _fm_lines, body = _frontmatter_block(text)
+    sections = _sections(body if _fm_lines is not None else text)
+
+    # ## Auto Run Result — optional corroboration only.
+    arr = result["auto_run_result"]
+    arr_lines = sections.get("Auto Run Result")
+    if arr_lines is not None:
+        arr["present"] = True
+        for line in arr_lines:
+            if arr["status"] is None:
+                sm = _RESULT_STATUS_RE.match(line)
+                if sm and sm.group(1).strip():
+                    arr["status"] = sm.group(1).strip().strip("`").lower()
+                    continue
+            if arr["blocking_condition"] is None:
+                bm = _RESULT_BLOCK_RE.match(line)
+                if bm:
+                    val = bm.group(1).strip().strip("`")
+                    arr["blocking_condition"] = None if val.lower() in _NONE_WORDS else val
+        if arr["status"] and result["status"] and arr["status"] != result["status"]:
+            warnings.append(
+                f"Auto Run Result Status '{arr['status']}' disagrees with frontmatter status "
+                f"'{result['status']}' (frontmatter is authoritative)"
+            )
+
+    # ## Review Triage Log — the LAST "### … — Review pass" block.
+    log_lines = sections.get("Review Triage Log")
+    if log_lines:
+        blocks = []
+        for line in log_lines:
+            pm = _REVIEW_PASS_RE.match(line)
+            if pm:
+                blocks.append({"date": pm.group(1).strip() or None, "lines": []})
+            elif blocks:
+                if line.startswith("### "):
+                    blocks.append(None)  # a foreign h3 ends the pass block
+                elif blocks[-1] is not None:
+                    blocks[-1]["lines"].append(line)
+        passes = [b for b in blocks if b]
+        if passes:
+            last = passes[-1]
+            lrp = {"date": last["date"], "intent_gap": None, "bad_spec": None,
+                   "patch": None, "defer": None, "reject": None}
+            for line in last["lines"]:
+                cm = _COUNT_RE.match(line)
+                if cm:
+                    cat = cm.group(1).lower()
+                    if lrp[cat] is None:
+                        lrp[cat] = int(cm.group(2))
+            result["last_review_pass"] = lrp
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# --find-spec
+# --------------------------------------------------------------------------- #
+_COLLISION_SUFFIX_RE = re.compile(r"-\d+$")
+
+
+def _spec_regex_for(epic_num, story_num, suffix):
+    return re.compile(rf"^spec-{epic_num}-{story_num}{re.escape(suffix)}-.+\.md$")
+
+
+def _spec_stem(basename):
+    stem = basename[:-3] if basename.endswith(".md") else basename
+    return _COLLISION_SUFFIX_RE.sub("", stem)
+
+
+def build_find_spec_result(impl_dir, story_key, sprint_status_path=None):
+    """Locate the story's build-auto spec in impl_dir. Returns (result, exit_code)."""
+    result = {
+        "story_key": story_key,
+        "impl_dir": impl_dir,
+        "candidates": [],
+        "spec_path": None,
+        "status": None,
+        "found": False,
+        "ambiguous": False,
+        "siblings": [],
+        "hard_stop": False,
+        "hard_stop_reason": None,
+        "error": None,
+    }
+    sm = STORY_RE.match(story_key or "")
+    if not sm:
+        result["error"] = f"invalid story key '{story_key}' (expected E-S[a-z]-slug)"
+        result["hard_stop"] = True
+        result["hard_stop_reason"] = result["error"]
+        return result, 1
+    epic_num, story_num, suffix = int(sm.group(1)), int(sm.group(2)), sm.group(3)
+    mine = _spec_regex_for(epic_num, story_num, suffix)
+
+    if not impl_dir or not os.path.isdir(impl_dir):
+        result["error"] = f"implementation_artifacts dir not found: {impl_dir}"
+        return result, 0
+
+    others = []
+    if sprint_status_path:
+        _t, _e, stories, _r, hs, _err = _load_sprint(sprint_status_path)
+        if not hs:
+            for s in stories:
+                if (s["epic_num"], s["story_num"], s["story_suffix"]) != (epic_num, story_num, suffix):
+                    others.append(_spec_regex_for(s["epic_num"], s["story_num"], s["story_suffix"]))
+
+    names = sorted(n for n in os.listdir(impl_dir) if mine.match(n) and os.path.isfile(os.path.join(impl_dir, n)))
+    names = [n for n in names if not any(o.match(n) for o in others)]
+
+    cands = []
+    for n in names:
+        p = os.path.join(impl_dir, n)
+        info = read_spec(p)
+        cands.append({"path": p, "status": info["status"], "mtime": os.stat(p).st_mtime})
+    result["candidates"] = list(cands)
+
+    if not cands:
+        return result, 0
+
+    live = cands
+    if any(c["status"] != "done" for c in live) and any(c["status"] == "done" for c in live):
+        live = [c for c in live if c["status"] != "done"]
+    if any(c["status"] != "blocked" for c in live) and any(c["status"] == "blocked" for c in live):
+        live = [c for c in live if c["status"] != "blocked"]
+
+    if len(live) == 1:
+        chosen = live[0]
+    else:
+        stems = {_spec_stem(os.path.basename(c["path"])) for c in live}
+        if len(stems) == 1:
+            live = sorted(live, key=lambda c: c["mtime"], reverse=True)
+            chosen = live[0]
+            result["siblings"] = [c["path"] for c in live[1:]]
+        else:
+            result["ambiguous"] = True
+            result["hard_stop"] = True
+            result["hard_stop_reason"] = (
+                f"ambiguous spec files for {story_key}: " + ", ".join(c["path"] for c in live)
+            )
+            return result, 1
+    result["spec_path"] = chosen["path"]
+    result["status"] = chosen["status"]
+    result["found"] = True
+    return result, 0
+
+
+# --------------------------------------------------------------------------- #
+# --retro-verdict
+# --------------------------------------------------------------------------- #
+def build_retro_verdict_result(impl_dir, epic_arg):
+    result = {
+        "epic": None,
+        "doc": None,
+        "verdict": None,
+        "date": None,
+        "headless": None,
+        "found": False,
+        "warnings": [],
+        "error": None,
+    }
+    epic_num = parse_epic_arg(epic_arg)
+    if epic_num is None:
+        result["error"] = f"could not parse --epic '{epic_arg}' (expected N or epic-N)"
+        return result, 2
+    result["epic"] = epic_num
+    if not impl_dir or not os.path.isdir(impl_dir):
+        result["error"] = f"implementation_artifacts dir not found: {impl_dir}"
+        return result, 0
+    name_re = re.compile(rf"^epic-{epic_num}-retro-.+\.md$")
+    docs = []
+    for root, dirs, files in os.walk(impl_dir):
+        dirs.sort()
+        for n in files:
+            if name_re.match(n):
+                p = os.path.join(root, n)
+                docs.append((os.stat(p).st_mtime, p))
+    if not docs:
+        return result, 0
+    docs.sort(reverse=True)
+    doc = docs[0][1]
+    result["doc"] = doc
+    result["found"] = True
+    with open(doc, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    fm_lines, _ = _frontmatter_block(text)
+    if fm_lines is None:
+        result["warnings"].append("retro document has no closed frontmatter block")
+        return result, 0
+    fm_text = "\n".join(fm_lines)
+
+    def scalar(name):
+        m = re.search(rf"^{name}:\s*(.*)$", fm_text, re.MULTILINE)
+        if not m:
+            return None
+        v = _parse_scalar(m.group(1))
+        return v
+
+    verdict = scalar("verdict")
+    if isinstance(verdict, str):
+        verdict = verdict.strip().lower()
+    if verdict in RETRO_VERDICTS:
+        result["verdict"] = verdict
+    else:
+        result["warnings"].append(
+            f"unrecognized verdict {verdict!r} (expected one of {', '.join(RETRO_VERDICTS)})"
+        )
+    date = scalar("date")
+    result["date"] = str(date) if date is not None else None
+    headless = scalar("headless")
+    result["headless"] = headless if isinstance(headless, bool) else None
+    return result, 0
 
 
 # --------------------------------------------------------------------------- #
@@ -506,17 +1284,125 @@ development_status:
   1-1-user-authentication: done
   1-2-account-management: review
   1-3-plant-data-model: backlog
+  1-30-plant-export: backlog
   epic-1-retrospective: optional
 
   epic-2: backlog
   2-1-personality-system: backlog
+  2-6a-digest-delivery: ready-for-dev
+  2-6b-digest-archive: backlog
+"""
+
+_SPEC_FIXTURE = """\
+---
+title: 'Story 1.2: Account management'
+type: 'feature' # feature | bugfix | refactor | chore
+created: '2026-08-10'
+status: 'done' # draft | ready-for-dev | in-progress | in-review | done | blocked
+review_loop_iteration: 1 # incremented by step-04 before each review loopback
+followup_review_recommended: true # set by step-04 on status: done
+context: ['{project-root}/docs/standards.md'] # optional
+warnings: [oversized] # optional: machine-readable warnings for orchestration
+deferred:
+  - summary: >-
+      Legacy session store ignores TTL: sessions never expire
+    evidence: |-
+      `store.get()` at src/session.py:88 has no expiry check;
+      the "ttl" column is written but never read.
+    location: >- # optional — file:line or component
+      src/session.py:88
+    severity: medium # optional — high | medium | low
+  - summary: >-
+      Duplicate email check is case-sensitive
+    evidence: |-
+      users table has no lower(email) index; `Foo@x.io` and `foo@x.io` both insert.
+baseline_revision: 0123456789abcdef0123456789abcdef01234567
+---
+
+<intent-contract>
+
+## Intent
+
+**Problem:** Users cannot manage their account.
+
+**Approach:** Add an account page.
+
+## Boundaries & Constraints
+
+**Always:** keep the API stable.
+
+**Block If:** the auth provider must change.
+
+**Never:** touch billing.
+
+</intent-contract>
+
+## Code Map
+
+- `src/account.py` -- account service
+
+## Tasks & Acceptance
+
+**Execution:**
+- `src/account.py` -- add update endpoint -- needed by the page
+
+**Acceptance Criteria:**
+- Given a logged-in user, when they change their name, then the profile shows it
+
+## Spec Change Log
+
+### 2026-08-11 — bad_spec loopback 1
+- finding: the AC omitted the empty-name case
+- amended: Tasks & Acceptance
+- KEEP: the endpoint shape
+
+## Review Triage Log
+
+### 2026-08-11 — Review pass
+- intent_gap: 0
+- bad_spec: 1: (high 0, medium 1, low 0)
+- patch: 0
+- defer: 0
+- reject: 2: (high 0, medium 0, low 2)
+- addressed_findings:
+  - `[medium]` `[bad_spec]` empty-name AC missing — spec amended, code re-derived
+
+### 2026-08-12 — Review pass
+- intent_gap: 0
+- bad_spec: 0
+- patch: 3: (high 1, medium 1, low 1)
+- defer: 2: (high 0, medium 1, low 1)
+- reject: 1: (high 0, medium 0, low 1)
+- addressed_findings:
+  - `[high]` `[patch]` name update skipped the CSRF check — fixed
+  - `[medium]` `[patch]` no length limit on display name — fixed
+  - `[low]` `[patch]` typo in the success toast — fixed
+
+## Auto Run Result
+
+Status: done
+Blocking condition: none
+
+- Summary: account page + update endpoint implemented.
+- Files changed: `src/account.py` (endpoint), `web/account.html` (page)
+- Review findings breakdown: 3 patched, 2 deferred, 1 rejected
+- Follow-up review recommendation: true (patched: high 1, medium 1, low 1; score 4 + high)
+- Verification performed: `pytest -q` passed (42 tests)
+- Residual risks: none known
+
+## Verification
+
+**Commands:**
+- `pytest -q` -- expected: all green
 """
 
 
 def _run_self_test():
     import contextlib
     import io
+    import shutil
     import stat
+    import time
 
     failures = []
 
@@ -524,93 +1410,125 @@ def _run_self_test():
         if not cond:
             failures.append(name)
 
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
-        f.write(_FIXTURE)
-        path = f.name
+    root = tempfile.mkdtemp(prefix="story_plan_selftest_")
 
-    # Auto: first in-progress wins? none in-progress -> first review = 1-2.
-    auto = build_result(path, None, "/impl")
-    check("auto picks review story 1-2", auto["story_key"] == "1-2-account-management")
-    check("auto next_action code-review", auto["next_action"] == "code-review")
-    check("1-2 not first in epic", auto["is_first_in_epic"] is False)
-    check("1-2 not last in epic", auto["is_last_in_epic"] is False)
-    check("epic-1 status in-progress", auto["epic_status"] == "in-progress")
-    check("epic-1 story count is 3", auto["epic_story_count"] == 3)
-    check("1-2 has 1 story after it", auto["stories_after_in_epic"] == 1)
-    check("retro status optional", auto["retrospective_status"] == "optional")
-    check("story_file joined", auto["story_file"] == "/impl/1-2-account-management.md")
+    def write(rel, body):
+        p = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        return p
 
-    # Explicit backlog story -> create-story; is_last_in_epic for 1-3.
-    ex = build_result(path, "1-3", "/impl")
-    check("explicit 1-3 key", ex["story_key"] == "1-3-plant-data-model")
-    check("explicit 1-3 create-story", ex["next_action"] == "create-story")
-    check("1-3 is last in epic", ex["is_last_in_epic"] is True)
-    check("1-3 not first in epic", ex["is_first_in_epic"] is False)
-    check("1-3 has 0 stories after it (last)", ex["stories_after_in_epic"] == 0)
+    def slurp(p):
+        with open(p, "r", encoding="utf-8", newline="") as fh:
+            return fh.read()
 
-    # Explicit first story of epic 2.
-    ex2 = build_result(path, "2-1-personality-system", "/impl")
-    check("2-1 first in epic", ex2["is_first_in_epic"] is True)
-    check("2-1 last in epic", ex2["is_last_in_epic"] is True)
-    check("epic-2 story count is 1", ex2["epic_story_count"] == 1)
-    check("2-1 has 0 stories after it", ex2["stories_after_in_epic"] == 0)
+    sp = write("sprint-status.yaml", _FIXTURE)
 
-    # Missing file hard-stops.
-    miss = build_result("/no/such/file.yaml", None, "/impl")
-    check("missing file hard_stop", miss["hard_stop"] is True)
+    # ---- grammar --------------------------------------------------------- #
+    m = STORY_RE.match("2-6a-digest-delivery")
+    check("grammar: split key parses", m and m.group(3) == "a" and m.group(4) == "digest-delivery")
+    m = STORY_RE.match("1-30-plant-export")
+    check("grammar: plain key has empty suffix", m and m.group(3) == "" and m.group(2) == "30")
+    check("grammar: STATUS_RANK order", STATUS_RANK["backlog"] < STATUS_RANK["ready-for-dev"] < STATUS_RANK["in-progress"] < STATUS_RANK["review"] < STATUS_RANK["done"])
 
-    # Unknown explicit story errors.
-    bad = build_result(path, "9-9", "/impl")
-    check("unknown story hard_stop", bad["hard_stop"] is True)
+    # ---- --resolve -------------------------------------------------------- #
+    r, code = build_resolve_result(sp, "1-2")
+    check("resolve E-S: exit 0", code == 0)
+    check("resolve E-S: key", r["story_key"] == "1-2-account-management")
+    check("resolve E-S: fields", r["epic_num"] == 1 and r["story_num"] == 2 and r["story_suffix"] == "" and r["slug"] == "account-management")
+    check("resolve E-S: status/epic/retro", r["current_status"] == "review" and r["epic_status"] == "in-progress" and r["retrospective_status"] == "optional")
+    check("resolve E-S: epic facts", r["epic_story_count"] == 4 and r["is_first_in_epic"] is False and r["is_last_in_epic"] is False and r["stories_after_in_epic"] == 2)
+    check("resolve E-S: title null without planning dir", r["title"] is None and r["epic_title"] is None)
+    r, _ = build_resolve_result(sp, "1.3")
+    check("resolve E.S: 1.3 not 1.30", r["story_key"] == "1-3-plant-data-model")
+    r, _ = build_resolve_result(sp, "1-30")
+    check("resolve E-S: 1-30 is last with 0 after", r["story_key"] == "1-30-plant-export" and r["is_last_in_epic"] is True and r["stories_after_in_epic"] == 0)
+    r, _ = build_resolve_result(sp, "1-1-user-authentication")
+    check("resolve full key: first in epic", r["is_first_in_epic"] is True and r["stories_after_in_epic"] == 3)
+    r, code = build_resolve_result(sp, "2.6a")
+    check("resolve E.Sx: split key", code == 0 and r["story_key"] == "2-6a-digest-delivery" and r["story_suffix"] == "a")
+    check("resolve E.Sx: 6a before 6b", r["is_last_in_epic"] is False and r["stories_after_in_epic"] == 1)
+    r, code = build_resolve_result(sp, "2-6b")
+    check("resolve E-Sx: 6b last", code == 0 and r["is_last_in_epic"] is True)
+    r, code = build_resolve_result(sp, "2-6")
+    check("resolve E-S with only suffixed keys: ambiguous exit 1", code == 1 and r["hard_stop"] is True)
+    check("resolve ambiguous: candidates listed", r["candidates"] == ["2-6a-digest-delivery", "2-6b-digest-archive"])
+    r, code = build_resolve_result(sp, "Digest")
+    check("resolve substring: ambiguous across two", code == 1 and sorted(r["candidates"]) == ["2-6a-digest-delivery", "2-6b-digest-archive"])
+    r, code = build_resolve_result(sp, "PLANT-EXPORT")
+    check("resolve substring: case-insensitive unique", code == 0 and r["story_key"] == "1-30-plant-export")
+    r, code = build_resolve_result(sp, "9-9")
+    check("resolve not found: hard_stop exit 1", code == 1 and r["hard_stop"] is True and "not found" in r["hard_stop_reason"])
+    r, code = build_resolve_result(os.path.join(root, "nope.yaml"), "1-2")
+    check("resolve missing file: hard_stop exit 1", code == 1 and r["hard_stop"] is True)
+    empty = write("empty.yaml", "generated: x\n")
+    r, code = build_resolve_result(empty, "1-2")
+    check("resolve empty file: hard_stop exit 1", code == 1 and "empty/invalid" in r["hard_stop_reason"])
 
-    # ---- --epic enumeration mode ------------------------------------------ #
-    ep1 = build_epic_result(path, "1", "/impl")
-    check("epic-1: epic_num 1", ep1["epic_num"] == 1)
-    check("epic-1: status in-progress", ep1["epic_status"] == "in-progress")
-    check("epic-1: story count 3", ep1["epic_story_count"] == 3)
-    check("epic-1: not hard_stop", ep1["hard_stop"] is False)
-    check("epic-1: retro optional", ep1["retrospective_status"] == "optional")
-    check(
-        "epic-1: ordered by story_num",
-        [s["key"] for s in ep1["epic_stories"]]
-        == ["1-1-user-authentication", "1-2-account-management", "1-3-plant-data-model"],
-    )
-    check("epic-1: first story done", ep1["epic_stories"][0]["status"] == "done")
-    check("epic-1: done -> next_action done", ep1["epic_stories"][0]["next_action"] == "done")
-    check(
-        "epic-1: story_file joined",
-        ep1["epic_stories"][0]["story_file"] == "/impl/1-1-user-authentication.md",
-    )
-    check("epic-1: review -> code-review", ep1["epic_stories"][1]["next_action"] == "code-review")
-    check("epic-1: backlog -> create-story", ep1["epic_stories"][2]["next_action"] == "create-story")
+    # ---- --planning-dir titles -------------------------------------------- #
+    plan = os.path.join(root, "planning")
+    write("planning/epics.md", """\
+# Epics
 
-    # The ``epic-N`` form parses too; epic 2 has a single backlog story.
-    ep2 = build_epic_result(path, "epic-2", "/impl")
-    check("epic-2: parsed epic-N form", ep2["epic_num"] == 2)
-    check("epic-2: story count 1", ep2["epic_story_count"] == 1)
-    check("epic-2: single story", [s["key"] for s in ep2["epic_stories"]] == ["2-1-personality-system"])
+## Epic 1: Plant Care Core
 
-    # Unknown / unparseable epic -> hard_stop, no stories.
-    ep_missing = build_epic_result(path, "9", "/impl")
-    check("epic-9 empty hard_stop", ep_missing["hard_stop"] is True and ep_missing["epic_stories"] == [])
-    ep_bad = build_epic_result(path, "nope", "/impl")
-    check("epic bad-arg hard_stop", ep_bad["hard_stop"] is True)
+### Story 1.1: User Authentication
+As a user…
 
-    os.unlink(path)
+### Story 1.3: Plant Data Model ##
+### Story 1.30: Plant Export
 
-    # A done epic hard-stops (nothing to complete) but still lists its stories.
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
-        f.write("development_status:\n  epic-3: done\n  3-1-foo: done\n  3-2-bar: done\n")
-        done_path = f.name
-    dep = build_epic_result(done_path, "3", "/impl")
-    check("epic-3 done hard_stop", dep["hard_stop"] is True)
-    check("epic-3 done reason", "done" in (dep["hard_stop_reason"] or ""))
-    check("epic-3 done still lists stories", len(dep["epic_stories"]) == 2)
-    os.unlink(done_path)
+```md
+### Story 1.2: FENCED SHOULD BE IGNORED
+```
 
-    # ---- mark-done mode --------------------------------------------------- #
+## Epic 2 — Digest
+
+### Story 2.6a: Digest Delivery
+#### Story 2.6b: Digest Archive
+""")
+    write("planning/epic-2-notes.md", "# Epic 2: Digest Notes\n\n### Story 2.1: Personality System\n")
+    write("planning/other.md", "### Story 1.2: WRONG FILE\n")
+    r, _ = build_resolve_result(sp, "1-3", plan)
+    check("titles: 1.3 (not 1.30), trailing hashes stripped", r["title"] == "Plant Data Model")
+    check("titles: epic_title", r["epic_title"] == "Plant Care Core")
+    r, _ = build_resolve_result(sp, "1-30", plan)
+    check("titles: 1.30", r["title"] == "Plant Export")
+    r, _ = build_resolve_result(sp, "1-2", plan)
+    check("titles: fenced heading ignored, non-matching file skipped ⇒ null", r["title"] is None)
+    r, _ = build_resolve_result(sp, "2.6a", plan)
+    check("titles: suffix story 2.6a", r["title"] == "Digest Delivery")
+    r, _ = build_resolve_result(sp, "2-1", plan)
+    check("titles: epic-2*.md file read", r["title"] == "Personality System")
+    check("titles: epic-2 title first match wins (sorted walk: epic-2-notes.md before epics.md)", r["epic_title"] == "Digest Notes")
+    r, _ = build_resolve_result(sp, "1-2", os.path.join(root, "no-such-planning"))
+    check("titles: missing planning dir ⇒ null, no hard-stop", r["title"] is None and r["hard_stop"] is False)
+
+    # ---- --epic ---------------------------------------------------------- #
+    ep = build_epic_result(sp, "1", plan)
+    check("epic-1: basics", ep["epic_num"] == 1 and ep["epic_status"] == "in-progress" and ep["epic_story_count"] == 4 and ep["hard_stop"] is False)
+    check("epic-1: epic_title", ep["epic_title"] == "Plant Care Core")
+    check("epic-1: order", [s["key"] for s in ep["epic_stories"]] == ["1-1-user-authentication", "1-2-account-management", "1-3-plant-data-model", "1-30-plant-export"])
+    check("epic-1: first/last flags", ep["epic_stories"][0]["is_first_in_epic"] is True and ep["epic_stories"][-1]["is_last_in_epic"] is True and ep["epic_stories"][1]["is_first_in_epic"] is False)
+    check("epic-1: stories_after", [s["stories_after_in_epic"] for s in ep["epic_stories"]] == [3, 2, 1, 0])
+    check("epic-1: titles", [s["title"] for s in ep["epic_stories"]] == ["User Authentication", None, "Plant Data Model", "Plant Export"])
+    check("epic-1: no v6 fields", "story_file" not in ep["epic_stories"][0] and "next_action" not in ep["epic_stories"][0])
+    ep2 = build_epic_result(sp, "epic-2")
+    check("epic-2: epic-N form + suffix order", ep2["epic_num"] == 2 and [s["key"] for s in ep2["epic_stories"]] == ["2-1-personality-system", "2-6a-digest-delivery", "2-6b-digest-archive"])
+    check("epic-2: suffix field", ep2["epic_stories"][1]["story_suffix"] == "a" and ep2["epic_stories"][1]["story_num"] == 6)
+    check("epic-2: title null without planning dir", ep2["epic_title"] is None and ep2["epic_stories"][0]["title"] is None)
+    check("epic-9: hard_stop", build_epic_result(sp, "9")["hard_stop"] is True)
+    check("epic bad arg: hard_stop", build_epic_result(sp, "nope")["hard_stop"] is True)
+    check("epic missing file: hard_stop", build_epic_result(os.path.join(root, "nope.yaml"), "1")["hard_stop"] is True)
+    done_sp = write("done.yaml", "development_status:\n  epic-3: done\n  3-1-foo: done\n  3-2-bar: done\n")
+    dep = build_epic_result(done_sp, "3")
+    check("epic-3 done: hard_stop but lists stories", dep["hard_stop"] is True and "done" in dep["hard_stop_reason"] and len(dep["epic_stories"]) == 2)
+
+    # ---- --mark-status ---------------------------------------------------- #
     mark_fixture = """\
 generated: 05-06-2025 21:30
+last_updated: 05-06-2025 21:30
 project: Demo
 
 development_status:
@@ -619,202 +1537,340 @@ development_status:
   1-2-account-management: review  # awaiting final pass
   1-3-plant-data-model: backlog
   epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-personality-system: backlog
+  2-6a-digest-delivery: ready-for-dev
 """
-    tmp_paths = []
+    fixed_now = _dt.datetime(2026, 8, 16, 9, 5)
+    stamp = "08-16-2026 09:05"
 
-    def fresh(body, suffix):
-        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False) as f:
-            f.write(body)
-            tmp_paths.append(f.name)
-            return f.name
+    def fresh(body, name="ms.yaml"):
+        return write(name, body)
 
-    def slurp(p):
-        with open(p, "r", encoding="utf-8") as fh:
-            return fh.read()
-
-    # Happy path: only the target line's value token changes; inline comment,
-    # indentation, and every other line are byte-identical.
-    sp = fresh(mark_fixture, ".yaml")
-    res, code = mark_done(sp, "1-2-account-management")
-    check("mark-done: exit 0", code == 0)
-    check("mark-done: key echoed", res["key"] == "1-2-account-management")
-    check("mark-done: previous_status review", res["previous_status"] == "review")
-    check("mark-done: sprint_updated", res["sprint_updated"] is True)
-    check("mark-done: story fields null/false without --story-file", res["story_previous_status"] is None and res["story_file_updated"] is False)
-    check("mark-done: not already_done", res["already_done"] is False)
-    expected = mark_fixture.replace(
+    # Happy path: value token + last_updated only; comment/indent preserved.
+    p = fresh(mark_fixture)
+    res, code = mark_status(p, "1-2-account-management", "done", now=fixed_now)
+    check("mark: exit 0", code == 0)
+    check("mark: previous/updated", res["previous_status"] == "review" and res["sprint_updated"] is True and res["already_at_status"] is False)
+    check("mark: last_updated json", res["last_updated"] == {"previous": "05-06-2025 21:30", "new": stamp, "added": False})
+    check("mark: no epic lift (1-3 still backlog)", res["epic_lift"] is None)
+    expected = mark_fixture.replace("last_updated: 05-06-2025 21:30", f"last_updated: {stamp}").replace(
         "  1-2-account-management: review  # awaiting final pass",
         "  1-2-account-management: done  # awaiting final pass",
     )
-    check("mark-done: byte-preserving (value token only)", slurp(sp) == expected)
+    check("mark: byte-preserving (value token + stamp only)", slurp(p) == expected)
+    check("mark: no JSON legacy keys", "story_file_updated" not in res and "already_done" not in res)
 
-    # Idempotent: already done => no write, file byte-identical, exit 0.
-    sp = fresh(mark_fixture, ".yaml")
-    res, code = mark_done(sp, "1-1-user-authentication")
-    check("mark-done already: exit 0", code == 0)
-    check("mark-done already: already_done", res["already_done"] is True)
-    check("mark-done already: sprint not updated", res["sprint_updated"] is False)
-    check("mark-done already: previous_status done", res["previous_status"] == "done")
-    check("mark-done already: file untouched", slurp(sp) == mark_fixture)
+    # Idempotent: no write, no stamp, no lift.
+    p = fresh(mark_fixture)
+    res, code = mark_status(p, "1-1-user-authentication", "done", now=fixed_now)
+    check("mark idempotent: exit 0 already_at_status", code == 0 and res["already_at_status"] is True and res["sprint_updated"] is False)
+    check("mark idempotent: no stamp", res["last_updated"]["new"] is None and res["last_updated"]["added"] is False and res["last_updated"]["previous"] == "05-06-2025 21:30")
+    check("mark idempotent: file untouched", slurp(p) == mark_fixture)
 
-    # Missing key / missing sprint file => exit 1, nothing written.
-    sp = fresh(mark_fixture, ".yaml")
-    res, code = mark_done(sp, "9-9-nope")
-    check("mark-done missing key: exit 1", code == 1)
-    check("mark-done missing key: error set", bool(res["error"]))
-    check("mark-done missing key: file untouched", slurp(sp) == mark_fixture)
-    res, code = mark_done("/no/such/sprint.yaml", "1-1-user-authentication")
-    check("mark-done missing sprint file: exit 1", code == 1)
+    # Regress guard.
+    p = fresh(mark_fixture)
+    res, code = mark_status(p, "1-2-account-management", "ready-for-dev", now=fixed_now)
+    check("mark regress: exit 1", code == 1)
+    check("mark regress: message", res["error"] == "refusing to regress 1-2-account-management from review to ready-for-dev (pass --allow-regress)")
+    check("mark regress: file untouched", slurp(p) == mark_fixture)
+    res, code = mark_status(p, "1-2-account-management", "ready-for-dev", allow_regress=True, now=fixed_now)
+    check("mark regress allowed: exit 0 flipped", code == 0 and res["sprint_updated"] is True and "1-2-account-management: ready-for-dev  # awaiting" in slurp(p))
+    # A legacy alias value ranks by its normalized status (drafted == ready-for-dev).
+    p = fresh(mark_fixture.replace("2-6a-digest-delivery: ready-for-dev", "2-6a-digest-delivery: drafted"))
+    res, code = mark_status(p, "2-6a-digest-delivery", "backlog", now=fixed_now)
+    check("mark regress: alias normalized", code == 1 and "from ready-for-dev to backlog" in res["error"])
+    res, code = mark_status(p, "2-6a-digest-delivery", "ready-for-dev", now=fixed_now)
+    check("mark alias == target: already_at_status", code == 0 and res["already_at_status"] is True and "drafted" in slurp(p))
 
-    # Story-file variants: each form flips, value-only, first match wins
-    # (the later Dev Notes 'Status: review' is untouched).
-    story_tpl = "# Story 1-3\n\n{line}\n\n## Dev Notes\nStatus: review\n"
-    for line, prev, flipped in (
-        ("Status: review", "review", "Status: done"),
-        ("**Status:** Review", "Review", "**Status:** done"),
-        ("status: in-progress", "in-progress", "status: done"),
-    ):
-        sp = fresh(mark_fixture, ".yaml")
-        st = fresh(story_tpl.format(line=line), ".md")
-        res, code = mark_done(sp, "1-3-plant-data-model", st)
-        check(f"mark-done story '{line}': exit 0", code == 0)
-        check(f"mark-done story '{line}': story_previous_status", res["story_previous_status"] == prev)
-        check(f"mark-done story '{line}': story_file_updated", res["story_file_updated"] is True)
-        check(f"mark-done story '{line}': value-only flip, first match wins", slurp(st) == story_tpl.format(line=flipped))
+    # Invalid target / missing key / missing file.
+    p = fresh(mark_fixture)
+    res, code = mark_status(p, "1-2-account-management", "shipped")
+    check("mark invalid: exit 1 names status", code == 1 and "shipped" in res["error"] and slurp(p) == mark_fixture)
+    res, code = mark_status(p, "9-9-nope", "done")
+    check("mark missing key: exit 1", code == 1 and bool(res["error"]) and slurp(p) == mark_fixture)
+    res, code = mark_status(os.path.join(root, "nope.yaml"), "1-1-user-authentication", "done")
+    check("mark missing file: exit 1", code == 1)
 
-    # No Status line => exit 1 AND the sprint file untouched (validate-before-write).
-    sp = fresh(mark_fixture, ".yaml")
-    st = fresh("# Story\n\nno status anywhere\n", ".md")
-    res, code = mark_done(sp, "1-3-plant-data-model", st)
-    check("mark-done no Status line: exit 1", code == 1)
-    check("mark-done no Status line: error set", bool(res["error"]))
-    check("mark-done no Status line: sprint untouched", slurp(sp) == mark_fixture)
+    # last_updated styles: quoted stays quoted (with comment); absent ⇒ inserted before development_status.
+    p = fresh(mark_fixture.replace("last_updated: 05-06-2025 21:30", 'last_updated: "05-06-2025 21:30"  # stamp'))
+    res, code = mark_status(p, "1-3-plant-data-model", "ready-for-dev", now=fixed_now)
+    check("mark stamp quoted: preserved", code == 0 and f'last_updated: "{stamp}"  # stamp\n' in slurp(p))
+    p = fresh(mark_fixture.replace("last_updated: 05-06-2025 21:30", "last_updated: '05-06-2025 21:30'"))
+    mark_status(p, "1-3-plant-data-model", "ready-for-dev", now=fixed_now)
+    check("mark stamp single-quoted: preserved", f"last_updated: '{stamp}'\n" in slurp(p))
+    p = fresh(mark_fixture.replace("last_updated: 05-06-2025 21:30\n", ""))
+    res, code = mark_status(p, "1-3-plant-data-model", "ready-for-dev", now=fixed_now)
+    check("mark stamp absent: added", code == 0 and res["last_updated"] == {"previous": None, "new": stamp, "added": True})
+    check("mark stamp absent: inserted before development_status", f'project: Demo\n\nlast_updated: "{stamp}"\ndevelopment_status:\n' in slurp(p))
+    # A `last_updated` key INSIDE development_status must not be mistaken for the top-level one.
+    p = fresh(mark_fixture.replace("last_updated: 05-06-2025 21:30\n", "").replace("  epic-2: backlog\n", "  epic-2: backlog\n  last_updated: weird\n"))
+    res, code = mark_status(p, "1-3-plant-data-model", "ready-for-dev", now=fixed_now)
+    check("mark stamp: nested key ignored, top-level added", res["last_updated"]["added"] is True and "  last_updated: weird\n" in slurp(p))
 
-    # Sprint already done but story file still review => story flips, not already_done.
-    sp = fresh(mark_fixture, ".yaml")
-    st = fresh("Status: review\n", ".md")
-    res, code = mark_done(sp, "1-1-user-authentication", st)
-    check("mark-done mixed: exit 0", code == 0)
-    check("mark-done mixed: sprint not updated", res["sprint_updated"] is False)
-    check("mark-done mixed: story updated", res["story_file_updated"] is True)
-    check("mark-done mixed: not already_done", res["already_done"] is False)
+    # Epic lift both ways.
+    p = fresh(mark_fixture)
+    res, code = mark_status(p, "2-1-personality-system", "in-progress", now=fixed_now)
+    check("lift in-progress: epic-2 backlog → in-progress", res["epic_lift"] == {"key": "epic-2", "previous": "backlog", "new": "in-progress"} and "  epic-2: in-progress\n" in slurp(p))
+    res, code = mark_status(p, "2-6a-digest-delivery", "in-progress", now=fixed_now)
+    check("lift in-progress: already lifted ⇒ null", res["epic_lift"] is None)
+    p = fresh(mark_fixture.replace("1-2-account-management: review", "1-2-account-management: done"))
+    res, code = mark_status(p, "1-3-plant-data-model", "done", allow_regress=False, now=fixed_now)
+    check("lift done: last story done ⇒ epic-1 done", res["epic_lift"] == {"key": "epic-1", "previous": "in-progress", "new": "done"} and "  epic-1: done\n" in slurp(p))
+    p = fresh(mark_fixture)
+    res, code = mark_status(p, "1-3-plant-data-model", "done", now=fixed_now)
+    check("lift done: 1-2 still review ⇒ no lift", res["epic_lift"] is None and "  epic-1: in-progress\n" in slurp(p))
+    p = fresh("development_status:\n  4-1-solo: review\n")
+    res, code = mark_status(p, "4-1-solo", "done", now=fixed_now)
+    check("lift done: no epic entry ⇒ null, still flips + stamps", code == 0 and res["epic_lift"] is None and res["last_updated"]["added"] is True and "  4-1-solo: done\n" in slurp(p))
 
-    # Both already done (status value case-insensitive) => already_done, no writes.
-    st = fresh("STATUS: Done\n", ".md")
-    res, code = mark_done(sp, "1-1-user-authentication", st)
-    check("mark-done both done: exit 0", code == 0)
-    check("mark-done both done: already_done", res["already_done"] is True)
-    check("mark-done both done: story untouched", slurp(st) == "STATUS: Done\n")
+    # CRLF preserved.
+    p = fresh(mark_fixture.replace("\n", "\r\n"))
+    res, code = mark_status(p, "1-3-plant-data-model", "ready-for-dev", now=fixed_now)
+    body = slurp(p)
+    check("mark crlf: preserved", code == 0 and "\r\n" in body and "\n" not in body.replace("\r\n", ""))
 
-    # The atomic replace preserves the target's mode (mkstemp's temp is 0600;
-    # without the chmod the flip would silently drop group/other bits).
-    sp = fresh(mark_fixture, ".yaml")
-    st = fresh("Status: review\n", ".md")
+    # Mode preserved by the atomic replace.
+    p = fresh(mark_fixture)
     wide = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH
-    os.chmod(sp, wide)
-    os.chmod(st, wide)
-    res, code = mark_done(sp, "1-3-plant-data-model", st)
-    check("mark-done modes: exit 0", code == 0)
-    check("mark-done modes: sprint mode preserved", os.stat(sp).st_mode & 0o7777 == wide)
-    check("mark-done modes: story mode preserved", os.stat(st).st_mode & 0o7777 == wide)
+    os.chmod(p, wide)
+    mark_status(p, "1-3-plant-data-model", "ready-for-dev", now=fixed_now)
+    check("mark modes: preserved", os.stat(p).st_mode & 0o7777 == wide)
 
-    # Write failure (story file in a read-only DIRECTORY — directory perms,
-    # not file perms, gate the atomic-replace path): JSON error + exit 1, and
-    # BOTH files stay byte-identical even though the sprint flip was staged
-    # first (stage-both-then-swap), with no temp litter left in either dir.
-    # Skipped as root, which ignores directory write bits.
+    # Atomicity: read-only directory ⇒ error, file byte-identical, no temp litter.
     if getattr(os, "geteuid", lambda: 0)() != 0:
-        wr_dir = tempfile.mkdtemp(prefix="story_plan_wr_")
-        ro_dir = tempfile.mkdtemp(prefix="story_plan_ro_")
-        sp = os.path.join(wr_dir, "sprint-status.yaml")
-        with open(sp, "w", encoding="utf-8") as f:
-            f.write(mark_fixture)
-        st = os.path.join(ro_dir, "1-3-plant-data-model.md")
-        with open(st, "w", encoding="utf-8") as f:
-            f.write("Status: review\n")
-        os.chmod(ro_dir, stat.S_IRUSR | stat.S_IXUSR)  # owner read+exec, no write
+        ro_dir = os.path.join(root, "ro")
+        os.makedirs(ro_dir)
+        rp = os.path.join(ro_dir, "sprint-status.yaml")
+        with open(rp, "w", encoding="utf-8") as fh:
+            fh.write(mark_fixture)
+        os.chmod(ro_dir, stat.S_IRUSR | stat.S_IXUSR)
         try:
-            res, code = mark_done(sp, "1-3-plant-data-model", st)
+            res, code = mark_status(rp, "1-3-plant-data-model", "ready-for-dev", now=fixed_now)
         finally:
-            os.chmod(ro_dir, stat.S_IRWXU)  # restore owner-only rwx for cleanup
-        check("mark-done ro-dir: exit 1", code == 1)
-        check("mark-done ro-dir: error set", bool(res["error"]))
-        check("mark-done ro-dir: nothing flagged committed", res["sprint_updated"] is False and res["story_file_updated"] is False)
-        check("mark-done ro-dir: sprint untouched", slurp(sp) == mark_fixture)
-        check("mark-done ro-dir: story untouched", slurp(st) == "Status: review\n")
-        check("mark-done ro-dir: no temp litter (sprint dir)", os.listdir(wr_dir) == ["sprint-status.yaml"])
-        check("mark-done ro-dir: no temp litter (story dir)", os.listdir(ro_dir) == ["1-3-plant-data-model.md"])
-        for p in (sp, st):
-            os.unlink(p)
-        os.rmdir(wr_dir)
-        os.rmdir(ro_dir)
+            os.chmod(ro_dir, stat.S_IRWXU)
+        check("mark ro-dir: exit 1 error", code == 1 and bool(res["error"]) and res["sprint_updated"] is False)
+        check("mark ro-dir: file untouched, no litter", slurp(rp) == mark_fixture and os.listdir(ro_dir) == ["sprint-status.yaml"])
+        check("mark ro-dir: no lift/stamp claimed", res["epic_lift"] is None and res["last_updated"]["new"] is None)
 
-    # ---- mark-status mode (generalized flip, non-done targets) ------------ #
-    # A non-done target flips both sources; already_done stays False (not done).
-    sp = fresh(mark_fixture, ".yaml")
-    st = fresh("Status: done\n", ".md")
-    res, code = mark_status(sp, "1-2-account-management", "in-progress", st)
-    check("mark-status flip: exit 0", code == 0)
-    check("mark-status flip: target echoed", res["target_status"] == "in-progress")
-    check("mark-status flip: sprint flipped", res["sprint_updated"] is True)
-    check("mark-status flip: story flipped", res["story_file_updated"] is True)
-    check("mark-status flip: not already_at_status", res["already_at_status"] is False)
-    check("mark-status flip: already_done stays False (non-done target)", res["already_done"] is False)
-    check("mark-status flip: value-only sprint edit", slurp(sp) == mark_fixture.replace(
-        "  1-2-account-management: review  # awaiting final pass",
-        "  1-2-account-management: in-progress  # awaiting final pass",
-    ))
-    check("mark-status flip: value-only story edit", slurp(st) == "Status: in-progress\n")
+    # ---- --spec ---------------------------------------------------------- #
+    spec_p = write("impl/spec-1-2-account-management.md", _SPEC_FIXTURE)
+    s = read_spec(spec_p)
+    fm = s["frontmatter"]
+    check("spec: exists", s["exists"] is True and s["error"] is None)
+    check("spec: scalars", fm["title"] == "Story 1.2: Account management" and fm["type"] == "feature" and fm["created"] == "2026-08-10")
+    check("spec: status authoritative", s["status"] == "done" and fm["status"] == "done")
+    check("spec: ints/bools", fm["review_loop_iteration"] == 1 and fm["followup_review_recommended"] is True)
+    check("spec: baseline_revision", fm["baseline_revision"] == "0123456789abcdef0123456789abcdef01234567")
+    check("spec: flow lists", fm["context"] == ["{project-root}/docs/standards.md"] and fm["warnings"] == ["oversized"])
+    check("spec: deferred_count", fm["deferred_count"] == 2 and len(fm["deferred"]) == 2)
+    d0, d1 = fm["deferred"]
+    check("spec: deferred[0] folded summary", d0["summary"] == "Legacy session store ignores TTL: sessions never expire")
+    check("spec: deferred[0] literal evidence", d0["evidence"] == '`store.get()` at src/session.py:88 has no expiry check;\nthe "ttl" column is written but never read.')
+    check("spec: deferred[0] location (comment on indicator line)", d0["location"] == "src/session.py:88")
+    check("spec: deferred[0] severity (inline comment stripped)", d0["severity"] == "medium")
+    check("spec: deferred[1] optional fields null", d1["summary"] == "Duplicate email check is case-sensitive" and d1["location"] is None and d1["severity"] is None)
+    check("spec: deferred[1] evidence with backticks/colons", d1["evidence"] == "users table has no lower(email) index; `Foo@x.io` and `foo@x.io` both insert.")
+    check("spec: auto_run_result", s["auto_run_result"] == {"present": True, "status": "done", "blocking_condition": None})
+    check("spec: last review pass is the LAST block", s["last_review_pass"] == {"date": "2026-08-12", "intent_gap": 0, "bad_spec": 0, "patch": 3, "defer": 2, "reject": 1})
+    check("spec: no parse warnings", s["parse_warnings"] == [])
 
-    # Idempotent at a non-done status: no write, exit 0, already_at_status True
-    # while already_done stays False.
-    sp = fresh(mark_fixture, ".yaml")
-    res, code = mark_status(sp, "1-2-account-management", "review")
-    check("mark-status idempotent: exit 0", code == 0)
-    check("mark-status idempotent: already_at_status", res["already_at_status"] is True)
-    check("mark-status idempotent: already_done False (target review)", res["already_done"] is False)
-    check("mark-status idempotent: sprint not updated", res["sprint_updated"] is False)
-    check("mark-status idempotent: file untouched", slurp(sp) == mark_fixture)
+    # Same spec, ready-for-dev after the plan halt: no result lines ⇒ nulls; frontmatter authoritative.
+    rfd = _SPEC_FIXTURE.replace("status: 'done'", "status: 'ready-for-dev'").split("## Review Triage Log")[0]
+    rfd += "## Review Triage Log\n\n## Auto Run Result\n\n"
+    rp = write("impl/spec-9-1-rfd.md", rfd)
+    s = read_spec(rp)
+    check("spec rfd: status ready-for-dev", s["status"] == "ready-for-dev")
+    check("spec rfd: result heading present, lines null", s["auto_run_result"] == {"present": True, "status": None, "blocking_condition": None})
+    check("spec rfd: no review pass ⇒ null", s["last_review_pass"] is None)
+    check("spec rfd: deferred still parsed", s["frontmatter"]["deferred_count"] == 2)
 
-    # Invalid target => exit 1, error names the bad status, sprint file untouched
-    # (validate-before-write).
-    sp = fresh(mark_fixture, ".yaml")
-    res, code = mark_status(sp, "1-2-account-management", "shipped")
-    check("mark-status invalid: exit 1", code == 1)
-    check("mark-status invalid: error names bad status", "shipped" in (res["error"] or ""))
-    check("mark-status invalid: sprint untouched", slurp(sp) == mark_fixture)
+    # Blocked spec with a blocking condition + a disagreeing result status.
+    blocked = _SPEC_FIXTURE.replace("status: 'done'", "status: 'blocked'").replace(
+        "Status: done\nBlocking condition: none", "**Status:** in-review\n- Blocking condition: intent gap")
+    bp = write("impl/spec-9-2-blocked.md", blocked)
+    s = read_spec(bp)
+    check("spec blocked: frontmatter wins", s["status"] == "blocked")
+    check("spec blocked: result status read + disagreement warning", s["auto_run_result"]["status"] == "in-review" and any("disagrees" in w for w in s["parse_warnings"]))
+    check("spec blocked: blocking condition verbatim", s["auto_run_result"]["blocking_condition"] == "intent gap")
 
-    # done via mark_status matches the mark_done wrapper: already_done tracks target.
-    sp = fresh(mark_fixture, ".yaml")
-    res, code = mark_status(sp, "1-1-user-authentication", "done")
-    check("mark-status done: already_at_status", res["already_at_status"] is True)
-    check("mark-status done: already_done True (target done)", res["already_done"] is True)
+    # No-spec skeleton result file (upstream HALT protocol) and empty deferred.
+    skel = write("impl/bmad-build-auto-result-x.md", "---\nstatus: blocked\n---\n\n# BMad Build Auto Result\n\n## Auto Run Result\n\nStatus: blocked\nBlocking condition: unclear intent\n")
+    s = read_spec(skel)
+    check("spec skeleton: status + blocking condition", s["status"] == "blocked" and s["auto_run_result"]["blocking_condition"] == "unclear intent" and s["frontmatter"]["deferred"] == [] and s["frontmatter"]["title"] is None)
+    # A `deferred: []` template default.
+    tpl = write("impl/spec-9-3-tpl.md", "---\ntitle: 'T'\nstatus: 'draft'\ndeferred: [] # append-only\n---\n\nbody\n")
+    s = read_spec(tpl)
+    check("spec template: deferred [] ⇒ empty, count 0", s["frontmatter"]["deferred"] == [] and s["frontmatter"]["deferred_count"] == 0 and s["status"] == "draft")
+    check("spec template: no result heading", s["auto_run_result"] == {"present": False, "status": None, "blocking_condition": None})
 
-    # CLI guards (main-level): --to targets a status, so it is rejected everywhere
-    # except --mark-status — closing the footgun where `--mark-done KEY --to review`
-    # silently flipped to done. Bad combos exit 2 (argparse usage error).
-    sp = fresh(mark_fixture, ".yaml")
+    # A zero-indent block list (YAML-legal, LLM-written) still parses; the key after it survives.
+    zi = write("impl/spec-9-6-zero-indent.md", "---\nstatus: done\ndeferred:\n- summary: >-\n    Zero indent item\n  severity: low\nbaseline_revision: abc\n---\n")
+    s = read_spec(zi)
+    check("spec zero-indent list: parsed + following key kept", s["frontmatter"]["deferred_count"] == 1 and s["frontmatter"]["deferred"][0]["summary"] == "Zero indent item" and s["frontmatter"]["deferred"][0]["severity"] == "low" and s["frontmatter"]["baseline_revision"] == "abc")
 
-    def _main_exit(argv):
+    # Frontmatter parse failure ⇒ regex fallback + warning.
+    broken = write("impl/spec-9-4-broken.md", "---\nstatus: 'in-progress'\ntitle: x\n\nno closing fence\n")
+    s = read_spec(broken)
+    check("spec broken: fallback status + warning", s["status"] == "in-progress" and any("fallback" in w for w in s["parse_warnings"]))
+    s = read_spec(os.path.join(root, "impl", "missing.md"))
+    check("spec missing: exists false + error", s["exists"] is False and bool(s["error"]))
+    # parse_frontmatter helper (imported by deferred_ledger.py harvest).
+    pf, pw = parse_frontmatter(_SPEC_FIXTURE)
+    check("parse_frontmatter: deferred list of mappings", isinstance(pf, dict) and len(pf["deferred"]) == 2 and pf["deferred"][1]["summary"].startswith("Duplicate"))
+    # A triage-log heading with an ASCII hyphen and a bold count still parses.
+    hy = _SPEC_FIXTURE.replace("### 2026-08-12 — Review pass", "### 2026-08-13 - Review pass").replace("- patch: 3:", "- **patch**: 3:")
+    hp = write("impl/spec-9-5-hyphen.md", hy)
+    s = read_spec(hp)
+    check("spec hyphen heading: parsed", s["last_review_pass"]["date"] == "2026-08-13" and s["last_review_pass"]["patch"] == 3)
+
+    # ---- --find-spec ----------------------------------------------------- #
+    impl = os.path.join(root, "impl")
+    fs_sp = write("fs-sprint.yaml", "development_status:\n  epic-1: in-progress\n  1-3-plant-data-model: backlog\n  1-30-plant-export: backlog\n  2-6a-digest-delivery: backlog\n")
+
+    def touch(rel, status, mtime):
+        p = write(rel, f"---\ntitle: 't'\nstatus: '{status}'\n---\n\nbody\n")
+        os.utime(p, (mtime, mtime))
+        return p
+
+    t0 = time.time() - 1000
+    # single candidate
+    a = touch("fs/spec-1-3-plant-data-model.md", "ready-for-dev", t0)
+    fs_dir = os.path.join(root, "fs")
+    r, code = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: single", code == 0 and r["found"] is True and r["spec_path"] == a and r["status"] == "ready-for-dev" and r["ambiguous"] is False)
+    # 1-30 spec must not leak into 1-3 (and vice versa)
+    b = touch("fs/spec-1-30-plant-export.md", "ready-for-dev", t0)
+    r, _ = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: 1-3 vs 1-30 separated", r["spec_path"] == a and len(r["candidates"]) == 1)
+    r, _ = build_find_spec_result(fs_dir, "1-30-plant-export", fs_sp)
+    check("find: 1-30 own spec", r["spec_path"] == b)
+    # -2 collision sibling: newest mtime wins, sibling listed
+    a2 = touch("fs/spec-1-3-plant-data-model-2.md", "draft", t0 + 10)
+    r, code = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: -2 sibling newest wins", code == 0 and r["spec_path"] == a2 and r["siblings"] == [a] and r["found"] is True)
+    # done dropped when a non-done remains
+    touch("fs/spec-1-3-plant-data-model.md", "done", t0)
+    r, _ = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: done dropped, draft chosen", r["spec_path"] == a2 and r["siblings"] == [] and r["status"] == "draft")
+    # done-only ⇒ found (the done spec) — the orchestrator routes by status
+    os.unlink(a2)
+    r, _ = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: done-only ⇒ found with status done", r["found"] is True and r["status"] == "done" and r["spec_path"] == a)
+    # blocked + redo (different stem) ⇒ blocked dropped, redo chosen
+    os.unlink(a)
+    bl = touch("fs/spec-1-3-plant-model.md", "blocked", t0)
+    redo = touch("fs/spec-1-3-plant-data-model-redo.md", "draft", t0 + 5)
+    r, code = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: blocked dropped when a non-blocked remains", code == 0 and r["spec_path"] == redo)
+    # blocked-only ⇒ found (blocked)
+    os.unlink(redo)
+    r, code = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: blocked-only ⇒ found blocked", r["found"] is True and r["status"] == "blocked")
+    # two live specs with different stems ⇒ ambiguous hard-stop exit 1
+    x1 = touch("fs/spec-1-3-plant-data-model.md", "ready-for-dev", t0)
+    x2 = touch("fs/spec-1-3-plant-model.md", "ready-for-dev", t0)
+    r, code = build_find_spec_result(fs_dir, "1-3-plant-data-model", fs_sp)
+    check("find: different stems ⇒ ambiguous exit 1", code == 1 and r["ambiguous"] is True and r["hard_stop"] is True and r["found"] is False and len(r["candidates"]) == 2)
+    check("find: hard_stop_reason lists both", x1 in r["hard_stop_reason"] and x2 in r["hard_stop_reason"])
+    # suffix key
+    c = touch("fs/spec-2-6a-digest-delivery.md", "ready-for-dev", t0)
+    touch("fs/spec-2-6-digest.md", "ready-for-dev", t0)
+    r, code = build_find_spec_result(fs_dir, "2-6a-digest-delivery", fs_sp)
+    check("find: suffix key matches only its own", code == 0 and r["spec_path"] == c and len(r["candidates"]) == 1)
+    # none / missing dir / bad key
+    r, code = build_find_spec_result(fs_dir, "3-1-nothing")
+    check("find: none ⇒ found false, no hard-stop", code == 0 and r["found"] is False and r["hard_stop"] is False and r["candidates"] == [])
+    r, code = build_find_spec_result(os.path.join(root, "no-impl"), "3-1-nothing")
+    check("find: missing dir ⇒ found false + error", code == 0 and r["found"] is False and bool(r["error"]))
+    r, code = build_find_spec_result(fs_dir, "bogus")
+    check("find: bad key ⇒ hard_stop exit 1", code == 1 and r["hard_stop"] is True)
+    # without --sprint-status the reader still works
+    r, code = build_find_spec_result(fs_dir, "2-6a-digest-delivery")
+    check("find: no sprint file ok", code == 0 and r["spec_path"] == c)
+
+    # ---- --retro-verdict --------------------------------------------------- #
+    rdir = os.path.join(root, "retro")
+    r, code = build_retro_verdict_result(rdir, "1")
+    check("retro: missing dir ⇒ not found", code == 0 and r["found"] is False)
+    os.makedirs(rdir)
+    r, code = build_retro_verdict_result(rdir, "1")
+    check("retro: none ⇒ found false", code == 0 and r["found"] is False and r["verdict"] is None)
+    old = write("retro/epic-1-retro-2026-08-01.md", "---\nepic: 1\ndate: 2026-08-01\nverdict: accepted\ncriteria: declared\nheadless: false\n---\n# Retro\n")
+    new = write("retro/epic-1-retro-2026-08-14.md", "---\nepic: 1\ndate: '2026-08-14'\nverdict: rejected\ncriteria: profiled\nheadless: true\n---\n# Retro\n")
+    os.utime(old, (t0, t0))
+    os.utime(new, (t0 + 100, t0 + 100))
+    write("retro/epic-10-retro-2026-08-14.md", "---\nepic: 10\nverdict: accepted\n---\n")
+    r, code = build_retro_verdict_result(rdir, "1")
+    check("retro: newest by mtime, epic-10 not confused", code == 0 and r["doc"] == new and r["verdict"] == "rejected" and r["found"] is True)
+    check("retro: date/headless", r["date"] == "2026-08-14" and r["headless"] is True and r["epic"] == 1)
+    os.utime(old, (t0 + 200, t0 + 200))
+    r, _ = build_retro_verdict_result(rdir, "epic-1")
+    check("retro: mtime flip picks the other doc; epic-N arg", r["doc"] == old and r["verdict"] == "accepted" and r["headless"] is False)
+    bad = write("retro/epic-2-retro-x.md", "---\nepic: 2\nverdict: approved\n---\n")
+    r, _ = build_retro_verdict_result(rdir, "2")
+    check("retro: bad verdict ⇒ null + warning", r["verdict"] is None and r["warnings"] and r["found"] is True)
+    r, code = build_retro_verdict_result(rdir, "nope")
+    check("retro: bad epic arg ⇒ exit 2", code == 2)
+
+    # ---- CLI guards -------------------------------------------------------- #
+    def _main(argv):
+        out = io.StringIO()
         try:
-            with contextlib.redirect_stderr(io.StringIO()):
-                return main(argv)
-        except SystemExit as exc:  # parser.error -> exit 2
-            return exc.code
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                code = main(argv)
+        except SystemExit as exc:
+            return exc.code, out.getvalue()
+        return code, out.getvalue()
 
-    check("cli: --mark-done rejects --to", _main_exit(
-        ["--sprint-status", sp, "--mark-done", "1-3-plant-data-model", "--to", "review"]) == 2)
-    check("cli: --mark-done + --to leaves sprint untouched", slurp(sp) == mark_fixture)
-    check("cli: --mark-done and --mark-status mutually exclusive", _main_exit(
-        ["--sprint-status", sp, "--mark-done", "1-3-plant-data-model",
-         "--mark-status", "1-3-plant-data-model", "--to", "review"]) == 2)
-    check("cli: --mark-status requires --to", _main_exit(
-        ["--sprint-status", sp, "--mark-status", "1-3-plant-data-model"]) == 2)
-    check("cli: bare --to without a mark flag rejected", _main_exit(
-        ["--sprint-status", sp, "--to", "review"]) == 2)
+    code, out = _main(["--resolve", "1-2", "--sprint-status", sp])
+    check("cli: resolve ok json", code == 0 and json.loads(out)["story_key"] == "1-2-account-management")
+    code, out = _main(["--resolve", "9-9", "--sprint-status", sp])
+    check("cli: resolve not found exit 1", code == 1 and json.loads(out)["hard_stop"] is True)
+    code, out = _main(["--epic", "1", "--sprint-status", sp, "--planning-dir", plan])
+    check("cli: epic ok", code == 0 and json.loads(out)["epic_title"] == "Plant Care Core")
+    code, _ = _main(["--resolve", "1-2"])
+    check("cli: resolve requires --sprint-status", code == 2)
+    code, _ = _main(["--mark-status", "1-2-account-management", "--sprint-status", sp])
+    check("cli: mark-status requires --to", code == 2)
+    code, _ = _main(["--resolve", "1-2", "--sprint-status", sp, "--to", "done"])
+    check("cli: --to only with --mark-status", code == 2)
+    code, _ = _main(["--resolve", "1-2", "--sprint-status", sp, "--allow-regress"])
+    check("cli: --allow-regress only with --mark-status", code == 2)
+    code, _ = _main(["--resolve", "1-2", "--epic", "1", "--sprint-status", sp])
+    check("cli: two modes rejected", code == 2)
+    code, _ = _main(["--sprint-status", sp])
+    check("cli: no mode rejected", code == 2)
+    code, _ = _main(["--find-spec", "--story-key", "1-3-x"])
+    check("cli: find-spec requires --impl-dir", code == 2)
+    code, _ = _main(["--find-spec", "--impl-dir", fs_dir])
+    check("cli: find-spec requires --story-key", code == 2)
+    code, out = _main(["--find-spec", "--impl-dir", fs_dir, "--story-key", "2-6a-digest-delivery", "--sprint-status", fs_sp])
+    check("cli: find-spec ok", code == 0 and json.loads(out)["found"] is True)
+    code, out = _main(["--find-spec", "--impl-dir", fs_dir, "--story-key", "1-3-plant-data-model"])
+    check("cli: find-spec ambiguous exit 1", code == 1 and json.loads(out)["ambiguous"] is True)
+    code, out = _main(["--spec", spec_p])
+    check("cli: spec ok", code == 0 and json.loads(out)["status"] == "done")
+    code, out = _main(["--spec", os.path.join(root, "nope.md")])
+    check("cli: spec missing exit 1", code == 1 and json.loads(out)["exists"] is False)
+    code, _ = _main(["--retro-verdict", "--impl-dir", rdir])
+    check("cli: retro-verdict requires --epic", code == 2)
+    code, out = _main(["--retro-verdict", "--impl-dir", rdir, "--epic", "1"])
+    check("cli: retro-verdict ok", code == 0 and json.loads(out)["found"] is True)
+    code, _ = _main(["--retro-verdict", "--epic", "1"])
+    check("cli: retro-verdict requires --impl-dir", code == 2)
+    code, _ = _main(["--spec", spec_p, "--planning-dir", plan])
+    check("cli: --planning-dir only with resolve/epic", code == 2)
+    ms = fresh(mark_fixture, "cli-ms.yaml")
+    code, out = _main(["--mark-status", "1-2-account-management", "--to", "done", "--sprint-status", ms])
+    check("cli: mark-status ok", code == 0 and json.loads(out)["sprint_updated"] is True)
+    code, out = _main(["--mark-status", "1-2-account-management", "--to", "backlog", "--sprint-status", ms])
+    check("cli: mark-status regress exit 1", code == 1 and "refusing to regress" in json.loads(out)["error"])
+    code, out = _main(["--mark-status", "1-2-account-management", "--to", "backlog", "--sprint-status", ms, "--allow-regress"])
+    check("cli: mark-status --allow-regress", code == 0 and json.loads(out)["sprint_updated"] is True)
 
-    for p in tmp_paths:
-        os.unlink(p)
+    shutil.rmtree(root, ignore_errors=True)
 
     if failures:
         print("SELF-TEST FAILED:", ", ".join(failures), file=sys.stderr)
@@ -823,66 +1879,90 @@ development_status:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="auto-bmad sprint-status reader")
-    parser.add_argument("--sprint-status", help="path to sprint-status.yaml")
-    parser.add_argument("--story", help="explicit story id (N-N or N-N-slug)")
-    parser.add_argument("--epic", metavar="N", help="enumerate all stories in epic N (N or epic-N), for the epic pipeline")
-    parser.add_argument("--impl-dir", default="", help="implementation_artifacts dir (for absolute story_file)")
-    parser.add_argument("--mark-done", metavar="KEY", help="flip KEY's development_status entry to done (Phase 9 BMAD-status flip)")
-    parser.add_argument(
-        "--mark-status",
-        metavar="KEY",
-        help="flip KEY's development_status entry to --to STATUS (Phase 5 review write-back; preferred over LLM-only sync)",
-    )
-    parser.add_argument(
-        "--to",
-        metavar="STATUS",
-        help="with --mark-status: target status (backlog|ready-for-dev|in-progress|review|done)",
-    )
-    parser.add_argument("--story-file", help="with --mark-done/--mark-status: also flip this story file's Status line")
+    parser = argparse.ArgumentParser(description="auto-bmad story-source adapter (sprint-status / build-auto spec reader + status flip)")
+    parser.add_argument("--resolve", metavar="REF", help="resolve an explicit story reference (E-S, E.S, E-Sx, full key, or slug fragment)")
+    parser.add_argument("--epic", metavar="N", help="enumerate epic N (N or epic-N); with --retro-verdict: the epic number to read")
+    parser.add_argument("--mark-status", metavar="KEY", help="flip KEY's development_status entry to --to STATUS")
+    parser.add_argument("--to", metavar="STATUS", help="with --mark-status: target status (backlog|ready-for-dev|in-progress|review|done)")
+    parser.add_argument("--allow-regress", action="store_true", help="with --mark-status: allow a lower-ranked target status")
+    parser.add_argument("--find-spec", action="store_true", help="locate the story's bmad-build-auto spec (needs --impl-dir + --story-key)")
+    parser.add_argument("--spec", metavar="PATH", help="read a bmad-build-auto spec (frontmatter + Auto Run Result + last review pass)")
+    parser.add_argument("--retro-verdict", action="store_true", help="read the newest epic-N-retro-*.md verdict (needs --impl-dir + --epic)")
+    parser.add_argument("--sprint-status", metavar="PATH", help="path to sprint-status.yaml")
+    parser.add_argument("--planning-dir", metavar="DIR", help="with --resolve/--epic: planning_artifacts dir (story/epic titles from the epics docs)")
+    parser.add_argument("--impl-dir", metavar="DIR", help="with --find-spec/--retro-verdict: implementation_artifacts dir")
+    parser.add_argument("--story-key", metavar="KEY", help="with --find-spec: the sprint-status story key")
     parser.add_argument("--self-test", action="store_true", help="run built-in fixtures and exit")
     args = parser.parse_args(argv)
 
     if args.self_test:
         return _run_self_test()
 
-    if not args.sprint_status:
-        parser.error("--sprint-status is required (or use --self-test)")
+    modes = []
+    if args.resolve is not None:
+        modes.append("resolve")
+    if args.mark_status is not None:
+        modes.append("mark-status")
+    if args.find_spec:
+        modes.append("find-spec")
+    if args.spec is not None:
+        modes.append("spec")
+    if args.retro_verdict:
+        modes.append("retro-verdict")
+    if args.epic is not None and not args.retro_verdict:
+        modes.append("epic")
+    if len(modes) != 1:
+        parser.error("exactly one mode is required: --resolve | --epic | --mark-status | --find-spec | --spec | --retro-verdict | --self-test")
+    mode = modes[0]
 
-    if args.epic is not None:
-        if args.mark_done or args.mark_status or args.story or args.story_file:
-            parser.error("--epic cannot be combined with --story/--mark-done/--mark-status/--story-file")
-        result = build_epic_result(args.sprint_status, args.epic, args.impl_dir)
+    if args.to is not None and mode != "mark-status":
+        parser.error("--to is only valid with --mark-status")
+    if args.allow_regress and mode != "mark-status":
+        parser.error("--allow-regress is only valid with --mark-status")
+    if args.planning_dir is not None and mode not in ("resolve", "epic"):
+        parser.error("--planning-dir is only valid with --resolve/--epic")
+    if args.impl_dir is not None and mode not in ("find-spec", "retro-verdict"):
+        parser.error("--impl-dir is only valid with --find-spec/--retro-verdict")
+    if args.story_key is not None and mode != "find-spec":
+        parser.error("--story-key is only valid with --find-spec")
+    if args.sprint_status is not None and mode in ("spec", "retro-verdict"):
+        parser.error("--sprint-status is not valid with --spec/--retro-verdict")
+
+    def emit(result, code=0):
         print(json.dumps(result, indent=2))
-        return 0
+        return code
 
-    if args.mark_done and args.mark_status:
-        parser.error("--mark-done and --mark-status are mutually exclusive")
-
-    if args.mark_status:
+    if mode == "resolve":
+        if not args.sprint_status:
+            parser.error("--resolve requires --sprint-status")
+        return emit(*build_resolve_result(args.sprint_status, args.resolve, args.planning_dir))
+    if mode == "epic":
+        if not args.sprint_status:
+            parser.error("--epic requires --sprint-status")
+        return emit(build_epic_result(args.sprint_status, args.epic, args.planning_dir), 0)
+    if mode == "mark-status":
+        if not args.sprint_status:
+            parser.error("--mark-status requires --sprint-status")
         if not args.to:
             parser.error("--mark-status requires --to STATUS")
-        result, code = mark_status(args.sprint_status, args.mark_status, args.to, args.story_file)
-        print(json.dumps(result, indent=2))
-        return code
-
-    # --to targets a status, which only --mark-status honours. Reject it before the
-    # --mark-done branch so `--mark-done KEY --to review` can't silently flip to done
-    # (that branch ignores --to) — error out instead of surprising the caller.
-    if args.to:
-        parser.error("--to is only valid with --mark-status")
-
-    if args.mark_done:
-        result, code = mark_done(args.sprint_status, args.mark_done, args.story_file)
-        print(json.dumps(result, indent=2))
-        return code
-    if args.story_file:
-        parser.error("--story-file is only valid with --mark-done or --mark-status")
-
-    result = build_result(args.sprint_status, args.story, args.impl_dir)
-    print(json.dumps(result, indent=2))
-    return 0
+        return emit(*mark_status(args.sprint_status, args.mark_status, args.to, args.allow_regress))
+    if mode == "find-spec":
+        if not args.impl_dir or not args.story_key:
+            parser.error("--find-spec requires --impl-dir DIR and --story-key KEY")
+        return emit(*build_find_spec_result(args.impl_dir, args.story_key, args.sprint_status))
+    if mode == "spec":
+        result = read_spec(args.spec)
+        return emit(result, 0 if result["exists"] else 1)
+    if mode == "retro-verdict":
+        if not args.impl_dir or args.epic is None:
+            parser.error("--retro-verdict requires --impl-dir DIR and --epic N")
+        return emit(*build_retro_verdict_result(args.impl_dir, args.epic))
+    parser.error("no mode selected")  # unreachable
+    return 2
 
 
 if __name__ == "__main__":

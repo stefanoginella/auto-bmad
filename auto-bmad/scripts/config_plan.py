@@ -4,22 +4,18 @@ and a project's runtime ``config.yaml``.
 
 The runtime config (``{output_folder}/auto-bmad/config.yaml``) is seeded **once**
 at first run by copying the ``profiles:`` and ``phase_profiles:`` blocks from
-``assets/agents/profiles.yaml`` verbatim, and stamping ``profiles_source_version``
+``assets/profiles.yaml`` verbatim, and stamping ``profiles_source_version``
 with the module version. A later module update ships NEW keys (e.g. a new
-``phase_profiles`` mapping like ``tea_triage``) into the asset — but nothing ever
-re-touches the runtime copy, so the project silently runs on a stale snapshot.
+``phase_profiles`` mapping like ``followup_review``) into the asset — but nothing
+ever re-touches the runtime copy, so the project silently runs on a stale snapshot.
 
-``render-agents.py --check`` cannot catch this: it only re-renders the four
-``ab-*`` *agent files* and never reads ``phase_profiles`` at all (its parser stops
-at the next top-level key). So a phase whose ``phase_profiles`` mapping is missing
-from the runtime config has no profile to resolve, and no existing check flags it.
+Nothing else reads ``phase_profiles`` before a phase resolves its profile at spawn
+time, so a phase whose mapping is missing from the runtime config has no profile to
+resolve, and no other check flags it. This script closes that gap: it diffs the
+asset's ``profiles`` / ``phase_profiles`` *keys* against the runtime config's, and
+compares ``profiles_source_version`` against the installed ``module_version``.
 
-This script closes that gap on a **different axis** from the agent-file freshness
-check: it diffs the asset's ``profiles`` / ``phase_profiles`` *keys* against the
-runtime config's, and compares ``profiles_source_version`` against the installed
-``module_version``.
-
-Two modes:
+Two modes (plus ``--reset``, see below):
   --check   read-only; report what drifted. Exit 0 fresh, 1 drift, 2 usage error.
   --apply   additively heal: append asset keys the config is MISSING (never touch
             or overwrite a key the user already has — retunes are preserved), then
@@ -30,25 +26,44 @@ What ``--apply`` heals automatically (the realistic, safe-to-append cases):
     (appended as ``  key: value`` lines at the end of that block);
   * whole ``profiles`` entries present in the asset but absent from the config
     (the asset's raw block is copied verbatim to the end of the ``profiles:`` block);
-  * **constant-default setup-block keys** (``delegation``/``tea``/``git``/``code_review``)
+  * **constant-default setup-block keys** (``delegation``/``tea``/``git``/``code_review``/``build``)
     present in the second asset ``assets/config-defaults.yaml`` but absent from the config,
     at any depth — a missing scalar, a missing sub-block, or a missing whole block (see
     ``plan_setup``). The setup blocks are otherwise SETUP ANSWERS with no asset source, so a
     new setup key shipped by an update never reaches an existing config; this closes that gap.
     Append-only like the above (a key already present is never touched), and that asset
     deliberately excludes environment-detected fields (``git.base_branch``,
-    ``delegation.target_tools``, ...) so the heal can't bake in a wrong static guess.
+    ``code_review.cross_model_layer``, ...) so the heal can't bake in a wrong static guess.
 What it reports but does NOT rewrite (``manual_review`` — rare, value-bearing, and
 a mid-block insert would risk mangling a user-edited profile): sub-keys missing
 from a profile that already exists in the config (e.g. the asset added a new tool
-block or metadata field to an existing profile). The orchestrator surfaces these.
+block to an existing profile). The orchestrator surfaces these.
 
-Parsing is dependency-free (same block-structured spirit as ``render-agents.py`` /
+Stale keys — a removed ``phase_profiles`` mapping or a per-profile sub-key the asset's
+profile shape no longer carries (an old persona string, say) — are IGNORED, never stripped
+by ``--check``/``--apply``: reported informationally as ``stale_phase_profiles`` /
+``stale_profile_keys`` (not part of the drift verdict); only ``--reset`` prunes them.
+Unknown top-level keys and unknown setup-block keys are likewise left alone.
+
+Profile names are free-form: any name works (custom profiles are first-class — the heal
+passes them through untouched, ``custom_profiles`` reports them, a whole-block reset prunes
+them, a single-profile reset keeps them). Profiles carry model/effort blocks ONLY
+(``claude.model``/``claude.effort``, ``codex.model``/``codex.reasoning_effort``,
+``opencode.model``/``opencode.variant``) — no persona text.
+
+``--reset [SCOPE] [--write]`` restores the shipped ``profiles`` / ``phase_profiles`` (never
+the setup blocks); its JSON carries ``layers_sync_needed`` — true when the plan changes any
+profile (or prunes one) or remaps ``phase_profiles.security_layer`` /
+``phase_profiles.cross_model_layer``, i.e. when the review-layers TOML that bakes those
+profiles' models must be re-synced (``build_auto_custom.py --apply``).
+
+Parsing is dependency-free (same block-structured spirit as ``cli_delegate.py`` /
 ``story_plan.py``) so no PyYAML is needed. Output: a single JSON object on stdout.
 
 Usage:
     config_plan.py --check --config FILE [--asset-profiles FILE] [--asset-config-defaults FILE] [--module-yaml FILE | --module-version X.Y.Z]
     config_plan.py --apply --config FILE [--asset-profiles FILE] [--asset-config-defaults FILE] [--module-yaml FILE | --module-version X.Y.Z]
+    config_plan.py --reset [SCOPE] [--write] --config FILE [--asset-profiles FILE] [--module-yaml FILE | --module-version X.Y.Z]
     config_plan.py --self-test
 """
 from __future__ import annotations
@@ -142,8 +157,9 @@ def parse_profiles_blocks(lines: Sequence[str], span: tuple[int, int] | None) ->
     ``start``/``end`` bound the profile's raw lines (``end`` exclusive, trailing
     blank/comment lines trimmed) so a whole missing profile can be copied verbatim.
     ``keys`` is the set of structural sub-keys present (``meta:<k>`` for a per-profile
-    scalar like ``description``; ``<tool>:<k>`` for a tool sub-key like ``claude:model``)
-    — used to spot sub-keys an existing profile is missing.
+    scalar — the shipped asset carries none, but an upgraded config may still hold stale
+    persona strings; ``<tool>:<k>`` for a tool sub-key like ``claude:model``) — used to
+    spot sub-keys an existing profile is missing, and stale ones it still carries.
     """
     profiles: dict = {}
     if span is None:
@@ -217,7 +233,7 @@ def parse_tree(lines: Sequence[str], start: int, end: int, indent: int) -> dict:
     recursively-parsed sub-tree (empty for a scalar).
 
     Dependency-free and block-structured (same spirit as ``parse_profiles_blocks``); used to
-    additively heal the setup blocks (delegation/tea/git/code_review) whose only source of
+    additively heal the setup blocks (delegation/tea/git/code_review/build) whose only source of
     new-key defaults is ``assets/config-defaults.yaml``.
     """
     headers: list[int] = []
@@ -362,11 +378,14 @@ def setup_detail(cfg_lines: Sequence[str], setup_lines: Sequence[str], missing_p
 # the asset but a hand-set MAP can't be diffed against the scalar default either; ``git.mode`` is the
 # forced detect|remote|local toggle (a forced ``local``/``remote`` is a deliberate behavioural choice).
 # config-check surfaces their CURRENT values separately so the user sees every deliberate deviation —
-# with the note that the heal never touches them. PURELY-detected env facts (delegation.host/mode,
-# target_tools, git.base_branch) are excluded on purpose: they are environment state re-derived each run,
-# not a chosen "deviation". Allowlist, not a rule, so the surface stays small + stable; lockstep with the
-# note in references/state-and-resume.md (config-check).
-SETUP_ANSWER_PATHS = ("delegation.cli_phases", "tea.enabled", "tea.framework_ci", "git.mode")
+# with the note that the heal never touches them. ``code_review.cross_model_layer`` is env-DETECTED at
+# first run (the first external CLI on PATH that is not the host, else "") but is a real behavioural
+# choice thereafter (which tool reviews cross-model, or none), so it is echoed too. PURELY-detected env
+# facts (delegation.host/mode, git.base_branch) are excluded on purpose: they are environment state
+# re-derived each run, not a chosen "deviation". Allowlist, not a rule, so the surface stays small +
+# stable; lockstep with the note in references/state-and-resume.md (config-check).
+SETUP_ANSWER_PATHS = ("delegation.cli_phases", "tea.enabled", "tea.framework_ci", "git.mode",
+                      "code_review.cross_model_layer")
 
 
 def collect_setup_answers(cfg_lines: Sequence[str]) -> list:
@@ -409,7 +428,7 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
     """Diff the asset's profiles/phase_profiles keys against the config's.
 
     When ``setup_text`` (the ``config-defaults.yaml`` asset) is supplied, also diff its
-    constant-default setup-block keys (delegation/tea/git/code_review): the dotted paths the config
+    constant-default setup-block keys (delegation/tea/git/code_review/build): the dotted paths the config
     is MISSING go in ``missing_setup`` (these heal append-only via ``apply()``), and the two
     human-facing lists for the Phase 0 echo go in ``added_setup`` (``[{path, value}]``) and
     ``kept_setup`` (``[{path, value, default}]`` — the user's preserved setup customisations).
@@ -421,13 +440,21 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
     The "what you've customised vs shipped defaults" axis for the PROFILE surface (read-only, for
     the ``config-check`` preview — the heal never touches it) goes in three lists:
     ``customized_profiles`` (``[{profile, key, value, default}]`` — a profile **model/effort** leaf
-    retuned away from the asset default; persona ``meta:`` keys are excluded, since the heal never
-    overwrites them and a stale older-version seed would otherwise read as a false customisation),
-    ``custom_profiles`` (``[name]`` — whole ``ab-*`` profiles the user
-    ADDED that the asset doesn't ship), and ``customized_phase_profiles``
+    retuned away from the asset default; per-profile ``meta:`` scalars are excluded — the asset ships
+    none, and a stale persona string left in an upgraded config is not a retune),
+    ``custom_profiles`` (``[name]`` — whole profiles the user ADDED that the asset doesn't ship; any
+    name is valid), and ``customized_phase_profiles``
     (``[{key, value, default}]`` — a phase remapped to a non-default profile). ``missing_profiles``
     additionally carries ``missing_profile_summaries`` (``{name: "claude: …/…, …"}``) so a
     not-yet-present new profile can show the defaults it would ship with.
+
+    Stale surface (informational — never part of the drift verdict, ignored by the heal, pruned
+    only by ``--reset``): ``stale_phase_profiles`` (``[key]`` — mappings the config has that the
+    asset no longer ships) and ``stale_profile_keys`` (``[{profile, key}]`` — sub-keys a config
+    profile carries that the asset's profile shape does not, in the same key vocabulary as
+    ``manual_review``/``customized_profiles``: ``meta:<k>`` for a per-profile persona scalar such
+    as ``meta:role_blurb``, ``<tool>:<k>`` for a tool sub-key; a custom profile is compared
+    against the shipped field set).
     """
     cfg_lines = config_text.splitlines(keepends=True)
     asset_lines = asset_text.splitlines(keepends=True)
@@ -468,7 +495,7 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
                 manual_review.append({"profile": name, "missing_key": key})
 
     # --- The "what you've customised vs shipped defaults" axis (read-only; for the config-check
-    # preview). Mirrors kept_setup (which covers the delegation/tea/git/code_review setup leaves)
+    # preview). Mirrors kept_setup (which covers the delegation/tea/git/code_review/build setup leaves)
     # for the asset-sourced PROFILE surface. A present-but-different value is a customisation; a
     # MISSING key is NOT (that is manual_review's job — never double-report it here). ---
     customized_profiles: list[dict] = []
@@ -478,10 +505,9 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
         a_vals = _profile_leaf_values(asset_lines, ainfo["start"], ainfo["end"])
         c_vals = _profile_leaf_values(cfg_lines, cfg_prof[name]["start"], cfg_prof[name]["end"])
         for key, dv in a_vals.items():
-            # Persona meta keys (description/role_blurb/status_example) are EXCLUDED: the heal never
-            # overwrites them, so an older-version seed whose persona text has since evolved in the
-            # asset would read as a "customisation" the user never made. "Customised a profile" means
-            # a model/effort retune — so mirror missing_profile_summaries and report only the tool tiers.
+            # Per-profile meta scalars are EXCLUDED (the shipped asset carries none — profiles are
+            # model/effort only — so this only guards a future/custom asset). "Customised a profile"
+            # means a model/effort retune: mirror missing_profile_summaries, report only the tool tiers.
             if key.startswith("meta:"):
                 continue
             cv = c_vals.get(key)
@@ -490,6 +516,19 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
     custom_profiles = [name for name in cfg_prof if name not in asset_prof]
     customized_phase_profiles = [{"key": k, "value": cfg_pp[k], "default": asset_pp[k]}
                                  for k in asset_pp if k in cfg_pp and cfg_pp[k] != asset_pp[k]]
+
+    # --- Stale surface (informational). A removed phase mapping / persona sub-key left in an upgraded
+    # config is harmless: the orchestrator simply never reads it. Report it so config-check can show
+    # "ignored" leftovers and point at `reset-defaults` — never strip it here (append-only heal). ---
+    stale_phase_profiles = [k for k in cfg_pp if k not in asset_pp]
+    shipped_shape: set = set().union(*(i["keys"] for i in asset_prof.values())) if asset_prof else set()
+    stale_profile_keys: list[dict] = []
+    for name, cinfo in cfg_prof.items():
+        shape = asset_prof[name]["keys"] if name in asset_prof else shipped_shape
+        for key in sorted(cinfo["keys"] - shape):
+            if key.endswith(":"):  # a tool *block* header alone — its sub-keys cover it
+                continue
+            stale_profile_keys.append({"profile": name, "key": key})
 
     cver = _ver_tuple(config_version)
     mver = _ver_tuple(module_version)
@@ -508,6 +547,8 @@ def analyze(config_text: str, asset_text: str, config_version: str | None,
         "customized_profiles": customized_profiles,
         "custom_profiles": custom_profiles,
         "customized_phase_profiles": customized_phase_profiles,
+        "stale_phase_profiles": stale_phase_profiles,
+        "stale_profile_keys": stale_profile_keys,
         "manual_review": manual_review,
         "version": {
             "config": config_version,
@@ -533,7 +574,7 @@ def apply(config_text: str, asset_text: str, config_version: str | None,
     Heals three append-only axes (never overwriting an existing value): missing whole
     ``profiles`` blocks + missing ``phase_profiles`` keys (from ``asset_text`` /
     ``profiles.yaml``), and, when ``setup_text`` (``config-defaults.yaml``) is supplied,
-    missing constant-default setup-block keys (delegation/tea/git/code_review) at any depth.
+    missing constant-default setup-block keys (delegation/tea/git/code_review/build) at any depth.
     """
     info = analyze(config_text, asset_text, config_version, module_version, setup_text)
     lines = config_text.splitlines(keepends=True)
@@ -570,7 +611,7 @@ def apply(config_text: str, asset_text: str, config_version: str | None,
             block = [f"  {k}: {v}\n" for k, v in info["missing_phase_profiles"].items()]
             inserts.append((anchor, 2, block))
 
-    # Missing setup-block keys (delegation/tea/git/code_review) -> append-only, nested-aware.
+    # Missing setup-block keys (delegation/tea/git/code_review/build) -> append-only, nested-aware.
     healed_setup: list = []
     if setup_text is not None:
         setup_inserts, healed_setup = plan_setup(lines, setup_text.splitlines(keepends=True))
@@ -628,7 +669,7 @@ def _restamp_version(lines: list[str], new_version: str) -> dict:
 # reset OVERWRITES the profiles / phase_profiles blocks back to the asset      #
 # (a whole-block scope also PRUNES profiles the asset no longer ships), scoped, #
 # and NEVER touches the setup blocks (delegation / tea / git /                 #
-# code_review). config-defaults.yaml DOES ship defaults for those blocks, so    #
+# code_review / build). config-defaults.yaml DOES ship defaults for them, so    #
 # the additive heal can append a constant-default key they lack — but reset is  #
 # an OVERWRITE, and overwriting a setup block would clobber a user's setup      #
 # answer (an interviewed/detected value the heal deliberately leaves alone).    #
@@ -636,6 +677,11 @@ def _restamp_version(lines: list[str], new_version: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 RESET_BLOCK_SCOPES = ("both", "profiles", "phase_profiles")
+
+# The phase_profiles keys whose profile the review-layers TOML (`_bmad/custom/bmad-build-auto.toml`,
+# managed by build_auto_custom.py) bakes model + effort from. Remapping one of these (or changing
+# any profile) means that TOML is stale until re-synced => `layers_sync_needed`.
+LAYER_PHASE_KEYS = ("security_layer", "cross_model_layer")
 
 
 def _profile_leaf_values(lines: Sequence[str], start: int, end: int) -> dict:
@@ -715,6 +761,12 @@ def reset(config_text: str, asset_text: str, config_version: str | None,
     Restamp rule: only a **full** reset (``both``) restamps ``profiles_source_version``
     to ``module_version`` — a partial reset can't honestly claim the whole
     asset-sourced surface matches that version, so it leaves the stamp.
+
+    ``layers_sync_needed`` is true iff the plan changes any profile leaf (incl. dropping a
+    stale sub-key), prunes a profile, or remaps ``phase_profiles.security_layer`` /
+    ``phase_profiles.cross_model_layer`` — the surface the review-layers TOML bakes model +
+    effort from (``build_auto_custom.py --apply`` must then re-run). Other phase remaps
+    are read at spawn time and need no sync.
     """
     cfg_lines = config_text.splitlines(keepends=True)
     asset_lines = asset_text.splitlines(keepends=True)
@@ -776,7 +828,12 @@ def reset(config_text: str, asset_text: str, config_version: str | None,
             if k not in asset_pp:
                 would_change.append({"block": "phase_profiles", "key": k, "current": cv, "default": None})
 
-    render_needed = any("profile" in c for c in would_change) or bool(removed_profiles)
+    layers_sync_needed = (
+        any("profile" in c for c in would_change)
+        or bool(removed_profiles)
+        or any(c.get("block") == "phase_profiles" and c["key"] in LAYER_PHASE_KEYS
+               for c in would_change)
+    )
 
     # --- build the rewritten text ---
     # In-place/anchored edits (start < end_exclusive) applied bottom-up; whole-block
@@ -863,7 +920,7 @@ def reset(config_text: str, asset_text: str, config_version: str | None,
         "scope": sc,
         "would_change": would_change,
         "removed_profiles": removed_profiles,
-        "render_needed": render_needed,
+        "layers_sync_needed": layers_sync_needed,
         "version_restamp": restamped,
         "new_text": "".join(cfg_lines),
     }
@@ -892,7 +949,7 @@ def reset_to_file(config_path: Path, asset_path: Path, module_version: str | Non
         "scope": res["scope"],
         "would_change": res["would_change"],
         "removed_profiles": res["removed_profiles"],
-        "render_needed": res["render_needed"],
+        "layers_sync_needed": res["layers_sync_needed"],
         "version_restamp": res["version_restamp"],
         "backup": backup,
         "config_path": str(config_path),
@@ -900,7 +957,7 @@ def reset_to_file(config_path: Path, asset_path: Path, module_version: str | Non
 
 
 def _default_asset_profiles() -> Path:
-    return Path(__file__).resolve().parent.parent / "assets" / "agents" / "profiles.yaml"
+    return Path(__file__).resolve().parent.parent / "assets" / "profiles.yaml"
 
 
 def _default_setup_defaults() -> Path:
@@ -926,25 +983,82 @@ def _run_self_test() -> int:
     asset = _default_asset_profiles()
     assert asset.is_file(), f"shipped profiles.yaml missing at {asset}"
     asset_text = asset.read_text(encoding="utf-8")
+    a_lines = asset_text.splitlines(keepends=True)
 
-    # The shipped asset must define the canonical phase_profiles keys + 4 profiles.
-    a_pp = parse_phase_profiles(asset_text.splitlines(keepends=True), find_block(asset_text.splitlines(keepends=True), "phase_profiles"))
-    for k in ("create_story", "dev_story", "tea_triage", "tea_per_story", "tea_epic", "project_context", "retrospective"):
-        assert k in a_pp, f"asset phase_profiles missing {k}: {sorted(a_pp)}"
-    a_prof = parse_profiles_blocks(asset_text.splitlines(keepends=True), find_block(asset_text.splitlines(keepends=True), "profiles"))
-    for name in ("ab-deep", "ab-standard", "ab-alt-deep", "ab-alt-standard", "ab-security", "ab-verification"):
-        assert name in a_prof, f"asset profiles missing {name}"
-        assert "claude:model" in a_prof[name]["keys"], a_prof[name]["keys"]
-        assert "codex:reasoning_effort" in a_prof[name]["keys"], a_prof[name]["keys"]
-        # opencode block (model-only; ships blank) — the key must be recognised even with an empty value.
-        assert "opencode:model" in a_prof[name]["keys"], a_prof[name]["keys"]
+    # ----------------------------------------------------------------------- #
+    # Shipped asset invariants (lockstep with references/state-and-resume.md).  #
+    # ----------------------------------------------------------------------- #
+    # The asset must define EXACTLY the ten phase_profiles keys ...
+    a_pp = parse_phase_profiles(a_lines, find_block(a_lines, "phase_profiles"))
+    PHASE_KEYS = ("build", "followup_review", "security_layer", "cross_model_layer", "tea_triage",
+                  "tea_per_story", "tea_epic", "tea_epic_audit", "retrospective", "deferred_reconcile")
+    assert set(a_pp) == set(PHASE_KEYS), f"asset phase_profiles must be exactly {PHASE_KEYS}: {sorted(a_pp)}"
+    assert set(LAYER_PHASE_KEYS).issubset(set(a_pp)), LAYER_PHASE_KEYS
+    # ... and EXACTLY the five shipped profiles, each model/effort ONLY (no persona strings — D12).
+    a_prof = parse_profiles_blocks(a_lines, find_block(a_lines, "profiles"))
+    PROFILE_NAMES = ("ab-deep", "ab-standard", "ab-alt-deep", "ab-alt-standard", "ab-security")
+    LEAF_KEYS = ("claude:model", "claude:effort", "codex:model", "codex:reasoning_effort",
+                 "opencode:model", "opencode:variant")
+    assert set(a_prof) == set(PROFILE_NAMES), f"asset profiles must be exactly {PROFILE_NAMES}: {sorted(a_prof)}"
+    for name in PROFILE_NAMES:
+        keys = a_prof[name]["keys"]
+        for lk in LEAF_KEYS:
+            # opencode.model/variant ship BLANK — the keys must be recognised even with an empty value.
+            assert lk in keys, f"asset profile {name} missing {lk}: {sorted(keys)}"
+        assert not any(k.startswith("meta:") for k in keys), \
+            f"asset profile {name} must carry NO per-profile persona/meta scalar (model/effort only): {sorted(keys)}"
+        assert keys - {"claude:", "codex:", "opencode:"} == set(LEAF_KEYS), \
+            f"asset profile {name} shape drifted from the documented six leaves: {sorted(keys)}"
+        vals = _profile_leaf_values(a_lines, a_prof[name]["start"], a_prof[name]["end"])
+        assert vals["claude:model"] and vals["claude:effort"] and vals["codex:model"] and vals["codex:reasoning_effort"], vals
+        assert vals["opencode:model"] == "" and vals["opencode:variant"] == "", f"opencode must ship BLANK (inherit): {vals}"
+    # Every phase maps to a shipped profile.
+    for k, v in a_pp.items():
+        assert v in a_prof, f"phase_profiles.{k} -> unknown profile {v!r}"
+    # No stale names may survive in the shipped asset (removed-key policy).
+    for gone in ("ab-verification", "description:", "role_blurb:", "status_example:", "create_story", "dev_story",
+                 "project_context", "uat:", "code_review_"):
+        assert gone not in asset_text, f"removed name {gone!r} must not appear in the shipped profiles.yaml"
 
     # find_block: blank lines / comments are transparent; next top-level key ends it.
     sample = "version: 1\nphase_profiles:\n  a: x\n\n  # note\n  b: y\ngit:\n  mode: auto\n".splitlines(keepends=True)
     sp = find_block(sample, "phase_profiles")
     assert sp is not None and parse_phase_profiles(sample, sp) == {"a": "x", "b": "y"}, sp
 
-    # --- A config seeded from an OLDER snapshot: missing tea_triage, older version. ---
+    # --- fixture helpers: retune / drop ONE tool leaf of ONE profile by position (robust to inline
+    # comments in the asset — an ab-deep leaf line may carry a trailing `# …` note). ---
+    def _leaf_line(text: str, profile: str, tool: str, key: str) -> tuple[list[str], int]:
+        ls = text.splitlines(keepends=True)
+        prof = parse_profiles_blocks(ls, find_block(ls, "profiles"))
+        p = prof[profile]
+        cur_tool = None
+        for i in range(p["start"] + 1, p["end"]):
+            if _is_blank_or_comment(ls[i]):
+                continue
+            ind, s = _indent(ls[i]), _strip_comment(ls[i].strip())
+            if ind == 4 and s.endswith(":"):
+                cur_tool = s[:-1].strip()
+            elif ind >= 6 and cur_tool == tool and s.partition(":")[0].strip() == key:
+                return ls, i
+        raise AssertionError(f"fixture: {profile}.{tool}.{key} not found")
+
+    def _set_leaf(text: str, profile: str, tool: str, key: str, value: str) -> str:
+        ls, i = _leaf_line(text, profile, tool, key)
+        ls[i] = f"      {key}: {value}\n"
+        return "".join(ls)
+
+    def _drop_leaf(text: str, profile: str, tool: str, key: str) -> str:
+        ls, i = _leaf_line(text, profile, tool, key)
+        del ls[i]
+        return "".join(ls)
+
+    def _leaf(text: str, profile: str) -> dict:
+        ls = text.splitlines(keepends=True)
+        prof = parse_profiles_blocks(ls, find_block(ls, "profiles"))
+        return _profile_leaf_values(ls, prof[profile]["start"], prof[profile]["end"])
+
+    # --- A config seeded from an OLDER snapshot: persona strings (removed keys), a stale phase
+    # mapping (`dev_story`), missing new mappings + profiles, older version. ---
     stale_cfg = (
         'version: 1\n'
         'profiles_source_version: "0.8.0"  # seeded snapshot\n'
@@ -966,8 +1080,6 @@ def _run_self_test() -> int:
         '      variant: ""\n'
         '  ab-standard:\n'
         '    description: "infra"\n'
-        '    role_blurb: "infra work"\n'
-        '    status_example: "ok"\n'
         '    claude:\n'
         '      model: opus\n'
         '      effort: high\n'
@@ -978,8 +1090,8 @@ def _run_self_test() -> int:
         '      model: ""\n'
         '      variant: ""\n'
         'phase_profiles:\n'
-        '  create_story: ab-deep\n'
-        '  dev_story: ab-deep\n'
+        '  build: ab-deep\n'
+        '  dev_story: ab-deep\n'      # REMOVED mapping left behind — ignored, never stripped by the heal
         'git:\n'
         '  mode: auto\n'
     )
@@ -988,21 +1100,29 @@ def _run_self_test() -> int:
     pub = _public(info)
     assert "tea_triage" in pub["missing_phase_profiles"], pub["missing_phase_profiles"]
     assert pub["missing_phase_profiles"]["tea_triage"] == "ab-alt-standard", pub
-    # ab-alt-deep / ab-alt-standard / ab-security / ab-verification absent from the stale config => flagged as whole missing profiles.
-    assert set(pub["missing_profiles"]) == {"ab-alt-deep", "ab-alt-standard", "ab-security", "ab-verification"}, pub["missing_profiles"]
+    assert pub["missing_phase_profiles"]["followup_review"] == "ab-alt-deep", pub
+    assert "build" not in pub["missing_phase_profiles"], pub["missing_phase_profiles"]
+    # ab-alt-deep / ab-alt-standard / ab-security absent from the stale config => whole missing profiles.
+    assert set(pub["missing_profiles"]) == {"ab-alt-deep", "ab-alt-standard", "ab-security"}, pub["missing_profiles"]
     # missing_profile_summaries: every missing profile shows the model/effort defaults it would ship with.
     assert set(pub["missing_profile_summaries"]) == set(pub["missing_profiles"]), pub["missing_profile_summaries"]
     assert all("claude:" in s for s in pub["missing_profile_summaries"].values()), pub["missing_profile_summaries"]
     # customised-vs-default (PROFILE axis): ab-deep's claude.model retune (haiku, default opus) is surfaced.
     assert any(c == {"profile": "ab-deep", "key": "claude:model", "value": "haiku", "default": "opus"}
                for c in pub["customized_profiles"]), pub["customized_profiles"]
-    # Persona meta keys are EXCLUDED even though stale_cfg's ab-deep has stub description/role_blurb/
-    # status_example differing from the asset — those are false positives (the heal never heals them).
-    assert not any(c["key"].startswith("meta:") for c in pub["customized_profiles"]), \
-        f"persona meta keys must be excluded from customised_profiles: {pub['customized_profiles']}"
+    # Persona meta keys are never a "customisation" (the asset ships none).
+    assert not any(c["key"].startswith("meta:") for c in pub["customized_profiles"]), pub["customized_profiles"]
     # A missing key is manual_review, never a "customisation" (no double-report).
     assert not any(c["profile"] == "ab-alt-deep" for c in pub["customized_profiles"]), pub["customized_profiles"]
     assert pub["custom_profiles"] == [] and pub["customized_phase_profiles"] == [], pub
+    # Stale surface: the removed mapping + the persona strings are REPORTED (informational) ...
+    assert pub["stale_phase_profiles"] == ["dev_story"], pub["stale_phase_profiles"]
+    assert {"profile": "ab-deep", "key": "meta:role_blurb"} in pub["stale_profile_keys"], pub["stale_profile_keys"]
+    assert {(s["profile"], s["key"]) for s in pub["stale_profile_keys"]} == {
+        ("ab-deep", "meta:description"), ("ab-deep", "meta:role_blurb"), ("ab-deep", "meta:status_example"),
+        ("ab-standard", "meta:description")}, pub["stale_profile_keys"]
+    # ... and stale persona keys never leak into manual_review (that list is asset-keys-missing only).
+    assert not any(m["missing_key"].startswith("meta:") for m in pub["manual_review"]), pub["manual_review"]
     assert pub["needs_reseed"] is True, pub
     assert pub["version"]["drift"] is True and pub["version"]["config_older"] is True, pub
 
@@ -1016,63 +1136,76 @@ def _run_self_test() -> int:
     h_pp = parse_phase_profiles(h_lines, find_block(h_lines, "phase_profiles"))
     for k, v in a_pp.items():
         assert h_pp.get(k) == v, f"phase_profiles not healed for {k}: got {h_pp.get(k)}"
-    # User retune preserved: ab-deep.claude.model stays haiku, NOT reset to the asset's opus.
+    # The heal is append-only: the stale mapping + persona strings SURVIVE (never stripped) ...
+    assert h_pp.get("dev_story") == "ab-deep", "heal must never strip a stale phase mapping"
+    assert 'role_blurb: "deep work"' in healed, "heal must never strip a stale persona key"
+    # ... the user retune is preserved: ab-deep.claude.model stays haiku, NOT reset to the asset's opus.
     h_prof = parse_profiles_blocks(h_lines, find_block(h_lines, "profiles"))
-    assert set(("ab-deep", "ab-standard", "ab-alt-deep", "ab-alt-standard", "ab-security", "ab-verification")).issubset(set(h_prof)), sorted(h_prof)
+    assert set(PROFILE_NAMES).issubset(set(h_prof)), sorted(h_prof)
     assert "model: haiku" in healed and "effort: low" in healed, "user retune clobbered"
-    # The healed asset profiles carry their real descriptions (verbatim copy).
+    # The healed asset profiles are copied verbatim (their header comments ride along).
     assert "lighter-weight" in healed, "ab-alt-standard block not copied verbatim"
     # Other config blocks survive intact.
     assert "delegation:" in healed and "git:" in healed and "mode: auto" in healed, healed
 
-    # Re-analyzing the healed config against the same asset => fully fresh.
+    # Re-analyzing the healed config against the same asset => fully fresh (the stale surface is
+    # still reported, but it is informational and NOT part of the drift verdict).
     info2 = analyze(healed, asset_text, "0.9.0", "0.9.0")
     assert not info2["needs_reseed"], _public(info2)
     assert not info2["missing_phase_profiles"] and not info2["missing_profiles"], _public(info2)
     assert info2["version"]["drift"] is False, info2["version"]
     assert not info2["manual_review"], info2["manual_review"]
+    assert info2["stale_phase_profiles"] == ["dev_story"], info2["stale_phase_profiles"]
 
-    # A config built straight from the asset (just stamped) is fully fresh.
+    # A config built straight from the asset (just stamped) is fully fresh, with an EMPTY stale surface.
     fresh_from_asset = 'profiles_source_version: "0.9.0"\n' + asset_text
     info_fresh = analyze(fresh_from_asset, asset_text, "0.9.0", "0.9.0")
     assert not info_fresh["needs_reseed"], _public(info_fresh)
     assert not info_fresh["manual_review"], info_fresh["manual_review"]
     assert info_fresh["version"]["drift"] is False, info_fresh["version"]
+    assert info_fresh["stale_phase_profiles"] == [] and info_fresh["stale_profile_keys"] == [], _public(info_fresh)
 
-    # --- custom profiles are first-class: a config that ADDS an ab-* profile (and remaps a
-    # phase to it) must read fully fresh — no drift nag on any run — and the additive heal
-    # must pass both the profile and the remapped phase through untouched. (Reset semantics
-    # for customs — whole-block prunes, scoped keeps — are pinned further down.) ---
+    # --- custom profiles are first-class — ANY name (no `ab-` prefix rule): a config that ADDS
+    # profiles (and remaps a phase to one) must read fully fresh — no drift nag on any run — and
+    # the additive heal must pass both the profiles and the remapped phase through untouched.
+    # (Reset semantics for customs — whole-block prunes, scoped keeps — are pinned further down.) ---
     custom_block = (
         '  ab-ultradeep:\n'
-        '    description: "mine"\n'
-        '    role_blurb: "the truly hard problems"\n'
-        '    status_example: "ok"\n'
         '    claude:\n      model: opus\n      effort: max\n'
         '    codex:\n      model: gpt-x\n      reasoning_effort: xhigh\n'
         '    opencode:\n      model: ""\n      variant: ""\n'
+        '  team-fast:\n'                       # a non-`ab-` name is just as valid
+        '    role_blurb: "leftover persona"\n'  # a persona scalar on a custom profile => stale (ignored)
+        '    claude:\n      model: haiku\n      effort: low\n'
+        '    codex:\n      model: gpt-x\n      reasoning_effort: low\n'
+        '    opencode:\n      model: ""\n      variant: ""\n'
     )
     cfg_custom = fresh_from_asset.replace("\nprofiles:\n", "\nprofiles:\n" + custom_block, 1)
-    cfg_custom = cfg_custom.replace("  dev_story: ab-deep", "  dev_story: ab-ultradeep", 1)
-    assert "ab-ultradeep" in cfg_custom and "dev_story: ab-ultradeep" in cfg_custom, "fixture: custom profile not injected"
+    cfg_custom = cfg_custom.replace("  build: ab-deep", "  build: ab-ultradeep", 1)
+    cfg_custom = cfg_custom.replace("  tea_triage: ab-alt-standard", "  tea_triage: team-fast", 1)
+    assert "ab-ultradeep" in cfg_custom and "build: ab-ultradeep" in cfg_custom and "tea_triage: team-fast" in cfg_custom, \
+        "fixture: custom profiles not injected"
     info_cust = analyze(cfg_custom, asset_text, "0.9.0", "0.9.0")
     assert not info_cust["needs_reseed"], _public(info_cust)
     assert not info_cust["manual_review"], f"a custom profile must never be flagged: {info_cust['manual_review']}"
-    # config-check's "what you've customised" axis: the added profile + the remapped phase surface,
+    # config-check's "what you've customised" axis: the added profiles + the remapped phases surface,
     # while the (default-valued) shipped profiles report no leaf retune.
-    assert info_cust["custom_profiles"] == ["ab-ultradeep"], info_cust["custom_profiles"]
-    assert {"key": "dev_story", "value": "ab-ultradeep", "default": "ab-deep"} in info_cust["customized_phase_profiles"], info_cust["customized_phase_profiles"]
+    assert info_cust["custom_profiles"] == ["ab-ultradeep", "team-fast"], info_cust["custom_profiles"]
+    assert {"key": "build", "value": "ab-ultradeep", "default": "ab-deep"} in info_cust["customized_phase_profiles"], info_cust["customized_phase_profiles"]
+    assert {"key": "tea_triage", "value": "team-fast", "default": "ab-alt-standard"} in info_cust["customized_phase_profiles"], info_cust["customized_phase_profiles"]
     assert info_cust["customized_profiles"] == [], info_cust["customized_profiles"]
+    # A custom profile is compared against the shipped field set: its persona scalar is stale, nothing else.
+    assert info_cust["stale_profile_keys"] == [{"profile": "team-fast", "key": "meta:role_blurb"}], info_cust["stale_profile_keys"]
+    assert info_cust["stale_phase_profiles"] == [], info_cust["stale_phase_profiles"]
     res_cust = apply(cfg_custom, asset_text, "0.9.0", "0.9.0")
-    assert "ab-ultradeep" in res_cust["new_text"], "heal dropped the custom profile"
-    assert "dev_story: ab-ultradeep" in res_cust["new_text"], "heal reverted the custom phase mapping"
+    assert "ab-ultradeep" in res_cust["new_text"] and "team-fast" in res_cust["new_text"], "heal dropped a custom profile"
+    assert "build: ab-ultradeep" in res_cust["new_text"] and "tea_triage: team-fast" in res_cust["new_text"], \
+        "heal reverted a custom phase mapping"
 
     # --- manual_review: an existing profile missing a sub-key the asset has. ---
     # Drop ONLY ab-deep's claude.effort from an otherwise-complete config.
-    cfg_subkey = fresh_from_asset.replace(
-        "      model: opus\n      effort: xhigh\n", "      model: opus\n", 1
-    )
-    assert cfg_subkey != fresh_from_asset, "fixture: ab-deep claude.effort line not found to drop"
+    cfg_subkey = _drop_leaf(fresh_from_asset, "ab-deep", "claude", "effort")
+    assert cfg_subkey != fresh_from_asset, "fixture: ab-deep claude.effort line not dropped"
     info3 = analyze(cfg_subkey, asset_text, "0.9.0", "0.9.0")
     assert not info3["needs_reseed"], _public(info3)  # all profiles + phase_profiles still present
     assert not info3["missing_profiles"], info3["missing_profiles"]
@@ -1082,15 +1215,15 @@ def _run_self_test() -> int:
     assert not res3["reseeded_profiles"], res3
     assert "claude:effort" in {m["missing_key"] for m in res3["manual_review"]}, res3
 
-    # --- opencode migration: a PRE-opencode config must NOT nag every run. ---
+    # --- blank-default suppression: a config lacking the whole opencode sub-blocks must NOT nag. ---
     # opencode.model/variant ship BLANK, so a missing opencode block == the blank default == inherit;
     # flagging it as manual_review would feed status:drift (see check_file) on EVERY run for an
     # existing user, for zero action. So blank-default missing sub-keys are suppressed — while a
     # missing sub-key with a REAL default value is still flagged (info3 above proves that path).
-    # Build a COMPLETE current-version config that predates opencode by stripping the opencode
-    # sub-blocks (header + indented children/comments) out of the shipped asset.
+    # Build a COMPLETE current-version config without opencode by stripping the opencode sub-blocks
+    # (header + indented children/comments) out of the shipped asset.
     pre_lines, skip = [], False
-    for ln in asset_text.splitlines(keepends=True):
+    for ln in a_lines:
         s, ind = ln.strip(), len(ln) - len(ln.lstrip(" "))
         if s == "opencode:" and ind == 4:
             skip = True
@@ -1101,13 +1234,13 @@ def _run_self_test() -> int:
             skip = False
         pre_lines.append(ln)
     pre_full = 'profiles_source_version: "0.9.0"\n' + "".join(pre_lines)
-    assert "opencode:" not in pre_full, "fixture: opencode blocks not fully stripped"
+    assert not any(_strip_comment(ln.strip()) == "opencode:" for ln in pre_full.splitlines()), \
+        "fixture: opencode blocks not fully stripped"
     info_pre = analyze(pre_full, asset_text, "0.9.0", "0.9.0")
-    # The opencode-relevant drift sources are all clear: every profile/phase_profile is present
-    # (no reseed), the version matches, and manual_review is EMPTY — the stripped (blank-default)
-    # opencode sub-keys contribute nothing. Since check_file folds manual_review into status:drift,
-    # an empty manual_review here is exactly what keeps a pre-opencode config from nagging each run.
-    # (Setup-block drift is a separate axis tested below; not relevant to opencode.)
+    # Every profile/phase_profile is present (no reseed), the version matches, and manual_review is
+    # EMPTY — the stripped (blank-default) opencode sub-keys contribute nothing. Since check_file folds
+    # manual_review into status:drift, an empty manual_review here is exactly what keeps such a config
+    # from nagging each run. (Setup-block drift is a separate axis tested below.)
     assert not info_pre["needs_reseed"], _public(info_pre)
     assert not info_pre["version"]["drift"], info_pre["version"]
     assert not info_pre["manual_review"], \
@@ -1134,9 +1267,14 @@ def _run_self_test() -> int:
         app = apply_to_file(cfgp, asset, "0.9.0")
         assert app["status"] == "applied", app
         chk2 = check_file(cfgp, asset, "0.9.0")
+        # Fresh despite the (informational) stale surface — stale keys are NOT part of the pause predicate.
         assert chk2["status"] == "fresh", chk2
+        assert chk2["stale_phase_profiles"] == ["dev_story"] and chk2["stale_profile_keys"], chk2
+        assert apply_to_file(cfgp, asset, "0.9.0")["status"] == "noop", "second apply must be a noop"
 
-    # --- reset: restore shipped defaults (the inverse of the additive heal). ---
+    # ----------------------------------------------------------------------- #
+    # reset: restore shipped defaults (the inverse of the additive heal).      #
+    # ----------------------------------------------------------------------- #
     def _mk_cfg(version: str, body: str) -> str:
         return (
             'version: 1\n'
@@ -1147,60 +1285,71 @@ def _run_self_test() -> int:
         ) + body
 
     # ab-deep retuned (model+effort) and one phase mapping retuned, on top of the asset.
-    retuned_body = asset_text.replace(
-        "      model: opus\n      effort: xhigh\n", "      model: haiku\n      effort: low\n", 1
-    )
-    assert "model: haiku" in retuned_body, "fixture: ab-deep claude block not retuned"
-    retuned_body = retuned_body.replace("  create_story: ab-deep\n", "  create_story: ab-alt-standard\n", 1)
+    retuned_body = _set_leaf(_set_leaf(asset_text, "ab-deep", "claude", "model", "haiku"), "ab-deep", "claude", "effort", "low")
+    assert _leaf(retuned_body, "ab-deep")["claude:model"] == "haiku", "fixture: ab-deep claude block not retuned"
+    retuned_body = retuned_body.replace("  build: ab-deep", "  build: ab-alt-standard", 1)
+    assert "build: ab-alt-standard" in retuned_body, "fixture: build mapping not retuned"
     cfg_r = _mk_cfg("0.8.0", retuned_body)
 
-    # Full reset: restores values, restamps, flags render, preserves non-asset blocks.
+    # Full reset: restores values, restamps, flags the layers sync (a profile changed), preserves non-asset blocks.
     full = reset(cfg_r, asset_text, "0.8.0", "0.9.0", None)
     assert not full.get("error"), full
-    assert full["render_needed"] is True, full
+    assert full["layers_sync_needed"] is True, full
+    assert "render_needed" not in full, "render_needed is gone (D12) — the key is layers_sync_needed"
     assert full["version_restamp"] == {"from": "0.8.0", "to": "0.9.0"}, full["version_restamp"]
     changed = {(c.get("profile"), c.get("block"), c["key"]) for c in full["would_change"]}
     assert ("ab-deep", None, "claude:model") in changed, changed
     assert ("ab-deep", None, "claude:effort") in changed, changed
-    assert (None, "phase_profiles", "create_story") in changed, changed
+    assert (None, "phase_profiles", "build") in changed, changed
     ht = full["new_text"]
-    h_lines2 = ht.splitlines(keepends=True)
-    h_prof2 = parse_profiles_blocks(h_lines2, find_block(h_lines2, "profiles"))
-    h_vals = _profile_leaf_values(h_lines2, h_prof2["ab-deep"]["start"], h_prof2["ab-deep"]["end"])
+    h_vals = _leaf(ht, "ab-deep")
     assert h_vals["claude:model"] == "opus" and h_vals["claude:effort"] == "xhigh", h_vals
+    h_lines2 = ht.splitlines(keepends=True)
     assert parse_phase_profiles(h_lines2, find_block(h_lines2, "phase_profiles")) == a_pp, "phase_profiles not restored"
     assert "delegation:" in ht and "git:" in ht and "enabled: true" in ht, "non-asset blocks dropped"
     assert 'profiles_source_version: "0.9.0"' in ht, "stamp not restamped on full reset"
     full2 = reset(ht, asset_text, "0.9.0", "0.9.0", None)  # idempotent
     assert not full2["would_change"] and full2["version_restamp"] is None, full2
+    assert full2["layers_sync_needed"] is False, full2
 
     # Scoped (single profile): only that profile changes; OTHER retunes survive; stamp untouched.
-    two = asset_text.replace(
-        "      model: opus\n      effort: xhigh\n", "      model: haiku\n      effort: low\n", 1
-    ).replace("      model: opus\n      effort: high\n", "      model: sonnet\n      effort: low\n", 1)
+    two = _set_leaf(_set_leaf(retuned_body, "ab-standard", "claude", "model", "sonnet"), "ab-standard", "claude", "effort", "low")
     one = reset(_mk_cfg("0.8.0", two), asset_text, "0.8.0", "0.9.0", "ab-deep")
     assert one["version_restamp"] is None, "scoped reset must NOT restamp"
     assert {c.get("profile") for c in one["would_change"]} == {"ab-deep"}, one["would_change"]
+    assert one["layers_sync_needed"] is True, one
     ot = one["new_text"]
-    o_lines = ot.splitlines(keepends=True)
-    o_prof = parse_profiles_blocks(o_lines, find_block(o_lines, "profiles"))
-    o_x = _profile_leaf_values(o_lines, o_prof["ab-deep"]["start"], o_prof["ab-deep"]["end"])
-    o_h = _profile_leaf_values(o_lines, o_prof["ab-standard"]["start"], o_prof["ab-standard"]["end"])
+    o_x, o_h = _leaf(ot, "ab-deep"), _leaf(ot, "ab-standard")
     assert o_x["claude:model"] == "opus", "ab-deep not restored"
     assert o_h["claude:model"] == "sonnet" and o_h["claude:effort"] == "low", "ab-standard retune clobbered by scoped reset"
     assert 'profiles_source_version: "0.8.0"' in ot, "scoped reset changed the stamp"
+    assert "build: ab-alt-standard" in ot, "scoped profile reset must not touch phase_profiles"
 
-    # phase_profiles-only reset: mapping restored, profiles untouched, no render, stamp left.
-    pres = reset(_mk_cfg("0.8.0", asset_text.replace("  dev_story: ab-deep", "  dev_story: ab-standard", 1)),
+    # phase_profiles-only reset: mapping restored, profiles untouched, stamp left. layers_sync_needed is
+    # true ONLY when a LAYER mapping (security_layer / cross_model_layer) changes — the review-layers
+    # TOML bakes model+effort from those two profiles; any other remap is read at spawn time.
+    pres = reset(_mk_cfg("0.8.0", asset_text.replace("  tea_triage: ab-alt-standard", "  tea_triage: ab-standard", 1)),
                  asset_text, "0.8.0", "0.9.0", "phase_profiles")
-    assert pres["render_needed"] is False, pres
+    assert pres["layers_sync_needed"] is False, pres
     assert pres["version_restamp"] is None, pres
-    assert {(c.get("block"), c["key"]) for c in pres["would_change"]} == {("phase_profiles", "dev_story")}, pres["would_change"]
+    assert {(c.get("block"), c["key"]) for c in pres["would_change"]} == {("phase_profiles", "tea_triage")}, pres["would_change"]
     pt = pres["new_text"]
     assert parse_phase_profiles(pt.splitlines(keepends=True), find_block(pt.splitlines(keepends=True), "phase_profiles")) == a_pp, "phase_profiles not restored"
+    for layer_key, other in (("security_layer", "ab-deep"), ("cross_model_layer", "ab-deep")):
+        remapped = asset_text.replace(f"  {layer_key}: {a_pp[layer_key]}", f"  {layer_key}: {other}", 1)
+        assert f"{layer_key}: {other}" in remapped, f"fixture: {layer_key} not remapped"
+        lp = reset(_mk_cfg("0.9.0", remapped), asset_text, "0.9.0", "0.9.0", "phase_profiles")
+        assert lp["layers_sync_needed"] is True, f"remapping {layer_key} must flag a layers sync: {lp}"
+        assert {(c.get("block"), c["key"]) for c in lp["would_change"]} == {("phase_profiles", layer_key)}, lp["would_change"]
+    # A stale (removed) mapping is pruned by a phase_profiles reset — reported with default None.
+    st = reset(_mk_cfg("0.9.0", asset_text.replace("phase_profiles:\n", "phase_profiles:\n  dev_story: ab-deep\n", 1)),
+               asset_text, "0.9.0", "0.9.0", "phase_profiles")
+    assert {"block": "phase_profiles", "key": "dev_story", "current": "ab-deep", "default": None} in st["would_change"], st["would_change"]
+    assert "dev_story" not in st["new_text"], "stale phase mapping survived a phase_profiles reset"
+    assert st["layers_sync_needed"] is False, st
 
     # reset <profile> is the remedy for a manual_review (missing sub-key) that --apply won't write.
-    cfg_drop = _mk_cfg("0.9.0", asset_text.replace("      model: opus\n      effort: xhigh\n", "      model: opus\n", 1))
+    cfg_drop = _mk_cfg("0.9.0", _drop_leaf(asset_text, "ab-deep", "claude", "effort"))
     assert any(m["profile"] == "ab-deep" and m["missing_key"] == "claude:effort"
                for m in analyze(cfg_drop, asset_text, "0.9.0", "0.9.0")["manual_review"]), "fixture: missing sub-key not detected"
     fixed = reset(cfg_drop, asset_text, "0.9.0", "0.9.0", "ab-deep")["new_text"]
@@ -1214,34 +1363,55 @@ def _run_self_test() -> int:
         '  ab-deep:\n    description: "x"\n    claude:\n      model: haiku\n      effort: low\n'
         '    codex:\n      model: gpt-x\n      reasoning_effort: low\n'
         '  ab-custom:\n    description: "mine"\n    claude:\n      model: opus\n      effort: medium\n'
-        'phase_profiles:\n  create_story: ab-deep\n'
+        'phase_profiles:\n  build: ab-deep\n'
     )
     rprof = reset(mini, asset_text, "0.9.0", "0.9.0", "profiles")
     assert rprof["removed_profiles"] == ["ab-custom"], rprof["removed_profiles"]
-    assert rprof["render_needed"] is True, "pruning a profile must flag a re-render"
+    assert rprof["layers_sync_needed"] is True, "pruning a profile must flag a layers sync"
     rt = rprof["new_text"]
     r_lines = rt.splitlines(keepends=True)
     rp = parse_profiles_blocks(r_lines, find_block(r_lines, "profiles"))
     assert "ab-custom" not in rp and "ab-custom" not in rt, "config-only profile not pruned by 'profiles' reset"
-    assert set(rp) == {"ab-deep", "ab-standard", "ab-alt-deep", "ab-alt-standard", "ab-security", "ab-verification"}, sorted(rp)
-    assert _profile_leaf_values(r_lines, rp["ab-deep"]["start"], rp["ab-deep"]["end"])["claude:model"] == "opus", "ab-deep not reset"
-    assert parse_phase_profiles(r_lines, find_block(r_lines, "phase_profiles")) == {"create_story": "ab-deep"}, "phase_profiles touched by 'profiles' scope"
+    assert set(rp) == set(PROFILE_NAMES), sorted(rp)
+    assert _leaf(rt, "ab-deep")["claude:model"] == "opus", "ab-deep not reset"
+    assert parse_phase_profiles(r_lines, find_block(r_lines, "phase_profiles")) == {"build": "ab-deep"}, "phase_profiles touched by 'profiles' scope"
     # A single <profile-name> reset leaves the user-added profile intact (no prune on a scoped reset).
     rone = reset(mini, asset_text, "0.9.0", "0.9.0", "ab-deep")
     assert rone["removed_profiles"] == [], "single-profile reset must not prune"
     r1 = rone["new_text"].splitlines(keepends=True)
     rs = parse_profiles_blocks(r1, find_block(r1, "profiles"))
     assert "ab-custom" in rs, "single-profile reset clobbered a user-added profile"
-    rc = _profile_leaf_values(r1, rs["ab-custom"]["start"], rs["ab-custom"]["end"])
+    rc = _leaf(rone["new_text"], "ab-custom")
     assert rc["claude:model"] == "opus" and rc["claude:effort"] == "medium", "ab-custom altered by scoped reset"
     assert reset(mini, asset_text, "0.9.0", "0.9.0", "ab-nope").get("error") == "unknown_scope", "unknown profile accepted as scope"
     assert reset(mini, asset_text, "0.9.0", "0.9.0", "ab-custom").get("error") == "unknown_scope", "config-only profile is not an asset scope"
 
-    # Rename migration (the ab-xhigh->ab-deep case): every config profile name differs from the
-    # asset. A full reset prunes them all and seeds the asset set — config ends fully on new names.
+    # Upgrade migration (0.26 -> 0.27): a config carrying the dropped `ab-verification` profile and
+    # persona strings on a shipped profile. A whole-block reset prunes BOTH: the profile lands on
+    # `removed_profiles`, each persona key on `would_change` with `default: None`; the result reads
+    # fully fresh with an EMPTY stale surface.
+    upgraded = asset_text.replace(
+        "\nprofiles:\n  ab-deep:",
+        '\nprofiles:\n  ab-verification:\n    description: "old lens"\n    claude:\n      model: opus\n'
+        '      effort: high\n    codex:\n      model: gpt-x\n      reasoning_effort: high\n'
+        '  ab-deep:\n    description: "deep"\n    role_blurb: "deep work"\n    status_example: "ok"', 1)
+    assert "ab-verification" in upgraded and 'role_blurb: "deep work"' in upgraded, "fixture: upgrade leftovers not injected"
+    up_info = analyze(_mk_cfg("0.9.0", upgraded), asset_text, "0.9.0", "0.9.0")
+    assert up_info["custom_profiles"] == ["ab-verification"], up_info["custom_profiles"]   # merely custom to the heal
+    assert {"profile": "ab-deep", "key": "meta:role_blurb"} in up_info["stale_profile_keys"], up_info["stale_profile_keys"]
+    up = reset(_mk_cfg("0.9.0", upgraded), asset_text, "0.9.0", "0.9.0", None)
+    assert up["removed_profiles"] == ["ab-verification"], up["removed_profiles"]
+    assert {"profile": "ab-deep", "key": "meta:role_blurb", "current": "deep work", "default": None} in up["would_change"], up["would_change"]
+    assert up["layers_sync_needed"] is True, up
+    assert "ab-verification" not in up["new_text"] and "role_blurb" not in up["new_text"], "upgrade leftovers survived a full reset"
+    up_after = analyze(up["new_text"], asset_text, "0.9.0", "0.9.0")
+    assert up_after["stale_profile_keys"] == [] and up_after["custom_profiles"] == [] and not up_after["manual_review"], _public(up_after)
+
+    # Rename migration: every config profile name differs from the asset. A full reset prunes them
+    # all and seeds the asset set — config ends fully on new names.
     renamed = asset_text
-    for cur, old in (("  ab-deep:\n", "  zz-old-a:\n"), ("  ab-standard:\n", "  zz-old-b:\n"),
-                     ("  ab-alt-deep:\n", "  zz-old-c:\n"), ("  ab-alt-standard:\n", "  zz-old-d:\n")):
+    for cur, old in (("  ab-deep:", "  zz-old-a:"), ("  ab-standard:", "  zz-old-b:"),
+                     ("  ab-alt-deep:", "  zz-old-c:"), ("  ab-alt-standard:", "  zz-old-d:")):
         renamed = renamed.replace(cur, old, 1)
     assert renamed.count("zz-old-") == 4, "fixture: profile headers not all renamed"
     mig = reset(_mk_cfg("0.8.0", renamed), asset_text, "0.8.0", "0.9.0", None)
@@ -1249,7 +1419,7 @@ def _run_self_test() -> int:
     assert "zz-old-" not in mig["new_text"], "orphan old-named blocks survived the migration reset"
     mig_lines = mig["new_text"].splitlines(keepends=True)
     mig_prof = parse_profiles_blocks(mig_lines, find_block(mig_lines, "profiles"))
-    assert set(mig_prof) == {"ab-deep", "ab-standard", "ab-alt-deep", "ab-alt-standard", "ab-security", "ab-verification"}, sorted(mig_prof)
+    assert set(mig_prof) == set(PROFILE_NAMES), sorted(mig_prof)
     assert parse_phase_profiles(mig_lines, find_block(mig_lines, "phase_profiles")) == a_pp, "phase_profiles not reset in migration"
 
     # A config missing an entire asset block has it recreated — plan and write agree.
@@ -1259,6 +1429,12 @@ def _run_self_test() -> int:
     assert any(c.get("block") == "phase_profiles" for c in rec["would_change"]), "plan omits the missing block"
     rl = rec["new_text"].splitlines(keepends=True)
     assert parse_phase_profiles(rl, find_block(rl, "phase_profiles")) == a_pp, "missing phase_profiles not recreated"
+    # ... likewise a config with no `profiles:` block at all.
+    no_prof = _mk_cfg("0.8.0", asset_text[asset_text.index("phase_profiles:"):])
+    assert find_block(no_prof.splitlines(keepends=True), "profiles") is None, "fixture: profiles still present"
+    rec2 = reset(no_prof, asset_text, "0.8.0", "0.9.0", "profiles")
+    r2l = rec2["new_text"].splitlines(keepends=True)
+    assert set(parse_profiles_blocks(r2l, find_block(r2l, "profiles"))) == set(PROFILE_NAMES), "missing profiles block not recreated"
 
     # File-driven: read-only plan writes nothing; --write backs up then resets; re-run is a noop.
     with tempfile.TemporaryDirectory() as td:
@@ -1266,6 +1442,7 @@ def _run_self_test() -> int:
         cp.write_text(cfg_r, encoding="utf-8")
         plan = reset_to_file(cp, asset, "0.9.0", scope=None, write=False)
         assert plan["status"] == "reset-plan" and plan["would_change"] and plan["backup"] is None, plan
+        assert plan["layers_sync_needed"] is True and "render_needed" not in plan, plan
         assert not (Path(str(cp) + ".bak")).exists(), "read-only plan must not write a .bak"
         done = reset_to_file(cp, asset, "0.9.0", scope=None, write=True)
         assert done["status"] == "reset" and done["backup"] == str(cp) + ".bak", done
@@ -1273,13 +1450,13 @@ def _run_self_test() -> int:
         assert reset_to_file(cp, asset, "0.9.0", scope=None, write=True)["status"] == "noop", "second reset should be a noop"
         assert reset_to_file(cp, asset, "0.9.0", scope="ab-nope", write=False)["status"] == "error", "bad scope must error"
 
-    # Pure prune through reset_to_file: the 4 asset profiles already at shipped values (empty
+    # Pure prune through reset_to_file: the asset profiles already at shipped values (empty
     # would_change) + scope 'profiles' (no restamp), so `removed_profiles` is the SOLE trigger of the
     # write — the headline "I added a custom profile, reset-defaults should drop it" path.
     with tempfile.TemporaryDirectory() as tdp:
         extra = asset_text.replace(
             "\nprofiles:\n",
-            '\nprofiles:\n  ab-extra:\n    description: "mine"\n    claude:\n      model: opus\n'
+            '\nprofiles:\n  ab-extra:\n    claude:\n      model: opus\n'
             '      effort: low\n    codex:\n      model: gpt-x\n      reasoning_effort: low\n', 1)
         cpp = Path(tdp) / "config.yaml"
         cpp.write_text(_mk_cfg("0.9.0", extra), encoding="utf-8")
@@ -1292,48 +1469,50 @@ def _run_self_test() -> int:
 
     # ----------------------------------------------------------------------- #
     # Setup-block additive heal (config-defaults.yaml). The delegation/tea/git/  #
-    # code_review blocks have no profiles-style asset, so new setup keys never   #
-    # reached an existing config; plan_setup/apply close that gap, append-only.  #
+    # code_review/build blocks have no profiles-style asset, so new setup keys   #
+    # never reached an existing config; plan_setup/apply close that gap,        #
+    # append-only.                                                              #
     # ----------------------------------------------------------------------- #
     setup_asset = _default_setup_defaults()
     assert setup_asset.is_file(), f"shipped config-defaults.yaml missing at {setup_asset}"
     setup_text = setup_asset.read_text(encoding="utf-8")
     s_nodes = parse_tree(setup_text.splitlines(keepends=True), 0, len(setup_text.splitlines(keepends=True)), 0)
 
-    # The asset INCLUDES the constant-default setup keys ...
+    # The asset carries EXACTLY the five setup blocks ...
+    assert set(s_nodes) == {"delegation", "tea", "git", "code_review", "build"}, sorted(s_nodes)
+    # ... and INCLUDES the constant-default setup keys ...
     assert "cli_phases" in s_nodes["delegation"]["children"], "asset missing delegation.cli_phases"
     for k in ("branch_prefix", "epic_branch_prefix", "offer_merge", "ci_wait_minutes"):
         assert k in s_nodes["git"]["children"], f"asset missing git.{k}"
     assert "gate_max_iterations" in s_nodes["tea"]["children"], "asset missing tea.gate_max_iterations"
     sta = s_nodes["tea"]["children"].get("story_trace_advisory")
     assert sta and {"enabled", "min_epic_stories", "skip_last_stories"}.issubset(set(sta["children"])), "asset story_trace_advisory shape"
+    assert set(s_nodes["code_review"]["children"]) == {"followup", "security_layer"}, sorted(s_nodes["code_review"]["children"])
+    assert set(s_nodes["build"]["children"]) == {"spec_approval"}, sorted(s_nodes["build"]["children"])
+    # Removed keys must never be re-healed into configs (a stale copy in a user config is harmless —
+    # the orchestrator just stops reading it). Removed-key guards:
+    assert "target_tools" not in s_nodes["delegation"]["children"], "asset must NOT carry delegation.target_tools (removed — no rendered agents)"
     for k in ("max_iterations", "security_review", "verification_gap", "epic_review", "tier_a_lenses",
-              "epic_diff_chunk_threshold_lines"):
-        assert k in s_nodes["code_review"]["children"], f"asset missing code_review.{k}"
-    # Removed keys must never be re-healed into configs (a stale copy in a user
-    # config is harmless — the orchestrator just stops reading it).
-    assert "alternate_models" not in s_nodes["code_review"]["children"], \
-        "asset must NOT carry code_review.alternate_models (removed in 0.18)"
-    assert "skip_hitl_on_clean_convergence" not in s_nodes["code_review"]["children"], \
-        "asset must NOT carry code_review.skip_hitl_on_clean_convergence (removed in 0.18 — always-on behavior)"
+              "epic_diff_chunk_threshold_lines", "alternate_models", "skip_hitl_on_clean_convergence"):
+        assert k not in s_nodes["code_review"]["children"], f"asset must NOT carry removed key code_review.{k}"
 
     # ... and DELIBERATELY EXCLUDES environment-detected / interviewed fields, so the heal can
     # never bake in a wrong static guess for one (the safety invariant — enforced here in code).
     assert "base_branch" not in s_nodes["git"]["children"], "asset must NOT carry git.base_branch (detected)"
     assert "mode" not in s_nodes["git"]["children"], "asset must NOT carry git.mode (detect toggle)"
-    for k in ("host", "mode", "target_tools"):
+    for k in ("host", "mode"):
         assert k not in s_nodes["delegation"]["children"], f"asset must NOT carry delegation.{k}"
     for k in ("enabled", "framework_ci"):
         assert k not in s_nodes["tea"]["children"], f"asset must NOT carry tea.{k} (interviewed)"
+    assert "cross_model_layer" not in s_nodes["code_review"]["children"], \
+        "asset must NOT carry code_review.cross_model_layer (env-detected at first run; absent key => blank)"
 
-    # Anchor a few literal DEFAULT VALUES — the set assertions above pin which keys exist, these
+    # Anchor the literal DEFAULT VALUES — the set assertions above pin which keys exist, these
     # pin that their values still match the state-and-resume.md schema + orchestrator fallbacks
     # (the lockstep the asset header warns about). Cheap guard against a silent value edit.
-    for kv in ("offer_merge: true", "ci_wait_minutes: 30", "min_epic_stories: 6",
-               "skip_last_stories: 3", "max_iterations: 2", "gate_max_iterations: 2",
-               "security_review: true", "verification_gap: true", 'epic_branch_prefix: "epic/"',
-               "epic_review: true", "tier_a_lenses: [auditor, security]",
-               "epic_diff_chunk_threshold_lines: 6000"):
+    for kv in ("cli_phases: {}", 'branch_prefix: "story/"', 'epic_branch_prefix: "epic/"', "offer_merge: true",
+               "ci_wait_minutes: 30", "gate_max_iterations: 2", "enabled: true", "min_epic_stories: 6",
+               "skip_last_stories: 3", "followup: recommended", "security_layer: true", "spec_approval: false"):
         assert kv in setup_text, f"asset default drifted from the documented schema: expected `{kv}`"
 
     def _heal(cfg: str) -> tuple:
@@ -1346,14 +1525,17 @@ def _run_self_test() -> int:
 
     base = 'version: 1\nprofiles_source_version: "0.9.0"\n'  # minimal non-setup head
 
-    # Case 1 — a whole top-level setup block absent => recreated (appended at EOF).
-    c1 = base + 'delegation:\n  host: auto\n  cli_phases: {}\n'  # no tea/git/code_review
+    # Case 1 — whole top-level setup blocks absent => recreated (appended at EOF).
+    c1 = base + 'delegation:\n  host: auto\n  cli_phases: {}\n'  # no tea/git/code_review/build
     h1, paths1 = _heal(c1)
     n1 = _setup_nodes(h1)
-    assert {"git", "tea", "code_review"}.issubset(set(n1)), f"missing top blocks not recreated: {sorted(n1)}"
-    assert {"git", "tea", "code_review"}.issubset(set(paths1)), f"whole-block heals not reported: {paths1}"
+    assert {"git", "tea", "code_review", "build"}.issubset(set(n1)), f"missing top blocks not recreated: {sorted(n1)}"
+    assert {"git", "tea", "code_review", "build"}.issubset(set(paths1)), f"whole-block heals not reported: {paths1}"
     assert "delegation" not in paths1, "delegation present yet reported as healed"
     assert {"branch_prefix", "offer_merge", "ci_wait_minutes"}.issubset(set(n1["git"]["children"])), n1["git"]["children"].keys()
+    assert n1["build"]["children"]["spec_approval"]["kind"] == "scalar", n1["build"]
+    assert _leaf_value(h1.splitlines(keepends=True), n1["build"]["children"]["spec_approval"]) == "false", h1
+    assert _leaf_value(h1.splitlines(keepends=True), n1["code_review"]["children"]["followup"]) == "recommended", h1
 
     # Case 2 — a scalar missing from an existing block => appended in that block; a detected value
     # the asset omits (base_branch) is left exactly as the user had it.
@@ -1391,12 +1573,17 @@ def _run_self_test() -> int:
     assert "  gate_max_iterations" in h4 and "    gate_max_iterations" not in h4, "block scalar not at indent 2"
 
     # Append-only: a user's customised setup value is NEVER overwritten by the heal.
-    c5 = base + 'git:\n  mode: auto\n  offer_merge: false\n  ci_wait_minutes: 90\n'
+    c5 = (base + 'git:\n  mode: auto\n  offer_merge: false\n  ci_wait_minutes: 90\n'
+          'code_review:\n  followup: always\n  cross_model_layer: claude\n'
+          'build:\n  spec_approval: true\n')
     h5, paths5 = _heal(c5)
     assert "offer_merge: false" in h5, "offer_merge:false overwritten"
     assert "ci_wait_minutes: 90" in h5, "ci_wait_minutes:90 overwritten"
+    assert "followup: always" in h5 and "spec_approval: true" in h5, "code_review/build customisation overwritten"
+    assert "cross_model_layer: claude" in h5, "an interviewed answer the asset omits must survive untouched"
     assert "git.offer_merge" not in paths5 and "git.ci_wait_minutes" not in paths5, paths5
-    assert "git.branch_prefix" in paths5, "a still-missing key was not healed"
+    assert "code_review.followup" not in paths5 and "build.spec_approval" not in paths5, paths5
+    assert "git.branch_prefix" in paths5 and "code_review.security_layer" in paths5, "a still-missing key was not healed"
 
     # Idempotency: a config already carrying every setup key heals to nothing, and --check agrees.
     full_setup = base + setup_text   # head + the asset's blocks verbatim = every setup key present
@@ -1411,6 +1598,8 @@ def _run_self_test() -> int:
     assert off["value"] == "true", off                          # scalar value surfaced
     assert {x["path"] for x in a2["kept_setup"]} == set(), "c2 carries no asset-key customisation"
     assert "git.base_branch" not in {x["path"] for x in a2["added_setup"]}, "a detected field must never be 'added'"
+    bld = next(x for x in a2["added_setup"] if x["path"] == "build")
+    assert bld["value"] == "{spec_approval: false}", bld        # whole missing block summarised
 
     a3 = analyze(c3, asset_text, "0.9.0", "0.9.0", setup_text)
     sta_added = next(x for x in a3["added_setup"] if x["path"] == "tea.story_trace_advisory")
@@ -1420,7 +1609,10 @@ def _run_self_test() -> int:
     kept5 = {x["path"]: (x["value"], x["default"]) for x in a5["kept_setup"]}
     assert kept5.get("git.offer_merge") == ("false", "true"), kept5   # customisation kept, with its default shown
     assert kept5.get("git.ci_wait_minutes") == ("90", "30"), kept5
+    assert kept5.get("code_review.followup") == ("always", "recommended"), kept5
+    assert kept5.get("build.spec_approval") == ("true", "false"), kept5
     assert "git.branch_prefix" not in kept5, "a missing key is 'added', never 'kept'"
+    assert "code_review.cross_model_layer" not in kept5, "a non-asset (interviewed) key is never 'kept'"
 
     # kept detection reaches a customised leaf INSIDE a sub-block; a leaf equal to default is not kept.
     c7 = (base + 'tea:\n  gate_max_iterations: 2\n  story_trace_advisory:\n'
@@ -1429,26 +1621,34 @@ def _run_self_test() -> int:
     assert kept7.get("tea.story_trace_advisory.min_epic_stories") == ("8", "6"), kept7
     assert "tea.gate_max_iterations" not in kept7, "a leaf equal to default must not be reported as 'kept'"
 
-    # setup_answers — the heal-immune behavioural answers (cli_phases/tea.enabled/framework_ci/git.mode)
-    # the asset omits, so they never surface in added_setup/kept_setup. config-check shows them so the
-    # user sees EVERY deviation; absent fields are skipped; a populated cli_phases is summarised as a map.
-    sa_cfg = (base + 'delegation:\n  host: auto\n  cli_phases:\n    code_review_review_secondary: opencode\n'
+    # setup_answers — the heal-immune behavioural answers (cli_phases / tea.enabled / tea.framework_ci /
+    # git.mode / code_review.cross_model_layer) the asset omits, so they never surface in
+    # added_setup/kept_setup. config-check shows them so the user sees EVERY deviation; absent fields
+    # are skipped; a populated cli_phases is summarised as a map.
+    assert set(SETUP_ANSWER_PATHS) == {"delegation.cli_phases", "tea.enabled", "tea.framework_ci", "git.mode",
+                                       "code_review.cross_model_layer"}, SETUP_ANSWER_PATHS
+    sa_cfg = (base + 'delegation:\n  host: auto\n  cli_phases:\n    followup_review: opencode\n'
               'tea:\n  enabled: false\n  framework_ci: skip\n'
-              'git:\n  mode: local\n  base_branch: main\n')
+              'git:\n  mode: local\n  base_branch: main\n'
+              'code_review:\n  followup: recommended\n  security_layer: true\n  cross_model_layer: codex\n')
     sa = {x["path"]: x["value"] for x in analyze(sa_cfg, asset_text, "0.9.0", "0.9.0", setup_text)["setup_answers"]}
-    assert sa.get("delegation.cli_phases") == "{code_review_review_secondary: opencode}", sa
+    assert sa.get("delegation.cli_phases") == "{followup_review: opencode}", sa
     assert sa.get("tea.enabled") == "false" and sa.get("tea.framework_ci") == "skip", sa
     assert sa.get("git.mode") == "local", sa                          # a forced git mode is a deviation
+    assert sa.get("code_review.cross_model_layer") == "codex", sa      # the detected/chosen cross-model tool
     assert "git.base_branch" not in sa, "a purely-detected env fact must not surface as a setup answer"
-    # An empty cli_phases surfaces as `{}`; a config that omits an answer entirely surfaces nothing.
-    sa_empty = {x["path"]: x["value"] for x in analyze(base + 'delegation:\n  cli_phases: {}\n', asset_text, "0.9.0", "0.9.0", setup_text)["setup_answers"]}
-    assert sa_empty == {"delegation.cli_phases": "{}"}, sa_empty   # tea.* absent => not surfaced
+    assert "code_review.followup" not in sa, "an asset-sourced key rides added/kept, not setup_answers"
+    # An empty cli_phases surfaces as `{}`; a blank cross_model_layer ("" => layer disabled) surfaces as
+    # an empty value; a config that omits an answer entirely surfaces nothing.
+    sa_empty = {x["path"]: x["value"] for x in analyze(base + 'delegation:\n  cli_phases: {}\ncode_review:\n  cross_model_layer: ""\n',
+                                                        asset_text, "0.9.0", "0.9.0", setup_text)["setup_answers"]}
+    assert sa_empty == {"delegation.cli_phases": "{}", "code_review.cross_model_layer": ""}, sa_empty   # tea.* absent => not surfaced
     assert collect_setup_answers(base.splitlines(keepends=True)) == [], "no setup answers => empty list"
     # setup_answers is asset-independent (computed even with no config-defaults asset) and rides --check.
     assert analyze(sa_cfg, asset_text, "0.9.0", "0.9.0", None)["setup_answers"], "setup_answers must not depend on setup_text"
 
     # Cross-axis collision — a missing phase_profiles key AND a missing whole top-level setup block
-    # (code_review), with phase_profiles as the file's LAST block, so BOTH inserts anchor on the same
+    # (build), with phase_profiles as the file's LAST block, so BOTH inserts anchor on the same
     # EOF line. The pp key must stay inside phase_profiles (indent 2); the setup block starts fresh
     # (indent 0) AFTER it — i.e. the tiebreak keeps the deeper insert nearest the anchor.
     xcfg = (
@@ -1456,44 +1656,66 @@ def _run_self_test() -> int:
         'delegation:\n  cli_phases: {}\n'
         'tea:\n  gate_max_iterations: 2\n  story_trace_advisory:\n'
         '    enabled: true\n    min_epic_stories: 6\n    skip_last_stories: 3\n'
-        'git:\n  branch_prefix: "story/"\n  offer_merge: true\n  ci_wait_minutes: 30\n'
-        # no code_review block; profiles + phase_profiles (last) follow, with one pp key dropped:
-        + asset_text.replace("  retrospective: ab-alt-standard\n", "", 1)
+        'git:\n  branch_prefix: "story/"\n  epic_branch_prefix: "epic/"\n  offer_merge: true\n  ci_wait_minutes: 30\n'
+        'code_review:\n  followup: recommended\n  security_layer: true\n'
+        # no build block; profiles + phase_profiles (last) follow, with one pp key dropped:
+        + asset_text.replace("  retrospective: ab-alt-standard", "  # (retrospective dropped)", 1)
     )
     assert "retrospective: ab-alt-standard" not in xcfg, "fixture: pp key not actually dropped"
     xh = apply(xcfg, asset_text, "0.8.0", "0.9.0", setup_text)["new_text"]
-    assert "code_review" in _setup_nodes(xh), "missing top-level setup block not recreated (cross-axis)"
+    assert "build" in _setup_nodes(xh), "missing top-level setup block not recreated (cross-axis)"
     xpp = parse_phase_profiles(xh.splitlines(keepends=True), find_block(xh.splitlines(keepends=True), "phase_profiles"))
     assert xpp.get("retrospective") == "ab-alt-standard", "phase_profiles key not re-seeded (cross-axis)"
-    assert xh.index("retrospective: ab-alt-standard") < xh.index("\ncode_review:"), "collision mis-ordered: pp key escaped its block"
+    assert xh.index("retrospective: ab-alt-standard") < xh.index("\nbuild:"), "collision mis-ordered: pp key escaped its block"
     assert analyze(xh, asset_text, "0.9.0", "0.9.0", setup_text)["missing_setup"] == [], "cross-axis heal left setup drift"
 
     # File-driven, the orchestrator's ACTUAL trigger: a config at the CURRENT version (profiles fresh)
     # missing ONLY a setup key must still read as `drift` via check_file -> --apply heals it -> fresh.
-    # This is the user's literal scenario: already upgraded, a setup key still absent.
+    # This is the user's literal scenario: already upgraded, a setup key still absent. The config also
+    # carries every REMOVED setup key an upgraded 0.26 config still holds (delegation.target_tools + the
+    # old code_review.* knobs): the heal must IGNORE them — never flag, never strip, never echo.
+    REMOVED_SETUP = ("delegation.target_tools", "code_review.max_iterations", "code_review.security_review",
+                     "code_review.verification_gap", "code_review.epic_review", "code_review.tier_a_lenses",
+                     "code_review.epic_diff_chunk_threshold_lines", "code_review.alternate_models",
+                     "code_review.skip_hitl_on_clean_convergence")
     with tempfile.TemporaryDirectory() as td:
         cfgp = Path(td) / "config.yaml"
         cur = ('profiles_source_version: "0.9.0"\n' + asset_text          # profiles/phase_profiles fresh
-               + '\ndelegation:\n  cli_phases: {}\n'
+               + '\ndelegation:\n  host: auto\n  mode: custom-subagents\n'  # legacy tier alias — tolerated
+               '  target_tools: [claude, codex]\n  cli_phases: {}\n'
                'tea:\n  gate_max_iterations: 2\n  story_trace_advisory:\n'
                '    enabled: true\n    min_epic_stories: 6\n    skip_last_stories: 3\n'
                'git:\n  branch_prefix: "story/"\n  epic_branch_prefix: "epic/"\n'
                '  ci_wait_minutes: 30\n'   # <- git.offer_merge missing
-               # alternate_models + skip_hitl_on_clean_convergence are REMOVED keys
-               # deliberately left stale here: the heal must ignore them, never flag or strip them.
-               'code_review:\n  max_iterations: 2\n  security_review: true\n'
-               '  verification_gap: true\n'
+               'code_review:\n  followup: recommended\n  security_layer: true\n'
+               '  max_iterations: 2\n  security_review: true\n  verification_gap: true\n'
                '  epic_review: true\n  tier_a_lenses: [auditor, security]\n'
                '  epic_diff_chunk_threshold_lines: 6000\n  alternate_models: true\n'
-               '  skip_hitl_on_clean_convergence: false\n')
+               '  skip_hitl_on_clean_convergence: false\n'
+               'build:\n  spec_approval: false\n')
         cfgp.write_text(cur, encoding="utf-8")
         chk = check_file(cfgp, asset, "0.9.0", setup_asset)
         assert chk["version"]["drift"] is False, "fixture must isolate the setup-only path (no version drift)"
         assert chk["status"] == "drift", f"same-version config missing a setup key must read as drift: {chk}"
         assert chk["missing_setup"] == ["git.offer_merge"], chk["missing_setup"]
+        echoed = {x["path"] for x in chk["added_setup"]} | {x["path"] for x in chk["kept_setup"]} | {x["path"] for x in chk["setup_answers"]}
+        assert not (echoed & set(REMOVED_SETUP)), f"removed keys must never be echoed: {echoed & set(REMOVED_SETUP)}"
         app = apply_to_file(cfgp, asset, "0.9.0", setup_asset)
         assert app["reseeded_setup"] == ["git.offer_merge"], app
+        after = cfgp.read_text(encoding="utf-8")
+        for stale_line in ("target_tools: [claude, codex]", "max_iterations: 2", "security_review: true",
+                           "verification_gap: true", "epic_review: true", "tier_a_lenses: [auditor, security]",
+                           "epic_diff_chunk_threshold_lines: 6000", "alternate_models: true",
+                           "skip_hitl_on_clean_convergence: false", "mode: custom-subagents"):
+            assert stale_line in after, f"heal must never strip a stale key: {stale_line}"
         assert check_file(cfgp, asset, "0.9.0", setup_asset)["status"] == "fresh", "heal did not clear the setup-only drift"
+
+    # A config with NO config-defaults asset available: the setup heal degrades gracefully (skipped).
+    with tempfile.TemporaryDirectory() as td:
+        cfgp = Path(td) / "config.yaml"
+        cfgp.write_text('profiles_source_version: "0.9.0"\n' + asset_text, encoding="utf-8")
+        chk_nosetup = check_file(cfgp, asset, "0.9.0", Path(td) / "absent-config-defaults.yaml")
+        assert chk_nosetup["status"] == "fresh" and chk_nosetup["missing_setup"] == [], chk_nosetup
 
     print("SELF-TEST PASSED (all assertions)")
     return 0
@@ -1548,10 +1770,10 @@ def main() -> int:
         help="Restore asset defaults for SCOPE: 'profiles' (all profile blocks), 'phase_profiles', "
              "a single <profile-name>, or omit SCOPE for both asset blocks. A whole-block scope "
              "('profiles'/both) also prunes profiles absent from the asset; a single <profile-name> "
-             "never prunes. Read-only plan unless --write. Never touches delegation/tea/git/code_review.")
+             "never prunes. Read-only plan unless --write. Never touches delegation/tea/git/code_review/build.")
     parser.add_argument("--write", action="store_true", help="With --reset: write the result (backs up to <config>.bak first).")
     parser.add_argument("--config", help="Runtime config.yaml to inspect/heal.")
-    parser.add_argument("--asset-profiles", help="Shipped profiles.yaml. Default: assets/agents/profiles.yaml next to this script.")
+    parser.add_argument("--asset-profiles", help="Shipped profiles.yaml. Default: assets/profiles.yaml next to this script.")
     parser.add_argument("--asset-config-defaults", help="Shipped config-defaults.yaml (setup-block defaults). Default: assets/config-defaults.yaml next to this script; absent => setup heal skipped.")
     parser.add_argument("--module-yaml", help="module.yaml to read module_version from. Default: assets/module.yaml next to this script.")
     parser.add_argument("--module-version", help="Override the module version (else read from --module-yaml).")

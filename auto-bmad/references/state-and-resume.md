@@ -185,13 +185,14 @@ The state file is a **machine-readable contract**, not a prose log — the sourc
 - Prose belongs in `reports/{key}.md`, not here.
 
 ```yaml
-story_key: 1-2-user-auth
-epic_num: 1
-story_num: 2
-branch: story/1-2-user-auth
+story_key: 2-6a-digest-delivery
+epic_num: 2
+story_num: 6
+story_suffix: "a"           # split-story suffix from the key grammar ^(\d+)-(\d+)([a-z]?)-.+ ; "" when none
+branch: story/2-6a-digest-delivery
 status: in-progress         # in-progress | done
-updated_at: "2026-05-28T14:04:41Z"  # ISO-8601 UTC; set by the orchestrator after every phase write
-started_at: "2026-05-28T13:55:02Z"  # ISO-8601 UTC; stamped ONCE at the Phase 1 write, never rewritten (survives resume)
+updated_at: "2026-05-28T14:04:41Z"  # ISO-8601 UTC; stamped by state_update.py on every write
+started_at: "2026-05-28T13:55:02Z"  # ISO-8601 UTC; stamped ONCE at the Phase 1 init, never rewritten (survives resume)
 completed_at: null          # ISO-8601 UTC; set when status flips to done (Phase 9 finalize); null while in-progress
 active_seconds: 0           # wall-clock spent EXECUTING phases (delegate runtime + orchestrator work up to
                             #   the pause; the state write + commit land after it), summed across sessions.
@@ -200,46 +201,55 @@ timing_anchor: null         # epoch seconds while a phase (or a bracketed user p
                             #   idle. Non-null on resume = crash tail (timing notes below).
 is_first_in_epic: false
 is_last_in_epic: false
-needs_project_context_bootstrap: false  # decided at Phase 0 (carried into Phase 1's init --json — no state file exists during Phase 0); flipped to false by Phase 2's bootstrap sub-step
 git_mode: remote
 base_branch: main
-tea_risk: high                   # low|med|high from Phase 0 triage; gates per-story TEA + the long-epic trace advisory
+tea_risk: high                   # low|med|high from Phase 0 triage (input: the epics doc entry); gates per-story TEA + the trace advisory
 tea_selected: [atdd, automate]   # from triage; [] if trivial or TEA off; may also include trace-advisory (long-epic high-risk)
 tea_rationale: "touches auth -> High risk"
 epic_story_count: 12             # stories under epic {e} (from sprint-status); gates the long-epic trace advisory
-stories_after_in_epic: 7         # epic stories ordered after this one (0=last); with epic_story_count, drives the trace-advisory distance gate (skip the last skip_last_stories)
-completed_phases: [0, 1, 2, 3, 4, 5, 6] # phase numbers from pipeline.md; gate-false no-op phases land here too (override-window skips do NOT); Phase 2 only once BOTH its sub-step gates resolved (ran, or gate false)
-code_review_iterations: 1      # the review-loop iteration currently in progress (1-based); a mid-iteration resume re-runs this iteration from step 1 (one redundant review pass is the cost of a rare crash — there is no mid-iteration capsule). A value ABOVE code_review.max_iterations is a user-granted extension from the step-4 halt — gate it as the final iteration (--max-iterations {code_review_iterations}, pipeline.md step 3)
-code_review_loop_done: false   # set true when the review loop exits (converged or capped); flipped back to false when the user extends the loop at the step-4 halt; on resume, true => re-open the Phase 7 HITL halt instead of re-iterating — UNLESS the step-4 skip gate applies (convergence_unverified=false, a clean convergence), in which case proceed to the Phase 7 tail without re-opening
-hitl_halt: null                # Phase 7 step-4 outcome once the loop is done: "continued" | "stopped" | "skipped (clean convergence)" | "auto-continued (epic — no halt)" (epic mode never opens the halt) | null (not yet reached; also reset to null when the user extends the loop at the halt — it resolves at the next exit)
-external_review_iterations: 0  # Phase 7 post-halt re-reviews of external-review changes run on Continue (single-shot — at most one per run; resumes can accumulate more); 0 if none
-convergence_unverified: false  # true if the review loop hit max_iterations while the last pass still hadn't converged (review_loop.py's convergence rule: a non-deferred Critical/High/untagged finding, or >3 non-deferred findings that aren't all Low) (Phase 7); ALSO set when a post-halt re-review surfaced meaningful external-change findings and the user chose to continue with them open, or Phase 7 was skipped by the `skip code-review` override (zero review passes), or — in EPIC mode — any `[Review][Decision]` was auto-resolved at Critical/High severity (a best-guess on a high-severity item ships as a draft for human review; epic-pipeline.md E5f/E_review) -> Phase 9 opens the PR as a draft. CLEARED when the user extends the loop at the step-4 halt — the extended pass re-verifies it and the gate re-decides
-story_trace: null              # Phase 7 tail trace advisory result, or null if not selected / not yet run:
-                               #   {verdict: PASS|CONCERNS|FAIL, uncovered: [..], ran: true}. Advisory only — never blocks/drafts; non-null = done (resume marker)
-commits: [a1b2c3d, e4f5g6h]
-phase8_steps:                # per-sub-step epic-end resume markers, recorded in each sub-step's folded state
-  trace_gate: null           #   write: null (not yet run) | done; trace_gate may also be waived | failed.
-  nfr: null                  #   A mid-Phase-8 crash resumes at the first null instead of re-running completed
-  test_review: null          #   delegations; Phase 8 joins completed_phases only once all seven markers resolve
-  project_context: null      #   (ran, or its gate was false).
-  reconcile: null            #   delegated pre-archive pass: mark ledger items whose deferred work fully landed but went unmarked
+stories_after_in_epic: 7         # epic stories ordered after this one (0=last); with epic_story_count, drives the trace-advisory distance gate
+completed_phases: [0, 1, 2, 3]   # phase numbers from pipeline.md; gate-false no-op phases land here too (override-window skips do NOT); Phase 8 only once all six phase8_steps markers resolve
+spec_path: null                  # absolute path of the story's bmad-build-auto spec (found by story_plan.py --find-spec after the Phase 3 halt); every later phase reads it from here
+spec_approved: false             # true once the opt-in spec-approval halt was answered Approve, or immediately when approval is not required (build.spec_approval false and no `approve spec` override); resume re-opens the halt while false and required
+build:                           # last bmad-build-auto result for this story (Phase 5, refreshed by every Phase 7 pass) — from story_plan.py --spec
+  status: null                   #   draft | ready-for-dev | in-progress | in-review | done | blocked | null (not yet run)
+  blocking_condition: null       #   when status is blocked: the spec's `## Auto Run Result` `Blocking condition:` line if present, else the condition the delegate reported, else "(not stated)" (the frontmatter status is authoritative; the result lines are optional — pipeline.md Phase 5)
+  followup_review_recommended: false
+  review_loop_iteration: 0
+  deferred_count: 0              #   items in the spec's frontmatter `deferred:` list
+  warnings: []                   #   spec frontmatter `warnings` (e.g. oversized, multiple-goals) — a flat list inside the map; round-trips
+followup_passes: 0               # Phase 7 follow-up build-auto review passes run (incl. external-change re-reviews)
+hitl_halt: null                  # Phase 7 halt outcome: "continued" | "stopped" | "skipped (clean)" | "auto-continued (epic — no halt)" | null (not yet reached)
+review_unverified: false         # draft-predicate clause 2: `skip code-review`, or the spec still says followup_review_recommended: true after Phase 7's last pass (incl. followup: never) -> Phase 9 opens the PR as a draft
+story_trace: null                # Phase 7 tail trace advisory: {verdict: PASS|CONCERNS|FAIL, uncovered: [..], ran: true}; non-null = done (resume marker); verdict is delegate-derived from the skill's coverage numbers — advisory only, never blocks/drafts
+commits: [a1b2c3d, e4f5g6h]      # orchestrator commits (sha-lag rule) + build-auto's own commits (git log <head_before>..HEAD around every build-auto invocation — pipeline.md cross-phase rules)
+phase8_steps:                    # per-sub-step epic-end resume markers, recorded in each sub-step's folded state write:
+  trace_gate: null               #   null (not yet run) | done; trace_gate may also be waived | failed. A mid-Phase-8 crash
+  nfr: null                      #   resumes at the first null instead of re-running completed delegations; Phase 8 joins
+  test_review: null              #   completed_phases only once all six markers resolve (ran, or its gate was false)
+  reconcile: null                #   delegated pre-archive pass: mark ledger items whose deferred work fully landed but went unmarked
   archive: null
   retro: null
-gate_decision: null          # PASS|CONCERNS|FAIL|WAIVED (last story only)
-gate_iterations: 0           # Phase 8 trace-gate remediation passes run (automate+re-trace); capped by tea.gate_max_iterations; resume continues mid-loop
-deferred_work_archived: 0    # Phase 8 (last story only): count of resolved entries moved from deferred-work.md to the deferred-work-resolved.md archive
+gate_decision: null              # PASS|CONCERNS|FAIL|WAIVED (last story only)
+gate_iterations: 0               # Phase 8 trace-gate remediation passes run (automate+re-trace); capped by tea.gate_max_iterations; resume continues mid-loop
+deferred_work_archived: 0        # Phase 8 (last story only): count of resolved entries moved from deferred-work.md to the deferred-work-resolved.md archive
+retro:                           # epic-end retrospective (last story only)
+  doc: null                      #   path of <impl>/epic-{e}-retro-<date>.md
+  verdict: null                  #   accepted | accepted-with-open-items | rejected | null
+  open_action_items: 0           #   open/in-progress action_items for this epic after the retro (sprint_plan.py status)
+bmad_status_flipped_at: null     # 8 (pre-retro flip, last story) | 9 (finalize) | null — which phase flipped the sprint entry to done
 pr_url: null
-ci_run_url: null             # link to the CI run the PR/push triggered, if the repo has workflows
-ci_status: unknown           # passed|failed|timeout|none|unknown — set only when Phase 9 waited (offer_merge on); else 'unknown'
-pr_merged: false             # true only if the user chose a merge style in Phase 9's merge prompt and `gh pr merge` succeeded
-merge_method: null           # squash|merge|rebase|null — null if not merged or prompt was skipped
-merge_commit: null           # full SHA of the merge commit on the base branch, or null
-branch_deleted: false        # true if --delete-branch was used in the successful merge
+ci_run_url: null                 # link to the CI run the PR/push triggered, if the repo has workflows
+ci_status: unknown               # passed|failed|timeout|none|unknown — set only when Phase 9 waited (offer_merge on); else 'unknown'
+pr_merged: false                 # true only if the user chose a merge style in Phase 9's merge prompt and `gh pr merge` succeeded
+merge_method: null               # squash|merge|rebase|null — null if not merged or prompt was skipped
+merge_commit: null               # full SHA of the merge commit on the base branch, or null
+branch_deleted: false            # true if --delete-branch was used in the successful merge
 open_questions: []
 deferred_work: []
-blockers: []                 # each: short human-action description
-overrides: {}                # this run's normalized invocation overrides (see overrides.md); {} if none
-constraints: []              # caller-supplied constraints carried in via invocation (e.g. exact-string requirements); [] if none
+blockers: []                     # each: short human-action description
+overrides: {}                    # this run's normalized invocation overrides (see overrides.md); {} if none
+constraints: []                  # caller-supplied constraints carried in via invocation (e.g. exact-string requirements); [] if none
 ```
 
 The **timing** fields are script-owned — all clock arithmetic lives in `scripts/state_update.py`.
@@ -260,22 +270,22 @@ The **epic anchor** — one per epic run, the cursor + epic-level bookkeeping fo
 Meaningful reused fields:
 - `story_key: epic-{e}`, `epic_num`, `status`, `branch` (`epic/{e}-{slug}`).
 - The timing fields.
-- `completed_phases` — the epic **E-steps** as ints.
+- `completed_phases` — the epic **E-steps** as ints (`E0→0`, `E1→1`, `E2→2`, `E5→5`, `E8a→81`, `E8b→82`, `E_final→9`).
 - `gate_decision` / `gate_iterations` — epic-end trace gate.
 - `deferred_work_archived`.
-- `convergence_unverified` — aggregated up from the per-story thin reviews + the Tier-B integration review; drives the epic PR draft predicate.
+- `review_unverified` — aggregated from the landed stories (any story's `review_unverified: true`, or the `skip code-review` override); drives the epic PR draft predicate.
+- `retro` — the E8b retrospective block (`doc` / `verdict` / `open_action_items`), same shape as per story.
+- `bmad_status_flipped_at` — `82` (E8b pre-retro batch flip) | `9` (E_final) | null.
 - `pr_url` / `ci_run_url` / `ci_status`.
 - `blockers` / `open_questions` / `deferred_work` — the epic rollup.
 - The merge fields.
-- `story_num` stays null.
+- `story_num` / `story_suffix` / `spec_path` / `build` / `hitl_halt` stay at their defaults — per-story concerns live in the per-story files.
 
 Plus net-new epic fields that ride as **preserved extras** — NOT in the per-story `SCHEMA_ORDER`, so they cost no lockstep change (`state_update.py` keeps unknown fields verbatim):
 - `active_story` — the loop cursor (the `{key}` being processed, or null before E5 / after E_final).
-- `stories_landed` — the `{key}`s this run actually processed (drives the batch BMAD-status flip + the report rollup).
+- `stories_landed` — the `{key}`s this run actually processed (drives the batch BMAD-status flip + the report rollup; E0-skipped stories never join it).
 - `epic_slug` — the resolved branch/PR slug (stored so resume reuses it, never re-derives a different one).
-- `auto_decisions` — the `[Review][Decision]` items this epic auto-resolved with the triage's recommendation (Tier A + E_review), each a one-line `"<title> [<sev>] → <fix|defer|dismiss>: <direction> (<context>)"`; rendered into the E_final report's `auto_decided` section. A Critical/High entry also set `convergence_unverified` (the epic PR ships a draft — `epic-pipeline.md` E5f).
-- `uat_items` — the per-story manual UAT one-liners accumulated across the loop; E5 appends each landed story's `[{key}]`-tagged check items in the SAME `set` write as `stories_landed` (so a crash between them can't double-append on resume). The E_final `uat (epic)` consolidation delegate composes them into the single-session checklist rendered in the epic report's **UAT** section.
-- `batch_flip_done` / `integration_review_done` — idempotency markers for E_final / E_review on resume.
+- `batch_flip_done` — idempotency marker for the E8b/E_final batch BMAD-status flip on resume.
 
 Ownership split — full flow: `epic-pipeline.md`.
 - The per-story `state/{key}.yaml` files still exist (one per story the loop touches) and own intra-story resume.
@@ -350,7 +360,9 @@ The per-story report is a **log**, not a single overwritten document.
 - **Each section is a session delta, not a cumulative rollup** — `Phases run` / `Skipped` cover this session alone; a resume carries a `Continues:` back-reference. Don't re-derive an earlier (possibly cross-tool) run's TEA counts or review tally into a later section.
 - **Tag the `## Report` heading with this section's terminal disposition** — read the last tag to know where the story stands. Closed vocabulary: `(final)` (clean, BMAD status flipped `done`), `(final — caveated)` (finalized but left at `review`: draft PR / blocker / waived gate / CI red), `(halted — <reason>)` for a stop before Phase 9 (`needs-human`, `override stop_before: <phase>`, `override stop_after: <phase>` — the override tokens spelled as in `overrides.md`). Lineage is not in the tag — a prior section plus the `Continues:` line already mark a resume. (A clause-4 caveat — CI red/timeout — resolves only *after* the pre-push write, so it shows up in the chat report and in a later resume section's tag, never in the section written before push.)
 - The **only** overwrite is a deliberate full re-run of an already-`done` story, after explicit user confirmation ("overwrite the existing report log for {key}?") — only then pass `--overwrite-confirmed` (without the flag the script always appends); if declined, append instead.
-- **Epic mode** writes ONE epic report — `reports/epic-{e}.md`, via `state_update.py report-section --epic` (the epic-rollup template + its own `EPIC_REPORT_PAYLOAD_KEYS` allowlist): epic header, the per-story rollup, the integration-review + epic-gate verdicts, a single-session **UAT** checklist (`uat` — composed across all stories by the E_final `uat (epic)` consolidation), an **Auto-decided (epic mode)** section (`auto_decided` — every `[Review][Decision]` the run auto-resolved with the triage's recommendation, Tier A + E_review), and the aggregated open-findings / deferred checklist. It replaces the per-story reports (per-story detail lives in the per-story state files + the rollup), committed once pre-push as `docs(epic-{e}): pipeline report`. Same append + disposition-tag rules as above (`epic-pipeline.md` E_final).
+- **Epic mode** writes ONE epic report — `reports/epic-{e}.md`, via `state_update.py report-section --epic` (the epic-rollup template + its own `EPIC_REPORT_PAYLOAD_KEYS` allowlist): epic header, the per-story rollup, the skipped stories, the epic-gate + TEA outcomes, the retrospective verdict, and the aggregated open-questions / deferred checklist. It replaces the per-story reports (per-story detail lives in the per-story state files + the rollup), committed once pre-push as `docs(epic-{e}): pipeline report`. Same append + disposition-tag rules as above (`epic-pipeline.md` E_final).
+  **`--json` payload keys (exact names — unknown keys are REJECTED):** `disposition_tag`, `pipeline_status`, `continues`, `epic_summary`, `story_rollup` (list — one line per landed story: build status / review passes / deferred / trace), `stories_skipped` (list — one line per story with its reason: `already done` or the E0 skip note), `epic_gate`, `tea`, `retro` (verdict + open action items + doc path), `overrides`, `open_questions` (list), `deferred_work` (list) + `deferred_archived_note`, `needs_human` (list), `next` (includes the `/bmad-project-context refresh` recommendation), `head_sha`.
+  Rendered order: **Epic** / **Branch** / **Pipeline status** / **Continues** / **Summary** / **Timing** / **Stories** / **Skipped** / **Epic gate** / **TEA** / **Retrospective** / **Overrides** / **Open questions** / **Deferred work** / **⚠️ Needs human** / **Next**.
 
 ### Section template (use literally, in this order)
 This template is the **single home** for the file portion's fields, heading order, and per-field semantics.
@@ -361,36 +373,39 @@ This template is the **single home** for the file portion's fields, heading orde
   - A heading is never dropped — an empty field keeps its heading with `(none)`.
 - Timing-split semantics: the timing fields above.
 
-**`--json` payload keys (exact names — the script REJECTS unknown keys, because a misspelled key would silently render its heading `(none)`):** `disposition_tag` (the heading tag), `pipeline_status`, `continues`, `phases_run`, `skipped`, `overrides`, `tea`, `code_review`, `uat` (list), `open_questions` (list), `deferred_work` (list) + `deferred_archived_note` (the Phase 8 reconcile + archive line appended under it), `planning_drift`, `needs_human` (list — the ⚠️ heading), `next`, `head_sha` (the Branch line's short SHA).
+**`--json` payload keys (exact names — the script REJECTS unknown keys, because a misspelled key would silently render its heading `(none)`):** `disposition_tag` (the heading tag), `pipeline_status`, `continues`, `phases_run`, `skipped`, `overrides`, `tea`, `build`, `review`, `retro`, `open_questions` (list), `deferred_work` (list) + `deferred_archived_note` (the Phase 8 reconcile + archive line appended under it), `needs_human` (list — the ⚠️ heading), `next`, `head_sha` (the Branch line's short SHA). The **Spec** line is not a payload key — it renders the state's `spec_path`.
+
+Renderer defaults when a key is absent: `Overrides` → `none`, `Build` → `not run`, `Review` → `skipped`, `Retrospective` → `(none)`, `Continues` → `(none — first run)`, every list block → `(none)`.
 
 ```markdown
 ## Report — <ISO timestamp UTC> (<disposition tag — the closed vocabulary above: (final) / (final — caveated) / (halted — <reason>) — tagging the heading keeps the log skim-readable from its outline>)
 
 **Story:** `{key}` (epic {e}, story {s}) — {first-in-epic? / last-in-epic? / mid-epic}.
+**Spec:** `<spec_path>` (from state; `(none)` before Phase 3)
 **Branch:** `<branch>` (HEAD `<short-sha>`).
-**Pipeline status:** <one-line summary, e.g. ✅ clean completion / halted at Phase 5 (needs-human) / draft (CI red)>.
+**Pipeline status:** <one-line summary, e.g. ✅ clean completion / halted at Phase 5 (needs-human: build-auto blocked) / draft (CI red)>.
 **Continues:** <on a resume, the prior section's ISO timestamp + its tag, e.g. `2026-05-29T15:05:06Z (halted — override stop_before: 7)`; `(none — first run)` on a first run — keep the line either way, like every other heading>.
 
 **Timing:** started <ISO>; completed <ISO, or "in progress"> — elapsed <Hh Mm> (≈<Hh Mm> AI-run, ≈<Hh Mm> human/idle wait)<; resumed N× if >1 session>.
 
-**Phases run:** <comma-joined Phase N list for THIS session, with profile in parens for delegated phases; on a resume this is the session delta — earlier phases live in the section named by `Continues:`>.
+**Phases run:** <comma-joined Phase N list for THIS session, with profile/model in parens for delegated phases; on a resume this is the session delta — earlier phases live in the section named by `Continues:`>.
 **Skipped:** <comma-joined Phase N list with reason in parens; this session>.
 
-**Overrides:** <one line — the invocation overrides applied this run (phase window, skips, caps); "none" if no invocation overrides applied>.
+**Overrides:** <one line — the invocation overrides applied this run (phase window, skips, approve spec); "none" if no invocation overrides applied>.
 
 **TEA:** <which skills ran and their one-line outcome; "disabled" if tea.enabled=false; epic-gate decision if last story; for the per-story trace advisory, its verdict + any uncovered ACs (advisory, non-blocking)>.
 
-**Code review:** <iterations run; one line each: per-iteration verdict + severity counts in the fixed form `Critical N / High N / Medium N / Low N`; then the end-of-loop HITL-halt outcome (continued / stopped / skipped (clean convergence)); and, if external-review changes triggered a post-halt re-review, its verdict/counts and the user's continue / stop decision; "skipped" if no review>.
+**Build:** <build-auto result: spec status; review_loop_iteration; deferred N (harvested to the ledger); warnings; commits by build-auto; "not run" if Phase 5 never ran>.
 
-**UAT:** <numbered manual User-Acceptance-Testing checklist — what a human can exercise BY HAND at THIS implementation state; one item per line, each an action → expected result, scoped to the acceptance criteria actually satisfied (never aspirational / full-feature steps). The producing `uat` delegate (Phase 9 head per story; E5 per story + the E_final consolidation in epic mode) ALWAYS returns ≥1 item: when nothing is manually testable yet (pure internal refactor, infra-only, no human-observable surface) it returns ONE line saying exactly that + the reason. "(none)" renders only when the step did not run — a halt before Phase 9 / E_final, or the `skip uat` override>.
+**Review:** <follow-up passes N (profile / cli route); last pass patch/bad_spec/defer/reject counts; followup still recommended?; HITL halt outcome (continued / stopped / skipped (clean) / auto-continued (epic — no halt)); review_unverified; "skipped" if no follow-up review>.
+
+**Retrospective:** <epic-end only: verdict; N open action items (listed); doc path; "(none)" otherwise>.
 
 **Open questions:** <numbered list, one per line — questions surfaced by any step; "(none)" if empty — keep the heading>.
 
-**Deferred work:** <numbered list, one per line — anything intentionally postponed (also appended to the durable cross-story `<impl>/deferred-work.md` ledger; cross-link it when items landed there); on the last story of an epic, add a line from Phase 8 covering the reconcile + archive (e.g. "marked 2 missed-completions; archived 6 resolved → deferred-work-resolved.md"; name each reconcile-marked item with its one-line evidence; omit the note if nothing was marked or moved); "(none)" if empty — keep the heading>.
+**Deferred work:** <numbered list, one per line — anything intentionally postponed (also harvested into the durable cross-story `<impl>/deferred-work.md` ledger; cross-link it when items landed there); on the last story of an epic, add a line from Phase 8 covering the reconcile + archive (e.g. "marked 2 missed-completions; archived 6 resolved → deferred-work-resolved.md"; name each reconcile-marked item with its one-line evidence; omit the note if nothing was marked or moved); "(none)" if empty — keep the heading>.
 
-**Planning drift:** <epic-end only — planning assumptions the retrospective proved wrong + the recommended re-sync (generate-project-context → /bmad-prd update; /bmad-correct-course if structural); non-blocking, never auto-run; "(none)" if clean or not epic-end>.
+**⚠️ Needs human:** <numbered list of blockers / manual actions. On a caveated completion these are required before the story can be considered done (it was left at `review`); on a clean completion the story is already `done` — list only genuine optional follow-ups (e.g. merging the open PR, the AGENTS.md block missing) and never imply the merge gates `done`; "(none)" if clean>.
 
-**⚠️ Needs human:** <numbered list of blockers / manual actions. On a caveated completion these are required before the story can be considered done (it was left at `review`); on a clean completion the story is already `done` — list only genuine optional follow-ups (e.g. merging the open PR, on the human's own time) and never imply the merge gates `done`; "(none)" if clean>.
-
-**Next:** <one line — the story `story_plan.py` would pick next; preview only — do NOT start it>.
+**Next:** Human review: `/bmad-checkpoint-preview <pr_url | branch>` (spec: `<spec_path>`); then `/auto-bmad` (sprint_plan.py status recommends the next story). <epic end: "Project context: run /bmad-project-context refresh (recommended after an epic)."> — preview only; do NOT start the next story.
 ```
