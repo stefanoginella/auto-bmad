@@ -1,7 +1,8 @@
 ---
 name: auto-bmad
-description: "Run the FULL BMAD build lane end-to-end — one story at a time, or an ENTIRE EPIC in one run with `epic`. Use when the user says 'auto-bmad', 'run auto-bmad', 'implement the next story', 'auto implement story X-Y', 'auto-bmad epic', 'implement the whole epic N', or wants the bmad-build-auto plan -> build -> follow-up review pipeline (+ risk-gated TEA + epic-boundary gates/retrospective) driven automatically on a branch with a PR at the end."
+description: "Run the FULL BMAD build lane end-to-end — one story at a time, or an ENTIRE EPIC in one run with `epic`."
 argument-hint: "[epic [--epic <N>] | --story <id> | setup | reprovision | reset-defaults | config-check | <overrides… e.g. approve spec, stop before review, start at phase 5, skip tea, dry run>]"
+disable-model-invocation: true
 ---
 
 # auto-bmad orchestrator
