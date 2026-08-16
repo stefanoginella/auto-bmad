@@ -124,11 +124,10 @@ Always produce a report (even on hard-stop). The report is **split**:
 
 The one-line *disposition* is **not** in that wrapper — it lives in the file's `Pipeline status` line. Both halves are always printed to the user.
 
-- **File portion** — the persistent log under `<output_folder>/auto-bmad/reports/{key}.md` (epic mode: `reports/epic-{e}.md`, rendered with `report-section --epic`):
-  - On a clean path Phase 9 / E_final already wrote + committed it **before push** (`docs(story-{e}-{s}): pipeline report` / `docs(epic-{e}): pipeline report`) — Step 3 does not re-write it.
-  - On any path that didn't reach that pre-push write (a hard-stop in Phases 0–8, `needs-human`, a `stopped` halt, or an override that ended the run early) → Step 3 writes it now as a fallback: append a new `## Report — <ISO timestamp>` section, tagged `(halted — <reason>)` on this pre-finalize path, preserving any earlier sections; **no commit** (the human commits alongside their fix).
-  - On a hard-stop BEFORE Phase 1's `init` (no state file yet — e.g. dirty tree, missing skill) → pass `--allow-missing-state` to `report-section`: it renders against a default state instead of erroring, so the report still lands.
-  - Appends, never overwrites — incl. on resume; the one confirmed-overwrite exception (`--overwrite-confirmed`) is in `references/state-and-resume.md` → "reports/{key}.md".
+- **File portion** — the persistent log under `<output_folder>/auto-bmad/reports/{key}.md` (epic mode: `reports/epic-{e}.md`, rendered with `report-section --epic`). Its lifecycle rules — append-only, the disposition tags, the pre-push write, the one confirmed-overwrite exception — are in `references/state-and-resume.md` → "reports/{key}.md". Step 3's own part:
+  - Clean path: Phase 9 / E_final already wrote + committed it before push — Step 3 does not re-write it.
+  - Any path that didn't reach that pre-push write (a hard-stop in Phases 0–8, `needs-human`, a `stopped` halt, or an override that ended the run early) → Step 3 appends the section now as a fallback, tagged `(halted — <reason>)`; **no commit** (the human commits alongside their fix).
+  - A hard-stop BEFORE Phase 1's `init` (no state file yet — e.g. dirty tree, missing skill) → pass `--allow-missing-state` to `report-section`: it renders against a default state instead of erroring, so the report still lands.
 - **Chat-only** — printed at the end of every run; not written to the file: the full file portion, **plus** the artifact lines listed under "Chat-only — additional lines" below.
 
 **File portion — fields:** the file portion's fields, heading order, and per-field semantics live in `references/state-and-resume.md` → "Section template" — the **single home**, rendered literally by `scripts/state_update.py report-section` (payload keys are exact; unknown keys are rejected). Don't restate or restructure them here.

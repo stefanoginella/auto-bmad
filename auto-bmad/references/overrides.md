@@ -39,14 +39,14 @@ Parse the invocation text into the **normalized override set** below, **echo the
 - **start_phase / stop_*:** define the active window.
   - Run a phase only if it's within `[start_phase, stop_after]` (inclusive) and before any `stop_before`.
   - Phases outside the window are recorded as skipped in state with the reason `override`.
-  - A `start_phase` that re-enters a phase whose sprint-status write-back is **below** the entry's current status is a sanctioned regress path — that flip passes `story_plan.py --mark-status … --allow-regress` (`state-and-resume.md`). Any other `refusing to regress` exit stays a hard-stop.
+  - A `start_phase` that re-enters a lower phase is a sanctioned regress path (`state-and-resume.md`).
 - **skip pr** / **git_mode local:** Phase 9 pushes/opens nothing; the branch is left in place and noted in the report.
 - **skip tea:** treat `tea.enabled` as false for this run.
   - No Phase 0 TEA triage; skips Phases 4 and 6, Phase 2 (epic test design), the Phase 8 TEA gates, and the Phase 7 tail trace advisory.
   - The retrospective still runs.
 - **skip 7 / skip review / skip followup (any phase-7 skip):** normalized to `skip code-review` — echo it as `skip code-review` in the override echo and state; no follow-up pass, `review_unverified: true` (draft-predicate clause 2), and the Phase 7 halt + tail (trace advisory, deferred harvest) still run.
 - **skip code-review:** no Phase 7 follow-up pass AND `review_unverified: true`.
-  - `review_unverified` is draft-predicate clause 2 ⇒ the PR opens as a **draft** and the story stays at `review`.
+  - `review_unverified` ⇒ draft PR and the story stays at `review` (`git-and-pr.md` → "Draft predicate", clause 2).
   - Combine with `no_pr_draft` to ship non-draft anyway — the story still stays at `review`.
   - The Phase 7 halt still opens (its **Continue — ship as ready** option sets `no_pr_draft` interactively) and the Phase 7 tail (trace advisory, deferred harvest) still runs.
   - ⚠️ The second-model quality gate is removed — flag prominently. build-auto's built-in review still ran in Phase 5.
@@ -66,7 +66,7 @@ Parse the invocation text into the **normalized override set** below, **echo the
   - Phase 9 still pushes and opens the PR.
   - It does **not** wait for CI.
   - It does **not** ask whether to merge.
-  - `ci_status` is recorded as `unknown`; the existing draft-predicate clauses 1–3 (no CI gate) decide draft vs non-draft.
+  - `ci_status` is recorded as `unknown`; clauses 1–3 decide draft (`git-and-pr.md` → "Draft predicate").
   - The PR stays open for the human to merge on their own time.
 - **spec_approval:** Phase 3 ends with the spec-approval halt — `pipeline.md` Phase 3 step 6.
 - **no_pr_draft:** adjusts only the Phase 9 draft decision (`state_plan.py --finalize --no-pr-draft`); every caveat still lands in the report and PR body.

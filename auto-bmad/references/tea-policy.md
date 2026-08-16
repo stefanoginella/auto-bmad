@@ -55,8 +55,8 @@ A story-scope `bmad-testarch-trace` pass at the **tail of Phase 7** — after th
 
 Select `trace-advisory` (add it to `tea_selected`) at Phase-0 triage **iff all** of these hold:
 - `tea.enabled` is true **and** `tea.story_trace_advisory.enabled` (default true).
-- `tea_risk == high` — because only high-risk stories make an uncovered AC costly enough for the extra pass.
-- `stories_after_in_epic >= tea.story_trace_advisory.skip_last_stories` (default 3) — because an advisory on the epic's last few stories near-duplicates their imminent epic-end gate.
+- `tea_risk == high`.
+- `stories_after_in_epic >= tea.story_trace_advisory.skip_last_stories` (default 3).
   - `stories_after_in_epic` = how many stories in this epic come after this one: 0 for the last, 1 for second-to-last, and so on.
   - So `>= 3` skips the last three stories.
 - `epic_story_count >= tea.story_trace_advisory.min_epic_stories` (default 6) — the **long-epic gate**: dormant on short epics (their epic-end gate is already near), self-activating on long ones.
