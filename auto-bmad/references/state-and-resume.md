@@ -138,9 +138,7 @@ overrides: {}                    # this run's normalized invocation overrides (s
 constraints: []                  # caller-supplied constraints carried in via invocation (e.g. exact-string requirements); [] if none
 ```
 
-The **timing** fields are script-owned — all clock arithmetic lives in `scripts/state_update.py`.
-- Bracket work: `timing-start` before delegating a phase, `timing-pause` when it returns (just before the phase's state write + commit).
-- Invert the bracket around any `AskUserQuestion` — pause before the prompt, start after — so user waits land on idle, not active. On a resume that re-opens a halt (spec-approval halt, Phase 7 `hitl_halt: stopped`) skip the `timing-pause` — the prior session already paused and the anchor is null — and `timing-start` after the prompt as usual.
+The **timing** fields are script-owned — all clock arithmetic lives in `scripts/state_update.py`. When to bracket (and how to invert a bracket around a user prompt): `pipeline.md` → "Timing".
 - A non-null `timing_anchor` on resume is a crash tail: the next `timing-start` re-anchors and conservatively discards the dangling interval (reported as `dropped_anchor: true`).
 - Report derivation (`state_update.py report-section`) — best-effort host wall-clock, not token-compute time:
   - **elapsed** = `completed_at − started_at` (includes resume gaps).
@@ -191,13 +189,8 @@ No-arg `/auto-bmad` chooses the target story with this precedence (an explicit `
      - `resume: true` ⇒ resume `target` (the most-recently-updated in-flight story; its record's `branch` feeds the resume preflight's `--expected-branch`); `extra_in_flight` lists any others to mention in the report.
      - `resume: false` (empty/absent dir, or all `done`) ⇒ fall through to the sprint-status pick.
    - Epic-ownership guard: `state_plan.py --state-dir … --scope epic` — an in-flight anchor whose `epic_num` matches the target's epic ⇒ hard-stop → `/auto-bmad epic --epic {e}`.
-2. **Else the upstream sprint-status picker** (runs after the full preflight, which supplies `skills.sprint_plan_script`):
-   ```
-   uv run <sprint_plan_script> status --status-file <impl>/sprint-status.yaml --date "<now MM-DD-YYYY HH:MM>"
-   ```
-   - `ok: false` ⇒ hard-stop with its `error`. `all_done: true` (⇔ `recommendation` null) or `recommendation.story_key` null ⇒ hard-stop `all stories are done — nothing for auto-bmad to run` (+ ` (retrospective for epic N is still optional: run /bmad-retrospective -H N)` when `recommendation.skill == bmad-retrospective` — N = the epic number in `recommendation.reason` (`epic-N-retrospective`; the recommendation carries no epic field)).
-   - Else target = `recommendation.story_key` (auto-bmad ignores `recommendation.skill`). Its precedence — `in-progress → review → ready-for-dev → backlog → retrospective` — resumes BMAD-level unfinished work first. Echo `risks` / `warnings` / `illegal` / `unrecognized` (warn: `sprint-status.yaml has illegal/unrecognized entries — run /bmad-sprint-planning validate`); keep `open_action_items` for the plan carry-over and the report.
-3. Then always `story_plan.py --epic {e} --sprint-status <impl>/sprint-status.yaml --planning-dir <planning>` for the target's `is_first_in_epic` / `is_last_in_epic` / `epic_story_count` / `stories_after_in_epic` / `epic_status` / `retrospective_status` / `title` / `epic_title` (the `--resolve` output already carries the story fields; the `--epic` read is the single source in epic mode).
+2. **Else the upstream sprint-status picker** — the call, its JSON contract and its hard-stops: `pipeline.md` Phase 0 step 5 (it runs after the full preflight, which supplies `skills.sprint_plan_script`). Its own precedence — `in-progress → review → ready-for-dev → backlog → retrospective` — resumes BMAD-level unfinished work first, which is why step 1 (an in-flight auto-bmad state file) still wins over it.
+3. Then always the `story_plan.py --epic {e}` read — `pipeline.md` Phase 0 step 5 (the `--resolve` output already carries the story fields; the `--epic` read is the single source in epic mode).
 
 **Why a finished story doesn't re-stick (clean completions).**
 - The sprint entry is flipped to `done` on a clean completion — Phase 8 (pre-retro flip, last story) or Phase 9 (`state_plan.py --finalize` ⇒ `flip_bmad_status: true`, run through `story_plan.py --mark-status {key} --to done`; mechanics: `pipeline.md`) — else the picker would re-recommend it. The state file goes `status: done` too.
@@ -211,9 +204,9 @@ python3 {skill-root}/scripts/state_plan.py --state-dir {output_folder}/auto-bmad
 - `resume: true` (file exists, `status != done`) → **resume**:
   - Skip phases already in `completed_phases`.
   - Phase 3 routes by state `spec_path` + `story_plan.py --spec` status (the resume matrix in `pipeline.md` Phase 3): a null `spec_path` first probes `story_plan.py --find-spec`; a `draft` spec re-runs the plan; `ready-for-dev` skips the delegate; `blocked` ⇒ needs-human.
-  - Spec-approval re-open rule: `3 ∈ completed_phases`, `spec_approved: false` and approval required (`build.spec_approval` or `approve spec`) ⇒ re-open the approval halt before Phase 4/5.
+  - Spec-approval halt: re-opened before Phase 4/5 per `pipeline.md` Phase 3 step 6.
   - Phase 5 re-invokes build-auto with the spec path — build-auto routes by the spec's own status (`ready-for-dev` / `in-progress` / `in-review`); a `blocked` spec ⇒ needs-human (recovery text: `pipeline.md` Phase 5).
-  - Phase 7: a follow-up pass is atomic — re-run it in full (never reconstruct a half-finished pass). `hitl_halt` null and a halt is due ⇒ re-open it. **`hitl_halt: stopped` with 7 ∉ `completed_phases` ⇒ re-open the halt** — reset `hitl_halt` to null and re-ask; choosing Continue then runs the git-only external-change check as usual, so edits made while stopped get their single re-review (mirrors the spec-approval Stop rule). That check — git-only, own-writes excluded, incl. the `stopped`-reopen `--since=<state updated_at>` HEAD-moved variant — is defined in `pipeline.md` Phase 7 step 3 (read `updated_at` BEFORE the re-open reset write).
+  - Phase 7: a follow-up pass is atomic — re-run it in full (never reconstruct a half-finished pass). `hitl_halt` null and a halt is due ⇒ re-open it. **`hitl_halt: stopped` with 7 ∉ `completed_phases` ⇒ re-open the halt** — reset `hitl_halt` to null and re-ask; choosing Continue then runs the external-change check as usual, so edits made while stopped get their single re-review (mirrors the spec-approval Stop rule). That check is defined in `pipeline.md` Phase 7 step 3.
   - Phase 8 resumes by its `phase8_steps` markers (first null sub-step) — except `trace_gate: failed`, a parked verdict, not a resolved one: re-delegate **`testarch-trace (epic gate)`** and re-apply its verdict handling under the same `gate_iterations` cap (`pipeline.md` Phase 8); a non-`FAIL` verdict removes the earlier FAIL entry from `blockers[]` and re-derives `gate_decision`.
   - **Blockers clear on resume.** A blocked phase's `blockers[]` entries (a Phase 3 plan-time block's result-file path; a Phase 8 trace-gate `FAIL` Stop) are live only while the block stands: when that phase later completes on resume — the Phase 3 plan succeeds, a Phase 5 / Phase 7 build-auto run returns `done`, a re-run epic trace gate returns non-`FAIL` or the human waives it (`trace_gate: waived`) — remove that phase's entries via `state_update.py set` (`blockers: [<list without them>]`) before its `phase-done` write. Epic mode's E5h rollup then carries only live blockers.
   - Re-detect git mode/branch (cheap) rather than trusting stale values if the branch is missing — the resume preflight gets `--expected-branch <state branch>` (`state_plan.py --story-key` emits `branch`).

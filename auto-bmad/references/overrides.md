@@ -68,7 +68,7 @@ Parse the invocation text into the **normalized override set** below, **echo the
   - It does **not** ask whether to merge.
   - `ci_status` is recorded as `unknown`; the existing draft-predicate clauses 1–3 (no CI gate) decide draft vs non-draft.
   - The PR stays open for the human to merge on their own time.
-- **spec_approval:** Phase 3 ends with the spec-approval halt (`pipeline.md` Phase 3 step 6); **Stop** there parks the run at `stopped` and the next `/auto-bmad --story {key}` re-opens the halt.
+- **spec_approval:** Phase 3 ends with the spec-approval halt — `pipeline.md` Phase 3 step 6.
 - **no_pr_draft:** adjusts only the Phase 9 draft decision (`state_plan.py --finalize --no-pr-draft`); every caveat still lands in the report and PR body.
 
 ## Epic mode (`/auto-bmad epic`)
