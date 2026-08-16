@@ -49,7 +49,7 @@ Rules that hold across E-steps:
 ## E0 — Preflight, enumerate & adopt  *(orchestrator)*
 Runs during the SKILL procedure before any commit. **Phase 0 verbatim, in the `pipeline.md` Phase 0 order** — every step's inputs come only from earlier steps. Same probe discipline: one full `preflight.py` call; never a bare glob.
 
-Precondition (SKILL Step 0): `python3 {skill-root}/scripts/preflight.py --project-root <project_root> --central-config-only` — obey `hard_stop`; read `<output_folder>`, `<impl>`, `<planning>`, `project_name` from `central_config`; locate the runtime config `<output_folder>/auto-bmad/config.yaml` (absent ⇒ first-run flow, `state-and-resume.md`).
+Precondition (SKILL Step 0): `python3 {skill-root}/scripts/preflight.py --project-root <project_root> --central-config-only` — obey `hard_stop`; read `<output_folder>`, `<impl>`, `<planning>`, `project_name` from `central_config`; locate the runtime config `<output_folder>/auto-bmad/config.yaml` (absent ⇒ first-run flow, `config-commands.md`).
 
 0. **Overrides:** normalize per `overrides.md` (its "Epic mode (`/auto-bmad epic`)" section lists what composes and what is rejected — reject with the precise message — and owns `dry_run`'s semantics plus the epic plan it prints), echo. `dry_run` ⇒ here the read-only window is the E0 steps below (drift / adopt / gate facts print as notes) and the stop is before E1.
 1. **Host/tier:** resolve per `delegation-runtime.md` from the runtime config + detection.

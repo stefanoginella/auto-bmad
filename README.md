@@ -212,7 +212,7 @@ Swap the tools for the reverse. A plain no-arg `/auto-bmad` resumes the interrup
 - **`delegation.mode`** — `auto` (default: subagents where the host has them, else inline) | `subagents` | `inline`.
 - **`delegation.cli_phases`** — opt-in per-phase external-CLI routing (a phase→tool map, empty by default): delegates chosen phases to `claude -p` / `codex exec` / `opencode run` instead of an in-tool subagent, for cross-tool (and, via opencode, cross-vendor) diversity — e.g. `{ followup_review: codex }`; model + effort still come from that phase's profile.
 
-`/auto-bmad config-check` shows what an update would add and everything you've changed vs the shipped defaults, and offers to apply the update (append-only). See `references/state-and-resume.md` for the full schema and `references/delegation-runtime.md` for the delegation mechanics.
+`/auto-bmad config-check` shows what an update would add and everything you've changed vs the shipped defaults, and offers to apply the update (append-only). See `references/state-and-resume.md` for the full schema, `references/config-commands.md` for the config commands, and `references/delegation-runtime.md` (plus `references/cli-route.md`) for the delegation mechanics.
 
 ## Contributing
 

@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Delegate profiles simplified to three tiers: `light` / `standard` / `critical`.** Sonnet for
   mechanical steps, Opus by default, Fable only for the follow-up review; Codex runs
   `gpt-5.6-luna/terra/sol`. Old `ab-*` configs keep their mappings until `/auto-bmad reset-defaults`.
+- **A story run now loads less reference text.** The config commands moved to
+  `config-commands.md` and the opt-in external-CLI route to `cli-route.md`, so a plain run reads
+  neither. Behaviour unchanged.
 
 ## [0.27.2] - 2026-08-16
 

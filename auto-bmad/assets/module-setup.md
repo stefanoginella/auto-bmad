@@ -11,7 +11,7 @@ Registers this standalone module into a project. Module identity (name, code, ve
 - **Help catalog** — auto-bmad's own `{project-root}/_bmad/abm/module-help.csv` (the per-module file the BMAD installer merges on every install/update, so the rows survive a BMAD re-install) **plus** a merge into the live `{project-root}/_bmad/_config/bmad-help.csv` that `/bmad-help` reads (anti-zombie: existing `abm` rows are replaced before fresh ones are written, so stale values never persist). Never `_bmad/module-help.csv` — nothing upstream reads that legacy shared file any more.
 - **Review layers** — the marker-fenced managed region of `{project-root}/_bmad/custom/bmad-build-auto.toml` (`auto-bmad-security` / `auto-bmad-cross-model`, per the runtime config's `code_review.security_layer` / `cross_model_layer`), written by `./scripts/build_auto_custom.py` (see "Sync review layers" below). **Project-wide caveat:** these layers also run for a manual `/bmad-build-auto` in this project.
 
-auto-bmad has **no** install-time variables: **all** runtime settings live exclusively in auto-bmad's own config, `{output_folder}/auto-bmad/config.yaml`, written by the skill's **first-run flow** (`references/state-and-resume.md`) — **not** by this setup file. Nothing is rendered into the repo (no agent files): every pipeline step runs in a generic host subagent spawned with the phase profile's model.
+auto-bmad has **no** install-time variables: **all** runtime settings live exclusively in auto-bmad's own config, `{output_folder}/auto-bmad/config.yaml`, written by the skill's **first-run flow** (`references/config-commands.md`) — **not** by this setup file. Nothing is rendered into the repo (no agent files): every pipeline step runs in a generic host subagent spawned with the phase profile's model.
 
 **auto-bmad never writes the central BMAD config.** That file is installer-owned: `_bmad/config.toml` (+ `config.user.toml`, and the never-installer-touched `_bmad/custom/config.toml` / `config.user.toml`), resolved by BMAD's own `resolve_config.py`. auto-bmad neither reads nor writes an `abm` section in it — registering there would be inert (BMAD ignores it) and confusingly shadow the installer's own `[modules.abm]`. It READS the central config for `output_folder` and the BMM artifact paths ONLY through this call (the same one SKILL Step 0 and the On-activation gate make; obey its `hard_stop` — a missing/unparseable `_bmad/config.toml` or a `python3` older than 3.11 stops here):
 
@@ -55,7 +55,7 @@ It outputs JSON to stdout (anti-zombie: existing `abm` rows are replaced). If it
 
 **Do not write the central BMAD config — there is no config write here.** This is deliberate, not an omission:
 
-- auto-bmad's runtime settings are persisted to `{output_folder}/auto-bmad/config.yaml` by the **first-run flow**, which runs right after this file returns (see `references/state-and-resume.md`). Don't pre-write it here.
+- auto-bmad's runtime settings are persisted to `{output_folder}/auto-bmad/config.yaml` by the **first-run flow**, which runs right after this file returns (see `references/config-commands.md`). Don't pre-write it here.
 - The central `_bmad/config.toml` (+ layers) is **installer-owned**; a unified `_bmad/config.yaml` is inert (BMAD's `resolve_config.py` never reads it) and shadows the installer's layout. **Skip it.**
 - If auto-bmad was installed through BMAD's `--custom-source` installer, that installer has **already** registered `[modules.abm]` in `_bmad/config.toml` (and a per-module `_bmad/abm/config.yaml`). Leave those untouched — do not duplicate or rewrite them.
 
@@ -69,7 +69,7 @@ auto-bmad defines **no** path-type install variables and no `directories` array 
 
 auto-bmad's extra review layers (`auto-bmad-security` — gated by `code_review.security_layer`; `auto-bmad-cross-model` — gated by `code_review.cross_model_layer`, whose external-CLI command is built from the `cross_model_layer` profile) live in a marker-fenced managed region at the end of `{project-root}/_bmad/custom/bmad-build-auto.toml`, rendered from `./assets/bmad-custom/bmad-build-auto.toml` with the model strings baked from the runtime config's `profiles`. **They are project-wide: bmad-build-auto runs them for a manual `/bmad-build-auto` too** — say so when reporting.
 
-- **First setup:** the sync happens inside the first-run flow, right after `config.yaml` is written (`references/state-and-resume.md` → First-run flow, step 4). Nothing to run here.
+- **First setup:** the sync happens inside the first-run flow, right after `config.yaml` is written (`references/config-commands.md` → First-run flow, step 4). Nothing to run here.
 - **`reprovision`** (the runtime config already exists — otherwise stop with "run `/auto-bmad setup` first"): skip everything above and run only
 
   ```bash
@@ -88,4 +88,4 @@ Then display the `module_greeting` from `./assets/module.yaml` to the user.
 
 ## Return to Skill
 
-Setup is complete (help registered; review layers synced or about to be by the first-run flow). Resume the main skill's normal activation flow. If this was a `setup`/`configure`/`reprovision`-only invocation, stop here (already reported). If it was a run-intent invocation that triggered setup only because the module wasn't set up yet, continue into the Procedure — its first-run flow writes the runtime config `{output_folder}/auto-bmad/config.yaml`, syncs the review layers, then **stops for a fresh session** (`references/state-and-resume.md` → "First-run flow", step 4).
+Setup is complete (help registered; review layers synced or about to be by the first-run flow). Resume the main skill's normal activation flow. If this was a `setup`/`configure`/`reprovision`-only invocation, stop here (already reported). If it was a run-intent invocation that triggered setup only because the module wasn't set up yet, continue into the Procedure — its first-run flow writes the runtime config `{output_folder}/auto-bmad/config.yaml`, syncs the review layers, then **stops for a fresh session** (`references/config-commands.md` → "First-run flow", step 4).

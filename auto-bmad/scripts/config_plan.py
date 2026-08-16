@@ -416,7 +416,7 @@ def setup_detail(cfg_lines: Sequence[str], setup_lines: Sequence[str], missing_p
 # choice thereafter (which tool reviews cross-model, or none), so it is echoed too. PURELY-detected env
 # facts (delegation.host/mode, git.base_branch) are excluded on purpose: they are environment state
 # re-derived each run, not a chosen "deviation". Allowlist, not a rule, so the surface stays small +
-# stable; lockstep with the note in references/state-and-resume.md (config-check).
+# stable; lockstep with the note in references/config-commands.md (config-check).
 SETUP_ANSWER_PATHS = ("delegation.cli_phases", "tea.enabled", "tea.framework_ci", "git.mode",
                       "code_review.cross_model_layer")
 

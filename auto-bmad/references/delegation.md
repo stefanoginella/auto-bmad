@@ -8,7 +8,7 @@
 
 To dispatch a step, the orchestrator:
 - Fills the placeholders below.
-- Sends the result as the delegate prompt to the profile `phase_profiles` assigns to the step's phase — the phase→profile-key mapping is in `pipeline.md`, the config in `state-and-resume.md`, the per-host spawn mechanics (model/effort per call, foreground rule, the `cli_phases` route, the `inline` tier) in `delegation-runtime.md`.
+- Sends the result as the delegate prompt to the profile `phase_profiles` assigns to the step's phase — the phase→profile-key mapping is in `pipeline.md`, the config in `state-and-resume.md`, the per-host spawn mechanics (model/effort per call, foreground rule, the `inline` tier) in `delegation-runtime.md`, and the opt-in `cli_phases` route in `cli-route.md`.
 
 Prompt-authoring rules:
 - **Every prompt is self-contained.** The delegate is a generic host subagent with no persona file: the prompt starts with its **role line** (`Role: …`, first line of the fenced block) and ends with the **shared tail** — the autonomy directive + the structured result template below (both appended verbatim by the orchestrator after the fenced block).
@@ -41,7 +41,7 @@ Prompt-authoring rules:
 > that changes the outcome), STOP and report it as `needs-human`. End with the structured result template below,
 > every field filled.
 
-**Structured result contract** — six fields, in this order: `Outcome` / `Files changed` / `Status` / `Open questions` / `Deferred work` / `Blockers`. Every tier and the `cli_phases` route return the same block (`delegation-runtime.md`). The orchestrator reads it as metadata only — a delegate's prose never replaces the script readers named under each entry's PERSIST note.
+**Structured result contract** — six fields, in this order: `Outcome` / `Files changed` / `Status` / `Open questions` / `Deferred work` / `Blockers`. Every tier and the `cli_phases` route return the same block (`delegation-runtime.md`, `cli-route.md`). The orchestrator reads it as metadata only — a delegate's prose never replaces the script readers named under each entry's PERSIST note.
 
 **Structured result template (verbatim — part of the shared tail the orchestrator appends after the autonomy directive):**
 ```
@@ -226,7 +226,7 @@ Suite fallback variant (per-story mode with no epic-start commit — below): rep
 - Empty list (and no suite fallback) ⇒ skip the step with marker `phase8_steps.test_review: done` and report, mode-aware: "no test files changed on this epic's branch" (epic mode) / "no test files found for epic {e} since its first auto-bmad commit" (per-story mode).
 
 ### testarch-framework + testarch-ci  (first-run flow step 2 only → profile `tea_per_story`; no `phase_profiles` key)
-Foreground, structured result; one delegate for both (or one per skill — split the prompt at "Then run"). Never per story (`tea-policy.md`); run only after the user says yes in `state-and-resume.md` → First-run flow step 2 (never unasked), and only when both skill dirs were detected there.
+Foreground, structured result; one delegate for both (or one per skill — split the prompt at "Then run"). Never per story (`tea-policy.md`); run only after the user says yes in `config-commands.md` → First-run flow step 2 (never unasked), and only when both skill dirs were detected there.
 ```
 Role: You are auto-bmad's TEA delegate: run exactly the named bmad-testarch skill to completion, answering every interactive prompt yourself, and produce its complete output document.
 Run `/bmad-testarch-framework` in <project_root> ([C] Create) to completion — pick the framework matching the detected stack; the Claude Code write-time hook files it installs (`.claude/settings.json`, `.claude/hooks/tea-enforce.cjs`, `.tea/`) are expected. Then run `/bmad-testarch-ci` in <project_root> ([C] Create). Answer every interactive prompt yourself; return the structured result.

@@ -65,6 +65,6 @@ Select `trace-advisory` (add it to `tea_selected`) at Phase-0 triage **iff all**
 
 ### Notes
 - Low risk ⇒ `tea_selected = []` and Phases 4 & 6 are skipped — the story still gets build-auto's built-in review (+ the follow-up pass).
-- `framework` / `ci` are one-time project setup — handled (or skipped) by the first-run flow (`state-and-resume.md`), never per story.
+- `framework` / `ci` are one-time project setup — handled (or skipped) by the first-run flow (`config-commands.md`), never per story.
 - TEA's `framework` installs a Claude Code write-time enforcement hook into the project (`.claude/settings.json` registration, `.claude/hooks/tea-enforce.cjs`, `.tea/enforce-config.json`). Expected and commit-worthy — do not treat those files as stray changes.
 - When in doubt between two tiers, pick the higher one.

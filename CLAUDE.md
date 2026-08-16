@@ -74,8 +74,8 @@ it per host (knobs in "Known platform facts") and prints a verbatim fix on `hard
 only** (`claude.model`/`effort`, `codex.model`/`reasoning_effort`, `opencode.model`/`variant`; no
 persona text — every `delegation.md` prompt carries its own role line); `phase_profiles` maps the
 ten phase keys to a profile. Host/mode are `auto` and re-detected every run. Full detail:
-`delegation-runtime.md` (host detection, nesting, the tiers, the `cli_phases` route) and
-`state-and-resume.md` (config/profiles schema, first-run).
+`delegation-runtime.md` (host detection, nesting, the tiers), `cli-route.md` (the `cli_phases`
+route) and `state-and-resume.md` (config/profiles schema).
 
 ## Layout & where behavior lives
 - `.claude-plugin/marketplace.json` — Claude distribution (lists the single `./auto-bmad` skill).
@@ -85,10 +85,14 @@ ten phase keys to a profile. Host/mode are `auto` and re-detected every run. Ful
   - `epic-pipeline.md` — the `/auto-bmad epic` E-step flow (the per-story phases are the inner
     loop; no per-story halts).
   - `delegation.md` — exact per-step prompts (tool-agnostic, self-contained).
-  - `delegation-runtime.md` — host detection, nesting, the two spawn tiers, the CLI route.
+  - `delegation-runtime.md` — host detection, nesting, the two spawn tiers.
+  - `cli-route.md` — the opt-in `cli_phases` external-CLI route (resolver, argv, launch/wait,
+    result contract, cross-model layer shapes). Loaded only when `cli_phases` is non-empty.
   - `tea-policy.md` — TEA risk rubric / selection.
   - `git-and-pr.md` — ownership list, branching, commits, push, PR, merge prompt.
-  - `state-and-resume.md` — config/state schema, first-run, profiles, removed-keys note.
+  - `state-and-resume.md` — config/state schema, profiles, removed-keys note, resume, reports.
+  - `config-commands.md` — the config commands (first-run flow, `reset-defaults`, `config-check`)
+    + the shared drift-report rendering. Loaded only for a config command or the Phase 0 pause.
   - `overrides.md` — invocation-override vocabulary.
 - `auto-bmad/assets/profiles.yaml` — the single per-profile source (model/effort blocks + the
   `phase_profiles` map). Custom profiles (any name) are first-class: `config_plan.py`'s heal passes

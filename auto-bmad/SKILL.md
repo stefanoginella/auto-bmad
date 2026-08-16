@@ -37,22 +37,22 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 - invoked with `setup`, `configure`, or `install`; **or**
 - auto-bmad is **not provisioned** for this project — the single condition: its runtime config `{output_folder}/auto-bmad/config.yaml` is absent (nothing else marks a project as provisioned; no agent files exist) — **and the invocation is run-intent** (bare, `--story`, `epic`, or overrides). The config-only commands (`reprovision`, `reset-defaults`, `config-check`) never trigger setup: on an unprovisioned project each prints "run `/auto-bmad setup` first" and stops (their own step 1).
 
-**On trigger:** load `{skill-root}/assets/module-setup.md` and complete it first — help-catalog registration; then the **first-run flow** in `references/state-and-resume.md` writes the runtime config and syncs the review layers into `_bmad/custom/bmad-build-auto.toml`.
+**On trigger:** load `{skill-root}/assets/module-setup.md` and complete it first — help-catalog registration; then the **first-run flow** in `references/config-commands.md` writes the runtime config and syncs the review layers into `_bmad/custom/bmad-build-auto.toml`.
 - `setup`/`configure`/`install` always re-run registration even if already set up.
 
 **If invoked with `reprovision`:** re-sync the managed review-layers region only — `python3 {skill-root}/scripts/build_auto_custom.py --project-root <project_root> --config {output_folder}/auto-bmad/config.yaml --apply` (`module-setup.md` → "Sync review layers"). The config must exist — otherwise "run `/auto-bmad setup` first". Config-only: report the JSON (`layers`, `warnings`, `errors`), then **stop**.
 
-**If invoked with `reset-defaults [scope]`:** run the **restore-shipped-defaults** flow in `references/state-and-resume.md` → "reset-defaults".
+**If invoked with `reset-defaults [scope]`:** run the **restore-shipped-defaults** flow in `references/config-commands.md` → "reset-defaults".
 - It is **config-only** (`profiles`, `phase_profiles`, the version stamp; re-syncs the review layers when the plan says so): report what changed, then **stop** — never start a pipeline.
 
-**If invoked with `config-check`:** run the **config preview** in `references/state-and-resume.md` → "config-check".
+**If invoked with `config-check`:** run the **config preview** in `references/config-commands.md` → "config-check".
 - It reports what an update would add, everything you've changed vs the shipped defaults (including the heal-immune setup answers), then **offers to apply** the update. **Read-only until you confirm** — it writes only on the explicit "Update" choice (config heal + review-layers sync). Either way it **stops** — never starts a pipeline.
 
 **Why the gate is layout-independent:** auto-bmad self-registers via its own `_bmad/abm/module-help.csv` + the live `_bmad/_config/bmad-help.csv` and its runtime config; it never writes the installer-owned central BMAD config (`_bmad/config.toml` + layers), so the gate keys off the runtime config only.
 
 **Whether to start a pipeline after configuration:**
 - If the user's only intent was `setup`/`configure`/`install`/`reprovision`/`reset-defaults`/`config-check` → stop after reporting what was written (or previewed); do **not** start a pipeline run.
-- If configuration ran **only because it was missing** (a run-intent invocation on a fresh project) → **stop for a fresh session** instead of launching the pipeline (`references/state-and-resume.md` → "First-run flow", step 4).
+- If configuration ran **only because it was missing** (a run-intent invocation on a fresh project) → **stop for a fresh session** instead of launching the pipeline (`references/config-commands.md` → "First-run flow", step 4).
 - Otherwise → continue to the Procedure.
 
 ## The one rule
@@ -82,7 +82,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
   - mandates **foreground** spawns — the orchestrator spawns each delegate synchronously, and every prompt tells the delegate to spawn build-auto's subagents synchronously too.
 - **Opt-in external-CLI routing — before picking a tier, check `delegation.cli_phases`.**
   - A phase listed there is delegated to an external CLI (`claude -p` / `codex exec` / `opencode run`) instead of an in-tool subagent (routing `build`/`followup_review` runs build-auto inside that CLI).
-  - Resolve it with `scripts/cli_delegate.py` (see `references/delegation-runtime.md` → "Per-phase external-CLI routing").
+  - Resolve it with `scripts/cli_delegate.py` (see `references/cli-route.md`).
   - Still delegation — you build the command and parse the result, never read code.
   - Default is empty (all in-tool).
 - **The delegate prompt is always the exact content from `references/delegation.md` for that step** — role line first, the shared tail last (autonomy directive + structured result template), placeholders filled (story id, file paths — always pass absolute paths).
@@ -95,7 +95,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
    - Not a BMAD project (no `_bmad/config.toml`) or `python3` < 3.11 → **hard-stop** with the message above.
 2. Read `<output_folder>`, `<impl>` (`implementation_artifacts`), `<planning>` (`planning_artifacts`), `project_name` from `central_config` (already absolute).
 3. Load auto-bmad config from `<output_folder>/auto-bmad/config.yaml`.
-   - Missing → run the **first-run flow** in `references/state-and-resume.md`, write the config, sync the review layers, then **stop for a fresh session** per the same file's First-run stop.
+   - Missing → run the **first-run flow** in `references/config-commands.md`, write the config, sync the review layers, then **stop for a fresh session** per the same file's First-run stop.
    - Present → continue to Step 1.
    - First-run is the main interactive moment. auto-bmad can also pause at a few other points — each halt's options/conditions are in the note under Hard-stop conditions:
      - a config-drift review at preflight (Phase 0 / epic E0) — **only** when an update shipped new config/profiles; skippable with `skip config-pause`;
@@ -113,7 +113,7 @@ First read `references/state-and-resume.md` and `references/pipeline.md` (Phase 
    - Carry them into Phase 1's `init --json` under `overrides` — no state file exists yet (pipeline.md, the Phase 0 exception).
    - If `dry_run` → still run the **read-only** sub-steps 1–7 and 9 below (no `--apply`, no `AskUserQuestion`, no delegate, no commit — print any drift / status-mismatch / retro-gate fact as a note; sub-step 8's `tea-triage` does not run), then print the plan (the resolved target story, the phase window/skips, the per-phase profiles) and stop before Phase 1. Epic mode: the same rule at E0 (`epic-pipeline.md`).
    - `skip tea` flips `tea.enabled` off for this run — affecting sub-steps 3 and 8 below.
-1. **Host/tier** — resolve per `references/delegation-runtime.md` (config + detection); resolve any `delegation.cli_phases` route with `cli_delegate.py` (`ok: false` ⇒ hard-stop with its `errors`).
+1. **Host/tier** — resolve per `references/delegation-runtime.md` (config + detection); resolve any `delegation.cli_phases` route with `cli_delegate.py` (`references/cli-route.md`; `ok: false` ⇒ hard-stop with its `errors`).
 2. **Target/resume pre-read** (no `uv`, no git — only the state dir and `sprint-status.yaml`):
    - With `--story <arg>`: `python3 {skill-root}/scripts/story_plan.py --resolve <arg> --sprint-status <impl>/sprint-status.yaml --planning-dir <planning>` (`E-S`, `E.S`, `E-Sx`, a full key, or a slug fragment; `hard_stop` ⇒ surface `hard_stop_reason` — not found / ambiguous with `candidates` — and stop); then `python3 {skill-root}/scripts/state_plan.py --state-dir <output_folder>/auto-bmad/state --story-key {key}` ⇒ `resume`, `status`, `branch`.
    - No arg: `state_plan.py --state-dir <output_folder>/auto-bmad/state` — `resume: true` ⇒ its `target` wins (+ that record's `branch`; note any `extra_in_flight` in the report); else the target is picked at sub-step 5. Don't hand-roll a glob loop — `state-and-resume.md` → "Target selection & resume logic".
