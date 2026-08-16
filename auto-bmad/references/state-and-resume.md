@@ -8,7 +8,7 @@ Everything auto-bmad persists lives under `{output_folder}/auto-bmad/` (`{output
 ## config.yaml
 ```yaml
 version: 1                          # schema version (nothing reads it; stale keys are handled by the removed-key policy below)
-profiles_source_version: "0.26.1"   # abm version whose assets/profiles.yaml seeded the profiles + phase_profiles blocks below;
+profiles_source_version: "0.27.0"   # abm version whose assets/profiles.yaml seeded the profiles + phase_profiles blocks below;
                                     #   restamped by the Phase 0 heal (ADDITIVE-only — never overwrites user values; see
                                     #   assets/config-defaults.yaml header) or a full `reset-defaults`
 delegation:                         # spawn mechanism — host/mode re-detected every run (the stored values are inert)

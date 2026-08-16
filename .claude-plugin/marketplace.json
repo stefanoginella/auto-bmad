@@ -10,7 +10,7 @@
       "name": "auto-bmad",
       "source": "./",
       "description": "Drive the BMAD build lane end-to-end — bmad-build-auto plan -> build -> follow-up review per story, or an ENTIRE epic in one run (`/auto-bmad epic`) — with risk-gated TEA, epic-boundary gates + retrospective, one branch, a commit per phase, a PR and a report. Every step is delegated to a model-tuned host-native subagent on Claude Code, Codex, or opencode (or run inline where the host has no subagents).",
-      "version": "0.26.1",
+      "version": "0.27.0",
       "author": {
         "name": "Stefano Ginella"
       },
