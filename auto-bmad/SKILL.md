@@ -34,7 +34,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 
 **Trigger setup when EITHER holds:**
 - invoked with `setup`, `configure`, or `install`; **or**
-- auto-bmad is **not provisioned** for this project — the single condition: its runtime config `{output_folder}/auto-bmad/config.yaml` is absent (nothing else marks a project as provisioned; no agent files exist).
+- auto-bmad is **not provisioned** for this project — the single condition: its runtime config `{output_folder}/auto-bmad/config.yaml` is absent (nothing else marks a project as provisioned; no agent files exist) — **and the invocation is run-intent** (bare, `--story`, `epic`, or overrides). The config-only commands (`reprovision`, `reset-defaults`, `config-check`) never trigger setup: on an unprovisioned project each prints "run `/auto-bmad setup` first" and stops (their own step 1).
 
 **On trigger:** load `{skill-root}/assets/module-setup.md` and complete it first — help-catalog registration; then the **first-run flow** in `references/state-and-resume.md` writes the runtime config and syncs the review layers into `_bmad/custom/bmad-build-auto.toml`.
 - `setup`/`configure`/`install` always re-run registration even if already set up.
@@ -124,7 +124,7 @@ First read `references/state-and-resume.md` and `references/pipeline.md` (Phase 
 4. **Config-drift heal + review, then review-layers freshness** — `config_plan.py --check` → the pre-run pause only on reviewable drift (`skip config-pause`), else auto-apply; then `build_auto_custom.py --check` → auto `--apply` when stale (`errors` ⇒ hard-stop). Mechanics: `pipeline.md` Phase 0 step 4.
 5. **Story pick** (only when sub-step 2 produced no target): `uv run <sprint_plan_script> status --status-file <impl>/sprint-status.yaml --date "<now MM-DD-YYYY HH:MM>"` — target = `recommendation.story_key` (its precedence `in-progress → review → ready-for-dev → backlog` resumes BMAD-level unfinished work first); `ok: false` / `all_done` / null key ⇒ the hard-stops below; keep `open_action_items`; then `state_plan.py --story-key {key}` for the picked key (`status: done` ⇒ the not-silent stop below). Then **always** `story_plan.py --epic {e} --sprint-status <impl>/sprint-status.yaml --planning-dir <planning>` for `is_first_in_epic` / `is_last_in_epic` / `epic_story_count` / `stories_after_in_epic` / `title` / `epic_title`. If `is_first_in_epic` and the pick did not run this session (`--story`, or a resume before Phase 3 completed), run the `status` read once anyway, solely to keep `open_action_items` for the Phase 3 carry-over.
 6. **Resume check / status-mismatch guard** — `resume: true` ⇒ resume from the first phase not in `completed_phases` (`state-and-resume.md` resume rules: Phase 3 by the resume matrix, Phase 5/7 re-invoke build-auto with `<spec_path>`, halts re-open). Otherwise a fresh state file in Phase 1 — after the **status-mismatch guard** (a story at `review`/`in-progress` with no state file asks the user; `status: done` state ⇒ the `done` rule).
-7. **Retro verdict gate** (first story of an epic): `story_plan.py --retro-verdict --impl-dir <impl> --epic {e-1}` — `rejected` ⇒ ask **Proceed** / **Stop** (`skip retro-gate`).
+7. **Retro verdict gate** (first story of an epic; not on a resume): `story_plan.py --retro-verdict --impl-dir <impl> --epic {e-1}` — `rejected` ⇒ ask **Proceed** / **Stop** (`skip retro-gate`).
 8. **TEA triage** (only if `tea.enabled`): delegate **`tea-triage`** → `tea_triage` on the story's epic entry; classify per `references/tea-policy.md`; record `tea_risk` / `tea_selected` / `tea_rationale`. On a resume with Phase 0 already in `completed_phases`, reuse the recorded values — don't re-delegate.
 9. **Story title** `{title}` from the `--resolve` / `--epic` read (`null` ⇒ `{slug}` with `-` → space). Never grep the epics document.
 
@@ -198,7 +198,7 @@ Never push past a hard-stop — report and let the human act.
 - The post-follow-up-review halt (Phase 7) — run another review pass, continue (optionally after an external review; external changes get ONE delegated re-review), continue as ready (non-draft override, only when the review is unverified), or stop. Skipped when no pass ran and the review is verified; always auto-continued in epic mode.
 - A `FAIL` epic trace gate (Phase 8) — remediate & re-gate / waive / stop (epic mode remediates mechanically, no ask).
 - The end-of-pipeline merge prompt on a clean-completion PR (Phase 9 / E_final) — merge commit (default) / rebase / squash / don't merge, plus a delete-branch sub-question. Opt-in via `git.offer_merge`, default on.
-- Epic E0 adds its adopt and base-readiness asks (`epic-pipeline.md`).
+- Epic E0 adds its unattended-run confirm, adopt and base-readiness asks (`epic-pipeline.md`).
 
 **Not-silent STOPS** (no question — print the explicit next command, then stop):
 - A no-arg pick that lands on a completed caveated story (state `done`, sprint entry parked at `review`) — the `done` rule in `state-and-resume.md` → "Target selection": report tail + PR link + how to clear the caveat or pick another story.

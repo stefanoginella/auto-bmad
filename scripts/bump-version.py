@@ -54,7 +54,7 @@ VERSION_FILES = [
     ("auto-bmad/assets/module.yaml", r"(?m)^(module_version:\s*)(\d+\.\d+\.\d+)(\s*)$"),
     ("README.md", r"(badge/version-)(\d+\.\d+\.\d+)(-blue)"),
     # Schema example in the config.yaml block — stays in lockstep so docs match
-    # what first-run actually writes into a fresh project's config (see Step 5 of
+    # what first-run actually writes into a fresh project's config (see step 4 of
     # the First-run flow in state-and-resume.md).
     ("auto-bmad/references/state-and-resume.md", r'(profiles_source_version:\s*")(\d+\.\d+\.\d+)(")'),
 ]

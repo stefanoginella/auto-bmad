@@ -22,7 +22,7 @@ Prompt-authoring rules:
 | `build-plan`, `build-run` | You are auto-bmad's build delegate: you drive bmad-build-auto for one story with the deep-reasoning care of the highest-stakes step — be exhaustive and skeptical about edge cases, regressions and acceptance criteria. |
 | `followup-review` | You are auto-bmad's second-opinion reviewer on a different model: you drive a fresh bmad-build-auto review pass over a finished story at full depth, precisely to catch what the first model missed. |
 | `tea-triage` | You are auto-bmad's test-risk triage delegate: classify one story's test risk from its epic entry using the rubric given; no code reading. |
-| `testarch-*` (all six) | You are auto-bmad's TEA delegate: run exactly the named bmad-testarch skill to completion, answering every interactive prompt yourself, and produce its complete output document. |
+| `testarch-*` (all eight) | You are auto-bmad's TEA delegate: run exactly the named bmad-testarch skill to completion, answering every interactive prompt yourself, and produce its complete output document. |
 | `deferred-reconcile` | You are auto-bmad's deferred-work reconciler: verify ledger entries against the current code and mark only what is unambiguously fully resolved. |
 | `retrospective` | You are auto-bmad's retrospective delegate: run the headless, evidence-based epic retrospective to completion and report its verdict and action items. |
 
@@ -49,7 +49,7 @@ Prompt-authoring rules:
 - `{spec_paths}` — the epic's spec files, comma-separated (one `--find-spec` per landed / `done` story). Epic-scoped entries only.
 - `{carry_over_block}` — the previous epic's open action items (see `build-plan`); empty when none.
 - `{epic_test_files}` — the git-only test-file list for epic {e} (see `testarch-test-review (epic gate)`).
-- `{test_artifacts}` — TEA's `test_artifacts` value from `_bmad/tea/config.yaml`, as the TEA delegate reports it (default `<output_folder>/test-artifacts`).
+- `{test_artifacts}` — TEA's configured `test_artifacts` dir (`_bmad/tea/config.yaml`; default `<output_folder>/test-artifacts`). The orchestrator never reads it (no YAML read) and never resolves it into a prompt — prose/expectation notes only; delegates report actual artifact paths in Files changed.
 
 ---
 
@@ -130,7 +130,7 @@ Role: You are auto-bmad's TEA delegate: run exactly the named bmad-testarch skil
 Run `/bmad-testarch-test-design` in <project_root>. Choose **[C] Create** at the initialization menu, EPIC-LEVEL mode
 for epic {e} (epic + its stories; name the epic explicitly as "epic {e}"). If the skill reports an unfinished
 test-design checkpoint for `epic-{e}` and asks "Resume it, or start over?", answer **start over** (replace the
-checkpoint) — never resume, never wait. Produce the epic test plan / risk matrix ({test_artifacts}/test-design-epic-{e}.md).
+checkpoint) — never resume, never wait. Produce the epic test plan / risk matrix (`test-design-epic-{e}.md` under TEA's configured `test_artifacts` dir — report its absolute path in Files changed).
 ```
 
 ### testarch-atdd  (Phase 4 → profile `tea_per_story`)
@@ -157,7 +157,8 @@ Expand automated test coverage for the code implemented in this story. Do NOT mo
 Role: You are auto-bmad's TEA delegate: run exactly the named bmad-testarch skill to completion, answering every interactive prompt yourself, and produce its complete output document.
 Run `/bmad-testarch-trace` in <project_root> for epic {e} ([C] Create). Resolved configuration for this run — it takes
 precedence over anything read from config.yaml: gate_type=epic, allow_gate=true. Build the epic traceability matrix and
-produce the quality-gate decision. Report the gate verdict (PASS/CONCERNS/FAIL/WAIVED) + rationale and the path of
+produce the quality-gate decision. Report the gate verdict (PASS/CONCERNS/FAIL/WAIVED — or NOT_EVALUATED verbatim if
+the skill reports the gate not eligible; do NOT derive a verdict yourself in that case) + rationale and the path of
 gate-decision.json; if the verdict is not PASS, also list the specific requirements / acceptance criteria left uncovered,
 so the orchestrator can summarize them for the human and target remediation.
 ```
@@ -202,6 +203,14 @@ Suite fallback variant (per-story mode with no epic-start commit — below): rep
 - Epic mode (one epic branch): `git diff --name-only --diff-filter=AM {git.base_branch}...HEAD`.
 - Per-story mode (Phase 8 runs on the LAST story's branch; earlier stories reached base through their PRs): `git log --name-only --diff-filter=AM --format= <epic_start>..HEAD`, where `<epic_start>` = the oldest commit reachable from HEAD whose subject starts with `chore(story-{e}-` (`git log --reverse --format=%H --grep='^chore(story-{e}-' HEAD | head -1` — auto-bmad's own first commit of the epic's first story). No such commit (the epic began outside auto-bmad, or the earlier PRs are unmerged) ⇒ pass NO `review_files` and use the suite fallback variant (say so in the report).
 - Empty list (and no suite fallback) ⇒ skip the step with marker `phase8_steps.test_review: done` and report, mode-aware: "no test files changed on this epic's branch" (epic mode) / "no test files found for epic {e} since its first auto-bmad commit" (per-story mode).
+
+### testarch-framework + testarch-ci  (first-run flow step 2 only → profile `tea_per_story`; no `phase_profiles` key)
+Foreground, structured result; one delegate for both (or one per skill — split the prompt at "Then run"). Never per story (`tea-policy.md`); run only after the user says yes in `state-and-resume.md` → First-run flow step 2 (never unasked), and only when both skill dirs were detected there.
+```
+Role: You are auto-bmad's TEA delegate: run exactly the named bmad-testarch skill to completion, answering every interactive prompt yourself, and produce its complete output document.
+Run `/bmad-testarch-framework` in <project_root> ([C] Create) to completion — pick the framework matching the detected stack; the Claude Code write-time hook files it installs (`.claude/settings.json`, `.claude/hooks/tea-enforce.cjs`, `.tea/`) are expected. Then run `/bmad-testarch-ci` in <project_root> ([C] Create). Answer every interactive prompt yourself; return the structured result.
+```
+PERSIST: none by the delegate — on success the orchestrator writes `tea.framework_ci: done` in `config.yaml` (no script reader); the hook files are commit-worthy, not stray changes.
 
 ### deferred-reconcile  (Phase 8.2 / E8b → profile `deferred_reconcile`)
 This is **not** a `/bmad-*` skill call — it is a reconciliation pass (an inline prompt).

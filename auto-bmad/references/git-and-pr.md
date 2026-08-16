@@ -42,7 +42,7 @@ These stay orchestrator-owned because it already holds the full pipeline context
 
 - **Is it a git repo?** `git rev-parse --is-inside-work-tree`.
   - Not a repo → hard-stop (suggest `git init`).
-- **Base branch** — the runtime config's `git.base_branch` is authoritative once set (seeded at first run from preflight's value below; `state-and-resume.md`). Preflight's `git.base_branch` only **seeds** that key at first run and **warns** when the two disagree while `origin/HEAD` is present — every `<base_branch>`/`<base>` placeholder here, in `pipeline.md`, `epic-pipeline.md` and `delegation.md` means the **config** value. Preflight's detection:
+- **Base branch** — the runtime config's `git.base_branch` is authoritative once set (seeded at first run from preflight's value below; `state-and-resume.md`). Preflight's `git.base_branch` only **seeds** that key at first run — every `<base_branch>`/`<base>` placeholder here, in `pipeline.md`, `epic-pipeline.md` and `delegation.md` means the **config** value. Preflight's detection:
   - the remote HEAD if present (`git symbolic-ref refs/remotes/origin/HEAD`);
   - else the current branch at start (commonly `main`/`master`) — a first-run seed only, never the run-time base (on a resume that would be the story/epic branch itself).
 - **Git mode:**
@@ -93,9 +93,10 @@ These stay orchestrator-owned because it already holds the full pipeline context
 - Applies to the Phase 3 plan run, the Phase 5 build run, and every Phase 7 follow-up / re-review pass.
 - Why: build-auto's fresh-intent route HALTs on a dirty tree (its step-01 version-control check), and every build-auto run diffs tracked+untracked files since its `baseline_revision` and sweeps stragglers into its own commit at Finalize — auto-bmad bookkeeping must never sit uncommitted when build-auto starts: it would be swept into build-auto's own commit (or trip `finalization left repository dirty`). (Already-committed bookkeeping — the `mark review` flip, state, TEA artifacts — is visible to a done-spec follow-up pass by design, since it keeps the ORIGINAL `baseline_revision`; the review triage treats it as noise.)
 - (a) **Fold forward first:** write the build-auto phase's `timing-start` (epic mode: on the per-story file AND the epic anchor; and, for Phase 5, the `in-progress` sprint flip) *before* the preceding phase's commit when that commit is made in the same session — Phase 1 init → Phase 3 (when Phase 2 does not run); Phase 2 → Phase 3; Phase 3 → Phase 5 (when neither Phase 4 nor the spec-approval halt runs); Phase 4 → Phase 5; Phase 5 `mark review` → Phase 7 (when Phase 6 does not run); Phase 6 → Phase 7.
-- (b) **Otherwise**, if `git status --porcelain` is non-empty immediately before the invocation, stage everything and commit — the ONE sanctioned bookkeeping commit:
+- (b) **Otherwise** (any path (a) did not fold): write the build-auto phase's `timing-start` (and any other pending state write — a resume's re-anchor, `set branch`, a healed config/TOML) **BEFORE** this check; then, if `git status --porcelain` is non-empty immediately before the invocation, stage everything and commit — the ONE sanctioned bookkeeping commit:
   - `chore(story-{e}-{s}): pipeline state` — state file only (Phase 1's `init` before Phase 3 is the usual case);
   - `chore(story-{e}-{s}): mark in-progress` — Phase 5: sprint flip + state.
+  - Between the gate and the invocation the only action is the git-only `head_before` capture.
 - A `blocked` plan run's untracked result file is committed by the `plan blocked` commit, never left for the next gate to sweep under a `pipeline state` subject.
 
 ### `commits[]`
