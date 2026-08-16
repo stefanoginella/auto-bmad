@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-08-16
+
 ### Fixed
 
 - **The security review layer can no longer go silent by reaching for the host's findings tool.**
@@ -1004,7 +1006,8 @@ First tagged release — the matching `v0.1.1` git tag for the module already pu
 - **Distribution** via the BMAD installer (custom Git source) and a Claude plugin `marketplace.json`,
   plus a README "Updating" section, `CHANGELOG.md`, and the `scripts/bump-version.py` release helper.
 
-[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.27.2...HEAD
+[0.27.2]: https://github.com/stefanoginella/auto-bmad/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/stefanoginella/auto-bmad/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/stefanoginella/auto-bmad/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/stefanoginella/auto-bmad/compare/v0.26.0...v0.26.1
