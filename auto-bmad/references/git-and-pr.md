@@ -151,7 +151,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
   - a `## Needs attention` checklist of open questions, deferred work, human-action items, and the `⚠️ Retrospective verdict: rejected — <doc>` line when it applies (empty section omitted);
 - Capture the returned PR URL into state (`pr_url`) for the **chat** report (chat-only artifact).
 - **CI link & wait:**
-  - The push/PR triggers a run when the repo has CI workflows (preflight reports `ci.workflows_present`; a hand probe uses `find .github/workflows -name '*.yml' -o -name '*.yaml'` or `test -d` — no bare globs).
+  - The push/PR triggers a run when the repo has CI workflows (preflight reports `ci.workflows_present`; a hand probe uses `find .github/workflows -name '*.yml' -o -name '*.yaml'` or `test -d` — never a bare `ls .github/workflows/*` glob, which aborts unmatched under zsh/fish).
   - **When to wait:** only if the merge prompt is effectively enabled this run — `git.offer_merge: true` AND no `skip merge-prompt` — AND clauses 1–3 have not already made the run caveated. Otherwise don't wait: link the run and leave `ci_status: unknown`.
   - **How to wait:** one deterministic call — `python3 {skill-root}/scripts/ci_wait.py --pr <pr-number> --cap-minutes <git.ci_wait_minutes> --resolve-run-url --branch <branch> --head-sha <sha>` — then read `ci_status` and `ci_run_url` from its single JSON object.
     - Store the returned `ci_run_url` in state; `null` ⇒ fall back to the branch's Actions tab (`<repo_url>/actions?query=branch:<branch>`).
@@ -176,6 +176,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
   - **Merge commit (recommended)** *(default)* / Rebase and merge / Squash and merge / Don't merge.
   - When the epic retrospective verdict is `rejected` (Phase 8 / E8b), the prompt text carries the line `⚠️ Retrospective verdict: rejected — <doc>` first.
   - If a merge style is chosen → **ask a second question**: Delete branch? Yes / No.
+  - Merge commit is the default because it preserves every per-phase commit — the richest signal for later `git log`/`blame`/`bisect`.
 - **Execute** (only if the user picked a merge style):
   - `gh pr merge <pr-number> --merge` *(or `--rebase` / `--squash`)* `[--delete-branch]`.
   - On success → `git switch <base_branch>` then `git pull --ff-only`, so the local tree matches `origin/<base_branch>` post-merge.

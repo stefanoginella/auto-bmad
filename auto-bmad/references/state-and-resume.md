@@ -217,6 +217,8 @@ python3 {skill-root}/scripts/state_plan.py --state-dir {output_folder}/auto-bmad
   - On a **no-arg** run this is the caveated case — the story sits at `review` (draft PR / blocker / waived gate / CI red), so the picker re-recommends it on every bare `/auto-bmad`. The stop text names the way forward explicitly: (1) resolve the recorded caveat, then flip the entry (`/auto-bmad --story {key}` re-opens Phase 9 only when the caveat is cleared, else it prints the same stop); (2) work another story: `/auto-bmad --story <next>` where `<next>` = the first `ready-for-dev`/`backlog` key after this one from `story_plan.py --epic {e}`, or, when the epic has none, "epic {e} has no unstarted stories — pick a key with `/auto-bmad --story <key>` or start the next epic with `/auto-bmad epic --epic <N>`". (`SKILL.md` lists this under not-silent stops.)
   - An explicit `--story {key}` on a `done` state ⇒ ask "already complete (PR …) — re-run the full pipeline anyway?" (Yes ⇒ the sanctioned regress path; No ⇒ stop).
 
+Git commits are the secondary safety net: even if the state file is lost, the per-phase commits on the branch (and build-auto's own) show how far the pipeline got.
+
 Draft predicate: computed by `state_plan.py --finalize` (Phase 9); the four clauses are defined once in `git-and-pr.md` → "Draft predicate (clauses 1–4)" — the state fields it reads are above.
 
 ## reports/{key}.md

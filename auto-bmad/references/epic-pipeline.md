@@ -76,7 +76,7 @@ Runs during the SKILL procedure before any commit: **Phase 0 verbatim, in the `p
 13. Record E0's decisions for E1's `init --json`: `epic_story_count`, `epic_slug`, the adopt verdicts (`stories_skipped`; the per-story adopt entry phase / spec ride into that story's E5a `init`), the composed `overrides`, `git_mode`, `base_branch`. `{carry_over_block}` is session memory (re-derived at step 5 on every E0). No commit, no state write.
 
 ## E1 — Epic branch + anchor  *(orchestrator, git)*
-- Create the **one** epic branch `{git.epic_branch_prefix}{e}-{slug}` (default `epic/{e}-{slug}`) off `<base>` — `git-and-pr.md` → "Branching"; on resume (the anchor exists) check it out and skip the `init` below.
+- Ensure we are NOT on `<base>`; create the **one** epic branch `{git.epic_branch_prefix}{e}-{slug}` (default `epic/{e}-{slug}`) off `<base>` — `git-and-pr.md` → "Branching"; on resume (the anchor exists) check it out and skip the `init` below.
 - Write the epic anchor: `python3 {skill-root}/scripts/state_update.py init --state-file <anchor> --json -` (refuses if it exists, so resume never re-inits — `started_at` + timing span all sessions).
   - Payload: E0's decisions + the anchor extras (`state-and-resume.md` → "state/epic/epic-{e}.yaml").
 - Commit: `chore(epic-{e}): start auto-bmad epic pipeline` (also carries a Phase 0 auto-applied `_bmad/custom/bmad-build-auto.toml` / healed `config.yaml`). Marker `1`.
@@ -92,11 +92,11 @@ a. **Per-story state + triage.**
    - `python3 {skill-root}/scripts/state_update.py init --state-file <state-dir>/{key}.yaml --json -` with the Phase 1 payload; epic values: `branch` = the epic branch, `overrides` = the composed epic overrides, and `epic_story_count` / `stories_after_in_epic` / `is_first/last_in_epic` from the E0 enumerate. For an **E0-adopted** story also `spec_path` = the spec E0 found and `overrides.start_phase: 5` or `7` per the adopt choice (an orchestrator-set entry marker — the user-facing `start_phase` override stays rejected in epic mode) — the body then starts at that phase (`--allow-regress` is never needed: the entry only moves forward from `in-progress`/`review`).
    - Commit `chore(story-{e}-{s}): start auto-bmad pipeline` — this is the clean-tree gate before Phase 3 (fold Phase 3's `timing-start` on BOTH files, plus the anchor's `active_story` write, into it).
    - *(A story E0 marked "resume" reuses its existing per-story state — no `init` — and enters at its first incomplete phase; `set branch` = the epic branch on its per-story file (swept by the next clean-tree gate) so its record names where its work lands from now on.)*
-b. **Phase 3 Plan** (`build-plan` → `build`): `{carry_over_block}` = epic {e-1}'s open action items for **every** story; **no spec-approval halt** (`spec_approved: true` on the folded write).
-c. **Phase 4 Pre-dev TEA** (only if `atdd ∈ tea_selected`) → `testarch-atdd`.
-d. **Phase 5 Build** (`build-run` → `build`): `blocked` ⇒ **stops the whole epic** (`needs-human`, see the halt rule above).
-e. **Phase 6 Post-dev TEA** (only if `automate ∈ tea_selected`) → `testarch-automate`.
-f. **Phase 7 Follow-up review** (`followup-review` → `followup_review`): the same gate as per story; one pass when it holds (an E0-adopted `review` story enters under `pipeline.md` Phase 7's "Entry at Phase 7 without a Phase 5 result" rule — that is what the adopt choice means). Then `hitl_halt: "auto-continued (epic — no halt)"` — **no `AskUserQuestion`, no external-change check** (no human pause produced changes to review).
+b. **Phase 3 Plan** (**`build-plan`** → `build`): `{carry_over_block}` = epic {e-1}'s open action items for **every** story; **no spec-approval halt** (`spec_approved: true` on the folded write).
+c. **Phase 4 Pre-dev TEA** (only if `atdd ∈ tea_selected`) → **`testarch-atdd`**.
+d. **Phase 5 Build** (**`build-run`** → `build`): `blocked` ⇒ **stops the whole epic** (`needs-human`, see the halt rule above).
+e. **Phase 6 Post-dev TEA** (only if `automate ∈ tea_selected`) → **`testarch-automate`**.
+f. **Phase 7 Follow-up review** (**`followup-review`** → `followup_review`): the same gate as per story; one pass when it holds (an E0-adopted `review` story enters under `pipeline.md` Phase 7's "Entry at Phase 7 without a Phase 5 result" rule — that is what the adopt choice means). Then `hitl_halt: "auto-continued (epic — no halt)"` — **no `AskUserQuestion`, no external-change check** (no human pause produced changes to review).
 g. **Phase 7 tail** — trace advisory + deferred harvest + the tail commit rule as per story; `phase-done --phase 7` on the per-story file. Epic delta: **leave the sprint entry at `review`** — not `done` (the batch flip is E8b / E_final).
 h. **Land the story on the anchor in ONE write** — a single `state_update.py set --state-file <anchor>` patch that, at once:
    - sets `stories_landed` = previous list + `[{key}]` (read-modify-write);

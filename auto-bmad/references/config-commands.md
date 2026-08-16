@@ -53,7 +53,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
 - `profiles` — every profile block.
   - Also **prunes** a profile present in the config but absent from the asset; pruned names return on `removed_profiles`. Stale per-profile sub-keys (the persona strings of the removed-keys note) are dropped too (`would_change` entries with `default: null`).
   - Doesn't touch `phase_profiles` — so a *custom* mapping pointing at a pruned profile dangles (bare scope resets both; a bare/`phase_profiles` reset also drops stale mappings).
-- `<profile-name>` (e.g. `standard`) — that one profile. Never prunes — a user-added profile is left intact.
+- `<profile-name>` (e.g. `standard`) — that one profile: its values back to the shipped defaults, and its stale config-only sub-keys (the persona strings of the removed-keys note) dropped too (`would_change` entries with `default: null`). Never prunes a *profile* — a user-added profile is left intact (no `removed_profiles`).
 - `phase_profiles` — the phase→profile mapping only.
 
 **Boundary (state it to the user).** reset-defaults touches **only** `profiles`, `phase_profiles`, and the `profiles_source_version` stamp.
