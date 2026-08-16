@@ -1,5 +1,18 @@
 # auto-bmad → BMAD 6.11+/v7 migration plan (DRAFT)
 
+> **Implemented in 0.27.0.** The plan below is kept as history — the shipped module
+> (`auto-bmad/SKILL.md`, `auto-bmad/references/*.md`, the scripts) is the contract, and it
+> follows these decision-level supersessions of the plan text: **D2** — sprint-status flips to
+> `ready-for-dev` at the end of Phase 3 and to `in-progress` at the start of Phase 5 (supersedes
+> the §4 Phase 3 row "flips → in-progress"); **D12** — no rendered agent files at all: delegates
+> are generic host subagents spawned at the profile's model, `profiles.yaml` holds model/effort
+> only (supersedes every §3.4/§9 mention of `render-agents.py` and agent templates); **D8** — the
+> `deferred:` harvest runs at the Phase 7 tail of every story, not only at epic end (refines the
+> §4 Phase 8 "ledger harvest"); `bmad-retrospective` is in the always-required core skills (a
+> per-story run needs it too; `bmad-project-context` is not required); and
+> delegation has exactly two tiers, `subagents` (default) + `inline` (the plan's
+> `custom-subagents` name survives only as a read-alias).
+
 Status: **decided 2026-08-15** (decisions in §8). Written 2026-08-15 from a live read of
 `bmad-method@6.11.1-next.14` (npm `next`; `latest` = 6.11.0), TEA `1.23.0` (npm `latest`;
 `next` = 1.22.7-next.0 is byte-identical content), `bmad-loop` v0.10.0 (comparison only), and

@@ -80,7 +80,7 @@ real run per tool of the layer command shape:
     claude:   claude -p --model M --effort E --output-format json --dangerously-skip-permissions
     codex:    codex exec -m M -c model_reasoning_effort=E --dangerously-bypass-approvals-and-sandbox -C ROOT -o LASTMSG --ephemeral
     opencode: opencode run [-m M] [--variant V] --format json --dir ROOT --auto <prompt-arg>
-              (``--auto`` = auto-approve permissions; ``--dangerously-skip-permissions`` no longer exists)
+              (``--auto`` = auto-approve permissions; ``--dangerously-skip-permissions`` is a hidden alias no longer shown in --help)
 
   cross-model layer (``resolve_layer()``; ROOT absolute, PROMPT = CROSS_MODEL_REVIEW_PROMPT, TIMEOUT =
   ``timeout -k 30 1200 `` / ``gtimeout -k 30 1200 `` when on PATH at bake time, else empty):
@@ -1228,7 +1228,7 @@ def _run_self_test() -> int:
     assert "--effort" not in a, a
     assert not any(str(x).startswith("model_reasoning_effort=") for x in a), a
     assert "--dir" in a and a[a.index("--dir") + 1] == "/proj", a
-    # `--auto` (opencode >= 1.18) replaced `--dangerously-skip-permissions`, which no longer exists.
+    # `--auto` (opencode >= 1.18) is the visible flag; `--dangerously-skip-permissions` survives only as a hidden alias.
     assert "--format" in a and "json" in a and "--auto" in a, a
     assert "--dangerously-skip-permissions" not in a, a
     # opencode does NOT read stdin — the prompt is appended as a positional arg.

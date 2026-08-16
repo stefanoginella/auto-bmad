@@ -68,7 +68,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 - Even inline, the Phase 7 halt reads no code.
 - On **Continue** you detect external-review changes with a git-only check and **delegate** their re-review as one more build-auto follow-up pass — never an inline read.
 
-**`{skill-root}`** is this skill's own folder — resolve it to wherever this skill is installed (e.g. `.claude/skills/auto-bmad/`, `.codex/skills/auto-bmad/`, or `.opencode/skills/auto-bmad/`).
+**`{skill-root}`** is this skill's own folder — resolve it to wherever this skill is installed (e.g. `.claude/skills/auto-bmad/` on Claude Code, or `.agents/skills/auto-bmad/` on Codex / opencode).
 - Reference files live under `{skill-root}/references/`; helper scripts under `{skill-root}/scripts/`.
 - Read a reference file at the moment its step calls for it.
 

@@ -13,10 +13,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Deprecated
+### Added
 
-- **auto-bmad is winding down and will not support BMAD v7.** The README now points users to the
-  official [bmad-loop](https://github.com/bmad-code-org/bmad-loop); v6 projects keep working as-is.
+- **`bmad-build-auto` is the story primitive: plan → build → follow-up review.** Each story is
+  planned to a spec, then built and reviewed by BMAD's own unattended lane; auto-bmad adds the
+  branch/PR, TEA, sprint-status write-back and the report around it (BMAD ≥ 6.11.0).
+- **Extra review layers run inside build-auto: security + cross-model.** `/auto-bmad setup` or
+  `reprovision` writes them to `_bmad/custom/bmad-build-auto.toml`; cross-model shells to a 2nd CLI.
+- **Follow-up review pass on a second model.** `code_review.followup: recommended|always|never`
+  re-runs build-auto's review on the done spec at the `followup_review` profile, then the halt asks.
+- **Opt-in spec approval halt.** `build.spec_approval: true` (or the `approve spec` override) pauses
+  after planning for a human OK on the spec; epic mode never halts there.
+- **Retrospective verdict gate + action items.** A `rejected` previous epic asks before the next one
+  starts (`skip retro-gate`); open action items feed the report, the PR body and the next plan run.
+- **Preflight checks the build-lane prerequisites.** `uv`, Python 3.11, `_bmad/config.toml`, nested
+  subagents per host (with the exact fix text), and an `AGENTS.md` context block (warn only).
+- **Deferred-work harvest after every story.** build-auto's spec `deferred:` items land in
+  `deferred-work.md` at the Phase 7 tail (`deferred_ledger.py harvest`, idempotent).
+
+### Changed
+
+- **Requires BMAD ≥ 6.11.0 and TEA ≥ 1.23.0.** The v6 story lane is gone; the project is active
+  again — the wind-down notice is withdrawn.
+- **Delegates are your host's native subagents — no rendered agent files.** Profiles keep model
+  (+ Codex effort) only; per-phase effort is honored on Codex; Claude Code and opencode inherit.
+- **Sprint-status write-back handles split keys and stamps `last_updated`.** `story_plan.py
+  --mark-status` also lifts the epic entry; the story file's `Status:` line is no longer edited.
+- **Story picker is BMAD's own `sprint_plan.py status`.** auto-bmad keeps only resolve, enumerate,
+  status-flip and spec readers.
+- **Config: `delegation.mode` is `auto|subagents|inline`; `code_review` shrinks to `followup`,
+  `security_layer`, `cross_model_layer`; new `build.spec_approval`.** Stale keys are ignored.
+- **`/auto-bmad reprovision` now re-syncs the review-layers TOML.** Nothing is rendered any more,
+  so nothing needs a Claude Code restart.
+- **Help registration targets BMAD 6.11's `_bmad/_config/bmad-help.csv`.** Setup also writes
+  `_bmad/abm/module-help.csv` so the rows survive a BMAD re-install.
+- **Epic mode is smaller.** Same lane per story, no per-story halts, one branch + one PR, and the
+  epic-end retrospective's verdict rides in the report and PR body.
+
+### Removed
+
+- **The code-review fan-out replica, its triage contract, `review_findings.py`, `review_loop.py`.**
+  build-auto reviews, triages and patches itself.
+- **The `general-subagents` tier, `render-agents.py`, agent templates, `delegation.target_tools`.**
+  `custom-subagents` in an old config is read as `subagents`.
+- **UAT checklist dropped from the report.** The next-step line points at
+  `/bmad-checkpoint-preview` instead.
+- **The project-context bootstrap/refresh delegate is gone.** Run `/bmad-project-context` yourself;
+  the epic-end report recommends it.
+- **The retro-notes file.** The retrospective is a delegated `bmad-retrospective -H` run; verdict
+  and action items live in state and the report.
+- **The `ab-verification` profile.** An old config keeps it unused until `config_plan.py --reset`
+  prunes it.
+- **Overrides `max N review iterations`, `skip uat`, `skip project-context-bootstrap`,
+  `skip git-commits`.** `skip git-commits` now hard-stops (build-auto commits its own work).
+- **Tier-A/Tier-B epic review and its auto-resolved decisions.**
 
 ## [0.26.1] - 2026-08-04
 
