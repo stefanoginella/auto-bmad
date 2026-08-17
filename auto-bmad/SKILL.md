@@ -38,7 +38,7 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 - **`reset-defaults [scope]`** — `references/config-commands.md` → "reset-defaults" (shipped `profiles` / `phase_profiles` / version stamp; re-syncs the layers when the plan says so).
 - **`config-check`** — `references/config-commands.md` → "config-check". **Read-only until you confirm** — it writes only on the explicit "Update" choice.
 
-**Then:** configuration that ran **only because it was missing** (run-intent on a fresh project) ⇒ **stop for a fresh session** instead of launching the pipeline (`references/config-commands.md` → "First-run flow", step 4). Otherwise continue to the Procedure.
+**Then:** configuration that ran **only because it was missing** (run-intent on a fresh project) ⇒ **stop for a fresh session** instead of launching the pipeline (`references/config-commands.md` → "First-run flow", step 4 — it lists setup writes to commit). Otherwise continue to the Procedure.
 
 ## The one rule
 

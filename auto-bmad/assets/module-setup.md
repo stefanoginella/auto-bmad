@@ -80,7 +80,7 @@ auto-bmad's extra review layers (`auto-bmad-security` — gated by `code_review.
 
 ## Confirm
 
-Use the script JSON output to display what was registered — help entries added (`_bmad/abm/module-help.csv` + `_bmad/_config/bmad-help.csv`), the review layers synced (or "synced by the first-run flow next"), and fresh install vs update. Note that runtime settings are persisted to `{output_folder}/auto-bmad/config.yaml` by the first-run flow that follows.
+Use the script JSON output to display what was registered — help entries added (`_bmad/abm/module-help.csv` + `_bmad/_config/bmad-help.csv`), the review layers synced (or "synced by the first-run flow next"), and fresh install vs update. Note that runtime settings are persisted to `{output_folder}/auto-bmad/config.yaml` by the first-run flow that follows. On a `reprovision`-only invocation (which stops here), also run `git status --porcelain` (git only — never read the files) and, if a write shows up, tell the user to commit it or add it to `.gitignore` before the next run — Phase 0 hard-stops on a dirty base branch; otherwise the first-run flow's step-4 commit note covers it.
 
 If `./assets/module.yaml` contains `post-install-notes`, display them.
 

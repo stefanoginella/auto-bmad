@@ -5,8 +5,8 @@ When it is loaded: an explicit config command (`setup` / `configure` / `install`
 
 ## First-run flow (config.yaml absent, or an explicit `setup`/`configure`/`install`)
 This is the single interactive episode in normal operation. Use AskUserQuestion. It runs after the help-row registration (`assets/module-setup.md`) — `setup`/`configure`/`install` = that registration + this flow (incl. the review-layers sync in step 4). Nothing is rendered into the repo — no agent files, no restart caveat.
-- **Existing config (explicit `setup`/`configure`/`install` on a provisioned project):** the same flow, prefilled with the current values. Step 0 keeps every existing key as it is (env-detects `code_review.cross_model_layer` only when the key is absent); the interview answers overwrite their own keys inside the setup blocks (`delegation`/`tea`/`git`/`code_review`/`build`) in place — every other key (e.g. `delegation.cli_phases`, `git.base_branch`) stays; step 4 leaves `profiles`/`phase_profiles`/`profiles_source_version` untouched (those are the Phase 0 heal / `reset-defaults` domain), then syncs + stops as usual.
-- **Headless (`accept all defaults` / `--headless` passed through by `module-setup.md`):** no prompts — Quick depth; `tea.enabled` = whether `bmad-testarch-*` is installed; `framework_ci` = `done` when the step-0 probe finds both, else `skip` (never auto-run); everything else the seeded values. Still print the step-4 summary.
+- **Existing config (explicit `setup`/`configure`/`install` on a provisioned project):** the same flow, prefilled with the current values. Step 0 keeps every existing key as it is (env-detects `code_review.cross_model_layer` only when the key is absent); the interview answers overwrite their own keys inside the setup blocks (`delegation`/`tea`/`git`/`code_review`/`build`) in place — every other key (e.g. `delegation.cli_phases`, `git.base_branch`) stays; step 4 leaves `profiles`/`phase_profiles`/`profiles_source_version` untouched (those are the Phase 0 heal / `reset-defaults` domain), then syncs + stops as usual (incl. step 4's commit note).
+- **Headless (`accept all defaults` / `--headless` passed through by `module-setup.md`):** no prompts — Quick depth; `tea.enabled` = whether `bmad-testarch-*` is installed; `framework_ci` = `done` when the step-0 probe finds both, else `skip` (never auto-run); everything else the seeded values. Still print the step-4 summary (incl. its commit note).
 
 0. **Seed (non-interactive).** All of these are file-edited later, never interviewed.
    - `delegation.host` / `delegation.mode` = `auto`; `delegation.cli_phases: {}`.
@@ -41,7 +41,8 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
      python3 {skill-root}/scripts/build_auto_custom.py --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml --apply
      ```
      Surface its JSON (`layers`, `warnings`; `errors` / exit 2 ⇒ report the message — nothing was written — and still stop).
-   - **Then stop — do not start the pipeline this session.** Report what was configured, then: "start a fresh session and run `/auto-bmad`".
+   - **Then stop — do not start the pipeline this session.** Report what was configured, then the commit note below, then: "start a fresh session and run `/auto-bmad`".
+   - **Commit note (git-only — never read the files).** Run `git status --porcelain`; if any setup write appears (tracked or untracked: `_bmad/abm/module-help.csv`, `_bmad/_config/bmad-help.csv`, `<output_folder>/auto-bmad/config.yaml`, `_bmad/custom/bmad-build-auto.toml`), print: "Setup wrote `<the dirty paths>`. Commit them (e.g. `git add <paths> && git commit -m 'chore(abm): auto-bmad setup'`) or add them to `.gitignore` before the next run — auto-bmad never commits on the base branch, and Phase 0 hard-stops on a dirty base branch." Nothing dirty ⇒ say nothing.
 
 ## reset-defaults — restore shipped profile defaults
 `/auto-bmad reset-defaults [scope]` discards retunes in `config.yaml` and re-seeds the **asset-sourced** blocks from `{skill-root}/assets/profiles.yaml`.
