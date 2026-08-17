@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""auto-bmad's single story-source adapter: sprint-status reader, BMAD-status
-flip, and bmad-build-auto spec discovery/reader. Dependency-free (stdlib only);
-every mode prints ONE JSON object on stdout.
+"""auto-bmad's single story-source adapter, for BOTH story sources: sprint mode
+(``sprint-status.yaml`` + the epics documents, keyed by ``--sprint-status``) and
+stories mode (a bmad-spec spec folder — ``SPEC.md`` + ``stories.yaml`` +
+``stories/{id}-*.md`` — keyed by ``--spec-folder``), plus the BMAD-status flip
+(sprint only) and bmad-build-auto spec discovery/reader (both). Dependency-free
+(stdlib only); every mode prints ONE JSON object on stdout.
 
-The orchestrator never parses ``sprint-status.yaml``, the epics documents, a
-build-auto spec, or a retrospective document itself — it reads them ONLY
-through this script, so every BMAD file-format assumption lives here.
+The orchestrator never parses ``sprint-status.yaml``, the epics documents,
+``stories.yaml``, a build-auto spec, or a retrospective document itself — it
+reads them ONLY through this script, so every BMAD file-format assumption lives
+here.
 
 Modes (exactly one per call):
 
@@ -133,6 +137,126 @@ Modes (exactly one per call):
     warning). Not found ⇒ ``found: false``, exit 0; unreadable / non-UTF-8
     doc ⇒ ``error`` + exit 1.
 
+STORIES MODE (``--spec-folder DIR``) — the second story source: a bmad-spec
+spec folder (``SPEC.md`` + ``stories.yaml`` + ``stories/{id}-*.md``).
+``--spec-folder`` is mutually exclusive with ``--sprint-status`` and
+``--planning-dir``; it keys the SAME modes, with the same JSON field names
+wherever the meaning is the same, plus stories-only fields. Shared facts:
+
+* ``spec_slug`` = the folder basename minus a leading ``spec-``; story key
+  ``spec-{spec_slug}-{id}`` (can never match the sprint key grammar),
+  ``story_label`` = ``story-{spec_slug}-{id}``, ``epic_label`` =
+  ``spec-{spec_slug}``; ``slug`` = kebab-case of the entry ``title``.
+* ``stories.yaml`` is parsed dependency-free (top-level list of mappings;
+  quoted/plain scalars, booleans, ``>-``/``|-``/``>``/``|`` block scalars,
+  ``#`` comments, blank lines; a leading UTF-8 BOM is stripped) and validated
+  per bmad-spec's ``assets/stories-schema.md``: required
+  ``id``/``title``/``description``; ids unique, prefix-free under ``<id>-``,
+  quoted strings (an unquoted numeric ``id: 1`` hard-stops) and made of
+  ``[A-Za-z0-9-]`` ONLY (validity rule 4 — a ``/`` or ``*`` breaks the
+  ``stories/{id}-*.md`` match, and ``../x`` would escape the folder);
+  ``spec_checkpoint`` / ``done_checkpoint`` accept ONLY ``true``/``false``
+  (case-insensitive, quoted or not; absent/empty ⇒ ``false``) — ``yes``/``on``/
+  ``1``/anything else hard-stops rather than reading as truthy; NO ``status``
+  field ever. A violation ⇒ ``hard_stop`` + a precise ``hard_stop_reason`` +
+  exit 1. Missing ``stories.yaml`` ⇒ ``no stories.yaml in <DIR>; run
+  /bmad-spec "break this into stories" first``; missing ``SPEC.md`` ⇒ hard
+  stop; unreadable / non-UTF-8 ⇒ ``error`` + exit 1. List order IS execution
+  order (never filename sort).
+* Two YAML mistakes this dependency-free subset would otherwise mis-report are
+  diagnosed up front: a TAB in the indentation of a structural line (or at the
+  start of a block-scalar body line) ⇒ hard stop ``stories.yaml line N: tab
+  indentation is not valid YAML`` (instead of a bogus "missing required
+  field"); an unquoted value containing ``": "`` ⇒ a ``warnings`` entry
+  (``entry N: unquoted value contains ': ' — quote it or bmad-build-auto will
+  fail to parse stories.yaml``) because a real YAML parser rejects it; a second
+  top-level ``---`` ⇒ a ``warnings`` entry (only the FIRST document is read).
+* Story status lives in the story file's frontmatter and bmad-build-auto owns
+  it: ``story_file_status`` = the raw value
+  (``draft|ready-for-dev|in-progress|in-review|done|blocked``, null when there
+  is no file); ``current_status``/``status`` = the pipeline vocabulary mapped
+  from it — absent ⇒ ``backlog``, ``draft`` ⇒ ``backlog`` (planning was
+  interrupted; flagged ``draft_spec: true``), ``in-review`` ⇒ ``review``,
+  everything else identical. An unreadable, ambiguous or unrecognized-status
+  story file ⇒ ``status: null`` + a ``warnings`` entry AND a needs-human
+  ``hard_stop`` naming the id (build-auto HALTs on all three), so such a story
+  is never picked or dispatched: ``--resolve`` on it exits 1 and ``--stories``
+  keeps ``next_story_key: null``.
+* ``epic_status``: all ``done`` ⇒ ``done``; any not ``backlog`` ⇒
+  ``in-progress``; else ``backlog``. ``retrospective_status``: ``done`` when
+  ``{DIR}/RETROSPECTIVE.md`` exists, else null. ``epic_title``: ``SPEC.md``
+  frontmatter ``title`` → its first ``# `` heading → ``spec_slug``.
+
+``--discover-specs --roots DIR [DIR ...]``
+    Walk each EXISTING root (depth ≤ 4, hidden dirs skipped; missing roots
+    ignored) for spec folders — any directory holding a ``stories.yaml``.
+    ``{roots, candidates: [{spec_folder, spec_slug, epic_title, story_count,
+    done_count, retrospective_status}], hard_stop, hard_stop_reason, warnings,
+    error}``, candidates sorted by path. A candidate whose ``stories.yaml``
+    fails to parse (or that has no ``SPEC.md``) is still listed with
+    ``story_count: null`` + a ``warnings`` entry; a directory the walk cannot
+    read adds ``could not walk <path>: <err>`` to ``warnings`` (never a crash,
+    never a silent skip). Exit 0 ALWAYS (zero candidates is a verdict, not an
+    error).
+
+``--resolve REF --spec-folder DIR``
+    The ``--resolve`` field set (``epic_num``/``story_num``/``story_suffix``
+    always null) PLUS ``story_source: "stories", spec_folder (abs), spec_slug,
+    story_id, story_label, epic_label, description, spec_checkpoint,
+    done_checkpoint, invoke_dev_with, story_file (abs|null),
+    story_file_status, draft_spec, position (0-based), warnings``. REF
+    precedence: exact ``id`` > exact story key ``spec-{spec_slug}-{id}`` >
+    case-insensitive substring of ``title``/``slug``; several ⇒ ambiguous
+    hard stop with ``candidates`` (story keys). Not found / ambiguous / an
+    invalid spec folder ⇒ ``hard_stop`` + exit 1 — and so is a resolved story
+    whose story-file status could not be read (ambiguous / unreadable /
+    unrecognized): the reason names the id and ends ``(needs-human)``.
+    ``warnings`` is NARROWED to the resolved story — file-level parse warnings
+    are kept, another story's warnings are not (before a story is resolved —
+    every hard stop above — the full list is echoed).
+
+``--stories --spec-folder DIR``
+    The ``--epic`` mirror: ``{story_source, spec_folder, spec_slug, epic_num:
+    null, epic_label, epic_status, epic_title, epic_story_count, epic_stories:
+    [{key, story_id, story_label, slug, status, story_file_status, draft_spec,
+    title, description, spec_checkpoint, done_checkpoint, invoke_dev_with,
+    story_file, is_first_in_epic, is_last_in_epic, stories_after_in_epic}],
+    retrospective_status, next_story_key, all_done, hard_stop,
+    hard_stop_reason, error, warnings}`` in list order. ``next_story_key`` =
+    the first entry whose mapped status is not ``done`` (null when
+    ``all_done``) — but NEVER an entry whose status is null: a story whose
+    story-file status could not be read is a needs-human stop, so
+    ``next_story_key`` stays null and ``hard_stop`` + ``hard_stop_reason``
+    name every broken id (``; ``-joined, each ending ``(needs-human)``) while
+    the full list still enumerates. Exit 0 on every verdict; exit 1 only on an
+    unreadable ``stories.yaml`` (an I/O failure), exactly like ``--epic``.
+
+``--find-spec --spec-folder DIR --story-id ID``
+    The id-keyed story file: candidates = ``{DIR}/stories/{ID}-*.md`` (exact
+    id prefix followed by a dash; the halt names ``{id}-unresolved.md`` /
+    ``{id}-ambiguous.md`` are ordinary candidates). Exactly one ⇒ ``found``;
+    more than one ⇒ ``ambiguous: true`` + ``hard_stop`` + exit 1 (mirrors
+    build-auto's ``ambiguous story file match``); none ⇒ ``found: false``
+    (the normal first-dispatch case). Same JSON keys as sprint mode plus
+    ``spec_folder`` / ``story_id``, with ``impl_dir: null`` and
+    ``siblings: []`` (folder+id never creates a collision sibling).
+
+``--retro-verdict --spec-folder DIR``
+    The fixed ``{DIR}/RETROSPECTIVE.md`` (bmad-retrospective stories mode
+    writes the same frontmatter without ``epic``) ⇒ ``{epic: null,
+    spec_folder, doc, verdict, date, headless, found, warnings, error}``; same
+    verdict vocabulary/validation as sprint mode. Absent ⇒ ``found: false``,
+    exit 0; unreadable ⇒ ``error`` + exit 1.
+
+``--mark-status … --spec-folder DIR``
+    Usage error, exit 2: ``--mark-status is unsupported in stories mode:
+    bmad-build-auto owns the story-file status``. Stories mode has NO status
+    write-back anywhere — ``stories.yaml`` carries no status and the story
+    file's frontmatter belongs to build-auto.
+
+``--spec PATH`` is mode-neutral: a stories-mode story file IS a build-auto
+spec, so the reader (and ``read_spec`` / ``parse_frontmatter``) is unchanged.
+
 ``--self-test``
     Runs the built-in fixtures (temp dirs) and exits 0/1.
 
@@ -147,6 +271,11 @@ Usage:
     story_plan.py --find-spec --impl-dir DIR --story-key KEY [--sprint-status PATH]
     story_plan.py --spec PATH
     story_plan.py --retro-verdict --impl-dir DIR --epic N
+    story_plan.py --discover-specs --roots DIR [DIR ...]
+    story_plan.py --resolve REF --spec-folder DIR
+    story_plan.py --stories --spec-folder DIR
+    story_plan.py --find-spec --spec-folder DIR --story-id ID
+    story_plan.py --retro-verdict --spec-folder DIR
     story_plan.py --self-test
 """
 from __future__ import annotations
@@ -1379,14 +1508,22 @@ def build_retro_verdict_result(impl_dir, epic_arg):
     doc = docs[0][1]
     result["doc"] = doc
     result["found"] = True
+    return result, _read_retro_doc_into(result, doc)
+
+
+def _read_retro_doc_into(result, doc):
+    """Fill ``verdict`` / ``date`` / ``headless`` / ``warnings`` / ``error`` of a
+    retro-verdict result from ``doc``'s frontmatter (shared by the sprint-mode
+    ``epic-N-retro-*.md`` reader and the stories-mode ``RETROSPECTIVE.md`` one).
+    Returns the exit code: 1 when the document is unreadable, else 0."""
     text, read_error = _read_text(doc)
     if read_error:
         result["error"] = read_error
-        return result, 1
+        return 1
     fm_lines, _ = _frontmatter_block(text)
     if fm_lines is None:
         result["warnings"].append("retro document has no closed frontmatter block")
-        return result, 0
+        return 0
     fm_text = "\n".join(fm_lines)
 
     def scalar(name):
@@ -1409,6 +1546,822 @@ def build_retro_verdict_result(impl_dir, epic_arg):
     result["date"] = str(date) if date is not None else None
     headless = scalar("headless")
     result["headless"] = headless if isinstance(headless, bool) else None
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# Stories mode: a bmad-spec spec folder (SPEC.md + stories.yaml + stories/)
+# --------------------------------------------------------------------------- #
+STORIES_FILE = "stories.yaml"
+SPEC_DOC = "SPEC.md"
+RETRO_DOC = "RETROSPECTIVE.md"
+STORIES_SUBDIR = "stories"
+
+# The story-file frontmatter status vocabulary bmad-build-auto owns (step-01).
+STORY_FILE_STATUSES = ("draft", "ready-for-dev", "in-progress", "in-review", "done", "blocked")
+
+# story-file status -> the pipeline status vocabulary. No file ⇒ backlog;
+# `draft` ⇒ backlog too (planning was interrupted; flagged `draft_spec`).
+STORY_FILE_STATUS_MAP = {
+    None: "backlog",
+    "draft": "backlog",
+    "ready-for-dev": "ready-for-dev",
+    "in-progress": "in-progress",
+    "in-review": "review",
+    "done": "done",
+    "blocked": "blocked",
+}
+
+# The one stories-mode hard stop that is an I/O failure rather than a verdict.
+UNREADABLE_STORIES_REASON = (
+    "unreadable stories.yaml; fix the file (UTF-8, readable) or re-run /bmad-spec "
+    '"break this into stories"'
+)
+
+_KEBAB_RE = re.compile(r"[^a-z0-9]+")
+_H1_RE = re.compile(r"^#\s+(.*?)\s*#*\s*$")
+
+# stories-schema.md validity rule 4: an id is used verbatim in the story
+# filename (``stories/{id}-*.md``), so anything but letters/digits/dashes
+# either breaks that match or escapes the folder (``../x``).
+_STORY_ID_RE = re.compile(r"[A-Za-z0-9-]+")
+
+# A plain (unquoted) scalar carrying ``": "`` parses here but is invalid YAML
+# for a real parser — bmad-build-auto would fail to read the file.
+_COLON_SPACE = ": "
+
+
+def spec_folder_abspath(spec_folder):
+    """Absolute, normalized spec-folder path (no trailing separator)."""
+    return os.path.abspath(os.path.normpath(str(spec_folder or "")))
+
+
+def spec_slug_for(spec_folder):
+    """``spec_slug`` = the folder basename minus a leading ``spec-``."""
+    base = os.path.basename(spec_folder_abspath(spec_folder))
+    if base.startswith("spec-") and len(base) > len("spec-"):
+        return base[len("spec-"):]
+    return base
+
+
+def kebab_slug(text):
+    """Kebab-case slug of a title (lowercase, non-alphanumerics ⇒ ``-``)."""
+    return _KEBAB_RE.sub("-", str(text or "").lower()).strip("-")
+
+
+def story_key_for(spec_slug, story_id):
+    return f"spec-{spec_slug}-{story_id}"
+
+
+def story_label_for(spec_slug, story_id):
+    return f"story-{spec_slug}-{story_id}"
+
+
+def epic_label_for(spec_slug):
+    return f"spec-{spec_slug}"
+
+
+def _expanded_indent(line):
+    """Indent width with tabs expanded (tab stop 8) — used only by the
+    diagnostic scan, so a tab-indented block-scalar body is not mistaken for a
+    dedent back to the mapping."""
+    ws = line[: len(line) - len(line.lstrip())]
+    return len(ws.expandtabs(8))
+
+
+def _scan_stories_text(lines):
+    """Diagnose the two YAML mistakes this dependency-free subset would
+    otherwise mis-report, plus multi-document files. Returns
+    (fatal_reason|None, warnings).
+
+    * a TAB in the leading whitespace of a structural line (``- `` item or
+      ``key:``) ⇒ fatal — real YAML forbids tab indentation, and this parser
+      would instead blame a "missing required field";
+    * a plain (unquoted) value containing ``": "`` ⇒ warning (parses here,
+      rejected by a real YAML parser);
+    * a second top-level ``---`` ⇒ warning (only the first document is read).
+
+    Lines inside a ``>``/``|`` block scalar are skipped (their content is
+    payload, not structure)."""
+    warnings = []
+    entry_no = 0
+    top_indent = None
+    seen_content = False
+    seen_doc_start = False
+    skip_indent = None
+    for n, raw in enumerate(lines, start=1):
+        if raw.strip() == "":
+            continue
+        if skip_indent is not None:
+            if raw.startswith("\t"):
+                # A block-scalar body line whose FIRST indentation character is a
+                # tab cannot be indentation relative to a space-indented key —
+                # real YAML ends the scalar there and this reader silently yields
+                # an empty value, so name the real mistake.
+                return f"stories.yaml line {n}: tab indentation is not valid YAML", warnings
+            if _expanded_indent(raw) > skip_indent:
+                continue
+            skip_indent = None
+        s = raw.strip()
+        if s.startswith("#"):
+            continue
+        if raw == "---":
+            if not seen_content and not seen_doc_start:
+                seen_doc_start = True
+                continue
+            warnings.append(
+                f"stories.yaml has more than one YAML document (second '---' on line {n}): "
+                "only the FIRST document is read"
+            )
+            break
+        ws = raw[: len(raw) - len(raw.lstrip())]
+        is_item = _is_list_item(raw)
+        structural = is_item or _KV_RE.match(raw) is not None
+        if "\t" in ws and structural:
+            return f"stories.yaml line {n}: tab indentation is not valid YAML", warnings
+        seen_content = True
+        ind = _expanded_indent(raw)
+        if is_item:
+            if top_indent is None:
+                top_indent = ind
+            if ind == top_indent:
+                entry_no += 1
+        # `- key: value` and `key: value` alike: match the mapping key.
+        pre, body = (raw[: len(ws) + 2], s[2:]) if s.startswith("- ") else (ws, s)
+        m = _KV_RE.match(body)
+        if not m:
+            continue
+        value = m.group(3)
+        if value is None:
+            continue
+        vs = value.strip()
+        if _BLOCK_SCALAR_RE.match(vs):
+            skip_indent = len(pre.expandtabs(8))
+            continue
+        if vs.startswith(("'", '"', "[", "{", "&", "*", "!")):
+            continue
+        _q, inner, _trail = _split_scalar_comment(vs)
+        if _COLON_SPACE in inner:
+            where = f"entry {entry_no}" if entry_no else f"line {n}"
+            warnings.append(
+                f"{where}: unquoted value contains ': ' — quote it or bmad-build-auto "
+                "will fail to parse stories.yaml"
+            )
+    return None, warnings
+
+
+def parse_stories_yaml(text):
+    """Parse ``stories.yaml`` — a top-level YAML list of mappings — with the
+    same dependency-free subset the frontmatter reader uses (quoted/plain
+    scalars, booleans, ``>-``/``|-``/``>``/``|`` block scalars, ``#`` comments,
+    blank lines). A UTF-8 BOM is stripped first. Returns (items|None, warnings);
+    ``items is None`` ⇒ the single warning IS the hard-stop reason."""
+    if text.startswith("﻿"):
+        text = text[1:]
+    lines = text.splitlines()
+    fatal, warnings = _scan_stories_text(lines)
+    if fatal:
+        return None, [fatal] + warnings
+    i = 0
+    seen_doc_start = False
+    while i < len(lines):
+        s = lines[i].strip()
+        if s == "" or s.startswith("#"):
+            i += 1
+            continue
+        if s == "---" and not seen_doc_start:
+            seen_doc_start = True
+            i += 1
+            continue
+        break
+    if i >= len(lines):
+        return [], warnings
+    first = lines[i]
+    if not _is_list_item(first):
+        return None, [
+            "stories.yaml is not a top-level YAML list (expected `- id: ...` entries)"
+        ] + warnings
+    indent = len(first) - len(first.lstrip())
+    try:
+        items, _next = _parse_block_list(lines, i, indent, warnings)
+    except Exception as exc:  # defensive: never crash the reader
+        return None, [f"stories.yaml parse error: {exc}"] + warnings
+    return items, warnings
+
+
+def _as_bool(value, n, field, default=False):
+    """Strict boolean field reader. The schema says boolean, so ONLY ``true`` /
+    ``false`` (case-insensitive, quoted or not) are accepted — an absent/empty
+    value falls back to ``default``; anything else is a hard stop, never a
+    silent truthy value. Returns (bool|None, hard_stop_reason|None)."""
+    if value is None:
+        return default, None
+    if isinstance(value, bool):
+        return value, None
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low == "":
+            return default, None
+        if low == "true":
+            return True, None
+        if low == "false":
+            return False, None
+    return None, (
+        f"stories.yaml entry {n}: {field} must be a boolean (true|false), got '{value}'"
+    )
+
+
+def _validate_stories(entries):
+    """Normalize + validate parsed ``stories.yaml`` entries against
+    bmad-spec's stories-schema.md. Returns (stories|None, hard_stop_reason|None)."""
+    stories = []
+    for n, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            return None, f"stories.yaml entry {n} is not a mapping of fields"
+        if "status" in entry:
+            return None, (
+                f"stories.yaml must not carry a status field (entry {n}): the story status "
+                "lives in the story file and bmad-build-auto owns it"
+            )
+        sid = entry.get("id")
+        if sid is None or (isinstance(sid, str) and not sid.strip()):
+            return None, f"stories.yaml entry {n}: missing required field 'id'"
+        if not isinstance(sid, str):
+            return None, (
+                f"stories.yaml entry {n}: id must be a quoted string — write id: \"{sid}\" "
+                "(an unquoted id parses as a number and breaks string comparison)"
+            )
+        sid = sid.strip()
+        if not _STORY_ID_RE.fullmatch(sid):
+            return None, (
+                f"stories.yaml entry {n}: id \"{sid}\" must contain only letters, digits and "
+                "dashes (stories-schema.md validity rule 4 — a / or * breaks the "
+                "stories/{id}-*.md match)"
+            )
+        for field in ("title", "description"):
+            value = entry.get(field)
+            if value is None or not str(value).strip():
+                return None, f"stories.yaml entry {n} (id \"{sid}\"): missing required field '{field}'"
+        checkpoints = {}
+        for field in ("spec_checkpoint", "done_checkpoint"):
+            flag, reason = _as_bool(entry.get(field), n, field, False)
+            if reason:
+                return None, reason
+            checkpoints[field] = flag
+        stories.append(
+            {
+                "id": sid,
+                "position": n - 1,
+                "title": str(entry["title"]).strip(),
+                "description": str(entry["description"]).rstrip("\n"),
+                "spec_checkpoint": checkpoints["spec_checkpoint"],
+                "done_checkpoint": checkpoints["done_checkpoint"],
+                "invoke_dev_with": ("" if entry.get("invoke_dev_with") is None
+                                    else str(entry["invoke_dev_with"]).rstrip("\n")),
+                "slug": kebab_slug(entry["title"]),
+            }
+        )
+    seen = {}
+    for s in stories:
+        if s["id"] in seen:
+            return None, (
+                f"stories.yaml has duplicate id \"{s['id']}\" (entries {seen[s['id']] + 1} and "
+                f"{s['position'] + 1}); ids must be unique"
+            )
+        seen[s["id"]] = s["position"]
+    ids = [s["id"] for s in stories]
+    for a in ids:
+        for b in ids:
+            if b != a and b.startswith(a + "-"):
+                return None, (
+                    f"stories.yaml ids \"{a}\" and \"{b}\" collide: no id may be another id plus a "
+                    "dash-suffix (ids must be prefix-free under the <id>- filename convention)"
+                )
+    return stories, None
+
+
+def read_epic_title(spec_folder, spec_slug):
+    """``epic_title`` = SPEC.md frontmatter ``title`` → its first ``# `` heading
+    → ``spec_slug`` (never fails)."""
+    text, read_error = _read_text(os.path.join(spec_folder, SPEC_DOC))
+    if read_error:
+        return spec_slug
+    fm, _warnings = parse_frontmatter(text)
+    if isinstance(fm, dict):
+        title = fm.get("title")
+        if title is not None and str(title).strip():
+            return str(title).strip()
+    _fm_lines, body = _frontmatter_block(text)
+    in_fence = False
+    for line in body.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        hm = _H1_RE.match(line)
+        if hm and hm.group(1).strip():
+            return hm.group(1).strip()
+    return spec_slug
+
+
+def story_file_candidates(spec_folder, story_id):
+    """Sorted ``{spec_folder}/stories/{id}-*.md`` paths (exact id prefix followed
+    by a dash — ids are prefix-free, so at most one should match). The halt
+    names ``{id}-unresolved.md`` / ``{id}-ambiguous.md`` are ordinary candidates."""
+    sdir = os.path.join(spec_folder, STORIES_SUBDIR)
+    if not os.path.isdir(sdir):
+        return []
+    name_re = re.compile(r"^" + re.escape(str(story_id)) + r"-.+\.md$")
+    try:
+        names = os.listdir(sdir)
+    except OSError:
+        return []
+    return sorted(
+        os.path.join(sdir, n)
+        for n in names
+        if name_re.match(n) and os.path.isfile(os.path.join(sdir, n))
+    )
+
+
+def load_spec_folder(spec_folder):
+    """Read + validate a bmad-spec spec folder. Returns
+    (info|None, hard_stop_reason|None, error|None); ``info`` =
+    ``{spec_folder, spec_slug, stories, epic_title, retrospective_status,
+    warnings}`` with the story list in FILE ORDER (execution order)."""
+    folder = spec_folder_abspath(spec_folder)
+    if not spec_folder or not os.path.isdir(folder):
+        reason = f"spec folder not found: {spec_folder}"
+        return None, reason, reason
+    stories_path = os.path.join(folder, STORIES_FILE)
+    if not os.path.isfile(stories_path):
+        reason = f'no {STORIES_FILE} in {folder}; run /bmad-spec "break this into stories" first'
+        return None, reason, reason
+    text, read_error = _read_text(stories_path)
+    if read_error:
+        return None, UNREADABLE_STORIES_REASON, read_error
+    entries, warnings = parse_stories_yaml(text)
+    if entries is None:
+        reason = f"invalid {STORIES_FILE} in {folder}: " + (
+            warnings[0] if warnings else "unparseable"
+        )
+        return None, reason, reason
+    if not entries:
+        reason = f'empty {STORIES_FILE} in {folder}; run /bmad-spec "break this into stories"'
+        return None, reason, reason
+    stories, reason = _validate_stories(entries)
+    if reason:
+        return None, reason, reason
+    if not os.path.isfile(os.path.join(folder, SPEC_DOC)):
+        reason = f"no {SPEC_DOC} in {folder}; not a bmad-spec spec folder"
+        return None, reason, reason
+    spec_slug = spec_slug_for(folder)
+    info = {
+        "spec_folder": folder,
+        "spec_slug": spec_slug,
+        "stories": stories,
+        "epic_title": read_epic_title(folder, spec_slug),
+        "retrospective_status": "done" if os.path.isfile(os.path.join(folder, RETRO_DOC)) else None,
+        "warnings": list(warnings),
+        # File-level (parse) warnings only — `--resolve` echoes these for every
+        # story, and adds the resolved story's own warnings on top.
+        "file_warnings": list(warnings),
+        "story_warnings": {},
+        "ambiguous_ids": [],
+        # id -> the needs-human hard-stop reason for a story whose status could
+        # not be read (`status: null`). Never a silent verdict.
+        "bad_status_reasons": {},
+    }
+    return info, None, None
+
+
+def attach_story_files(info):
+    """Fill each story's ``story_file`` / ``story_file_status`` / ``status`` /
+    ``draft_spec`` from ``stories/{id}-*.md``. No file ⇒ ``backlog``; an
+    ambiguous, unreadable or unrecognized-status file ⇒ ``status: null`` plus a
+    warning AND a needs-human hard-stop reason (build-auto HALTs on those, so
+    the pipeline must never pick such a story). Mutates and returns ``info``."""
+    def warn(sid, text):
+        info["warnings"].append(text)
+        info["story_warnings"].setdefault(sid, []).append(text)
+
+    for s in info["stories"]:
+        paths = story_file_candidates(info["spec_folder"], s["id"])
+        s["story_file"] = None
+        s["story_file_status"] = None
+        s["status"] = "backlog"
+        if len(paths) > 1:
+            info["ambiguous_ids"].append(s["id"])
+            warn(s["id"], f"ambiguous story file match for id \"{s['id']}\": " + ", ".join(paths))
+            info["bad_status_reasons"][s["id"]] = (
+                f"story id \"{s['id']}\": ambiguous story file match ("
+                + ", ".join(paths)
+                + ") — delete or rename the stale file by hand (needs-human)"
+            )
+            s["status"] = None
+        elif paths:
+            s["story_file"] = paths[0]
+            spec = read_spec(paths[0])
+            if spec["error"]:
+                warn(s["id"], f"could not read story file: {spec['error']}")
+                info["bad_status_reasons"][s["id"]] = (
+                    f"story id \"{s['id']}\": story file {paths[0]} is unreadable "
+                    f"({spec['error']}) — fix it by hand (needs-human)"
+                )
+                s["status"] = None
+            else:
+                raw = spec["status"]
+                if raw in STORY_FILE_STATUSES:
+                    s["story_file_status"] = raw
+                    s["status"] = STORY_FILE_STATUS_MAP[raw]
+                else:
+                    s["story_file_status"] = raw
+                    s["status"] = None
+                    warn(s["id"], f"unrecognized status {raw!r} in story file {paths[0]}")
+                    what = "no frontmatter status" if raw is None else f"an unrecognized status ('{raw}')"
+                    info["bad_status_reasons"][s["id"]] = (
+                        f"story id \"{s['id']}\": story file {paths[0]} has {what} — set it to one "
+                        "of draft|ready-for-dev|in-progress|in-review|done|blocked by hand "
+                        "(needs-human)"
+                    )
+        s["draft_spec"] = s["story_file_status"] == "draft"
+    return info
+
+
+def epic_status_for(stories):
+    """all ``done`` ⇒ ``done``; any not ``backlog`` ⇒ ``in-progress``; else ``backlog``."""
+    statuses = [s["status"] for s in stories]
+    if statuses and all(st == "done" for st in statuses):
+        return "done"
+    if any(st != "backlog" for st in statuses):
+        return "in-progress"
+    return "backlog"
+
+
+def _stories_positional(info, story):
+    count = len(info["stories"])
+    pos = story["position"]
+    return {
+        "epic_story_count": count,
+        "is_first_in_epic": pos == 0,
+        "is_last_in_epic": pos == count - 1,
+        "stories_after_in_epic": count - 1 - pos,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# --resolve --spec-folder
+# --------------------------------------------------------------------------- #
+def build_stories_resolve_result(spec_folder, ref):
+    """Resolve REF to exactly one ``stories.yaml`` entry. Precedence: exact id >
+    exact story key > case-insensitive substring of title/slug. (result, exit_code)."""
+    folder = spec_folder_abspath(spec_folder)
+    result = {
+        "ref": ref,
+        "story_key": None,
+        "epic_num": None,
+        "story_num": None,
+        "story_suffix": None,
+        "slug": None,
+        "current_status": None,
+        "epic_status": None,
+        "epic_story_count": None,
+        "is_first_in_epic": None,
+        "is_last_in_epic": None,
+        "stories_after_in_epic": None,
+        "retrospective_status": None,
+        "title": None,
+        "epic_title": None,
+        "candidates": [],
+        "hard_stop": False,
+        "hard_stop_reason": None,
+        "error": None,
+        "story_source": "stories",
+        "spec_folder": folder,
+        "spec_slug": spec_slug_for(folder),
+        "story_id": None,
+        "story_label": None,
+        "epic_label": epic_label_for(spec_slug_for(folder)),
+        "description": None,
+        "spec_checkpoint": None,
+        "done_checkpoint": None,
+        "invoke_dev_with": None,
+        "story_file": None,
+        "story_file_status": None,
+        "draft_spec": None,
+        "position": None,
+        "warnings": [],
+    }
+
+    def stop(reason, error=None):
+        result["hard_stop"] = True
+        result["hard_stop_reason"] = reason
+        result["error"] = error or reason
+        return result, 1
+
+    info, hs_reason, error = load_spec_folder(spec_folder)
+    if hs_reason:
+        return stop(hs_reason, error)
+    attach_story_files(info)
+    result["spec_slug"] = info["spec_slug"]
+    result["epic_label"] = epic_label_for(info["spec_slug"])
+    result["epic_title"] = info["epic_title"]
+    result["retrospective_status"] = info["retrospective_status"]
+    result["epic_status"] = epic_status_for(info["stories"])
+    result["epic_story_count"] = len(info["stories"])
+    result["warnings"] = list(info["warnings"])
+
+    ref_s = (ref or "").strip()
+    if not ref_s:
+        return stop("empty story reference")
+
+    stories = info["stories"]
+    # 1. exact id
+    matches = [s for s in stories if s["id"] == ref_s]
+    # 2. exact story key
+    if not matches:
+        matches = [s for s in stories if story_key_for(info["spec_slug"], s["id"]) == ref_s]
+    # 3. case-insensitive substring of title / slug
+    if not matches:
+        low = ref_s.lower()
+        matches = [s for s in stories if low in s["title"].lower() or low in s["slug"].lower()]
+
+    if not matches:
+        return stop(f"story '{ref_s}' not found in {os.path.join(folder, STORIES_FILE)}")
+    if len(matches) > 1:
+        result["candidates"] = [story_key_for(info["spec_slug"], s["id"]) for s in matches]
+        return stop(
+            f"story reference '{ref_s}' is ambiguous — candidates: "
+            + ", ".join(result["candidates"])
+        )
+
+    story = matches[0]
+    # Narrow the echoed warnings to this story (file-level parse warnings stay).
+    result["warnings"] = list(info["file_warnings"]) + info["story_warnings"].get(story["id"], [])
+    if story["id"] in info["ambiguous_ids"]:
+        result["candidates"] = story_file_candidates(info["spec_folder"], story["id"])
+        return stop(info["bad_status_reasons"][story["id"]])
+    if story["id"] in info["bad_status_reasons"]:
+        # Unreadable / unrecognized story-file status: build-auto would HALT, so
+        # this is a needs-human stop, never a silent `status: null` pick.
+        return stop(info["bad_status_reasons"][story["id"]])
+    result.update(
+        {
+            "story_key": story_key_for(info["spec_slug"], story["id"]),
+            "slug": story["slug"],
+            "current_status": story["status"],
+            "title": story["title"],
+            "story_id": story["id"],
+            "story_label": story_label_for(info["spec_slug"], story["id"]),
+            "description": story["description"],
+            "spec_checkpoint": story["spec_checkpoint"],
+            "done_checkpoint": story["done_checkpoint"],
+            "invoke_dev_with": story["invoke_dev_with"],
+            "story_file": story["story_file"],
+            "story_file_status": story["story_file_status"],
+            "draft_spec": story["draft_spec"],
+            "position": story["position"],
+        }
+    )
+    result.update(_stories_positional(info, story))
+    return result, 0
+
+
+# --------------------------------------------------------------------------- #
+# --stories --spec-folder (the --epic mirror)
+# --------------------------------------------------------------------------- #
+def build_stories_list_result(spec_folder):
+    """Enumerate every ``stories.yaml`` entry in list order (= execution order).
+    The verdict is in the JSON (exit 0); only an unreadable stories.yaml is an
+    I/O failure (exit 1), exactly like ``--epic``."""
+    folder = spec_folder_abspath(spec_folder)
+    result = {
+        "story_source": "stories",
+        "spec_folder": folder,
+        "spec_slug": spec_slug_for(folder),
+        "epic_num": None,
+        "epic_label": epic_label_for(spec_slug_for(folder)),
+        "epic_status": None,
+        "epic_title": None,
+        "epic_story_count": None,
+        "epic_stories": [],
+        "retrospective_status": None,
+        "next_story_key": None,
+        "all_done": None,
+        "hard_stop": False,
+        "hard_stop_reason": None,
+        "error": None,
+        "warnings": [],
+    }
+    info, hs_reason, error = load_spec_folder(spec_folder)
+    if hs_reason:
+        result["hard_stop"] = True
+        result["hard_stop_reason"] = hs_reason
+        result["error"] = error
+        return result, (1 if hs_reason == UNREADABLE_STORIES_REASON else 0)
+    attach_story_files(info)
+    result["spec_slug"] = info["spec_slug"]
+    result["epic_label"] = epic_label_for(info["spec_slug"])
+    result["epic_title"] = info["epic_title"]
+    result["retrospective_status"] = info["retrospective_status"]
+    result["epic_status"] = epic_status_for(info["stories"])
+    result["epic_story_count"] = len(info["stories"])
+    for s in info["stories"]:
+        item = {
+            "key": story_key_for(info["spec_slug"], s["id"]),
+            "story_id": s["id"],
+            "story_label": story_label_for(info["spec_slug"], s["id"]),
+            "slug": s["slug"],
+            "status": s["status"],
+            "story_file_status": s["story_file_status"],
+            "draft_spec": s["draft_spec"],
+            "title": s["title"],
+            "description": s["description"],
+            "spec_checkpoint": s["spec_checkpoint"],
+            "done_checkpoint": s["done_checkpoint"],
+            "invoke_dev_with": s["invoke_dev_with"],
+            "story_file": s["story_file"],
+        }
+        item.update(_stories_positional(info, s))
+        item.pop("epic_story_count")
+        result["epic_stories"].append(item)
+    result["all_done"] = all(s["status"] == "done" for s in info["stories"])
+    # The pick is list order: the first entry that is not `done`. A story whose
+    # status could NOT be read (`status: null` — ambiguous / unreadable /
+    # unrecognized) is never handed to build-auto: it is a needs-human stop, so
+    # `next_story_key` stays null and the reason names the id.
+    nxt = next((s for s in info["stories"] if s["status"] != "done"), None)
+    result["next_story_key"] = (
+        story_key_for(info["spec_slug"], nxt["id"]) if nxt and nxt["status"] is not None else None
+    )
+    result["warnings"] = list(info["warnings"])
+    stops = [info["bad_status_reasons"][s["id"]] for s in info["stories"]
+             if s["id"] in info["bad_status_reasons"]]
+    if stops:
+        result["hard_stop"] = True
+        result["hard_stop_reason"] = "; ".join(stops)
+    return result, 0
+
+
+# --------------------------------------------------------------------------- #
+# --find-spec --spec-folder --story-id
+# --------------------------------------------------------------------------- #
+def build_stories_find_spec_result(spec_folder, story_id):
+    """Locate the id-keyed story file: candidates = ``stories/{ID}-*.md``.
+    Exactly one ⇒ found; more than one ⇒ ``ambiguous`` hard stop (mirrors
+    build-auto's ``ambiguous story file match``); none ⇒ ``found: false``."""
+    folder = spec_folder_abspath(spec_folder)
+    sid = (story_id or "").strip()
+    result = {
+        "story_key": story_key_for(spec_slug_for(folder), sid),
+        "impl_dir": None,
+        "spec_folder": folder,
+        "story_id": sid,
+        "candidates": [],
+        "spec_path": None,
+        "status": None,
+        "found": False,
+        "ambiguous": False,
+        "siblings": [],
+        "hard_stop": False,
+        "hard_stop_reason": None,
+        "warnings": [],
+        "error": None,
+    }
+    if not sid:
+        result["error"] = "empty --story-id"
+        result["hard_stop"] = True
+        result["hard_stop_reason"] = result["error"]
+        return result, 1
+    if not spec_folder or not os.path.isdir(folder):
+        result["error"] = f"spec folder not found: {spec_folder}"
+        return result, 0
+
+    paths = story_file_candidates(folder, sid)
+    for p in paths:
+        info = read_spec(p)
+        if info["error"]:
+            # Unreadable / non-UTF-8 candidate: kept with status null (never a crash).
+            result["warnings"].append(f"could not read story file candidate: {info['error']}")
+        result["candidates"].append({"path": p, "status": info["status"], "mtime": os.stat(p).st_mtime})
+
+    if not paths:
+        return result, 0
+    if len(paths) > 1:
+        result["ambiguous"] = True
+        result["hard_stop"] = True
+        result["hard_stop_reason"] = (
+            f"ambiguous story file match for story id \"{sid}\": " + ", ".join(paths)
+        )
+        return result, 1
+    result["spec_path"] = result["candidates"][0]["path"]
+    result["status"] = result["candidates"][0]["status"]
+    result["found"] = True
+    return result, 0
+
+
+# --------------------------------------------------------------------------- #
+# --retro-verdict --spec-folder
+# --------------------------------------------------------------------------- #
+def build_stories_retro_verdict_result(spec_folder):
+    """Read the fixed ``{spec_folder}/RETROSPECTIVE.md`` (bmad-retrospective
+    stories mode: same frontmatter without ``epic``)."""
+    folder = spec_folder_abspath(spec_folder)
+    result = {
+        "epic": None,
+        "spec_folder": folder,
+        "doc": None,
+        "verdict": None,
+        "date": None,
+        "headless": None,
+        "found": False,
+        "warnings": [],
+        "error": None,
+    }
+    if not spec_folder or not os.path.isdir(folder):
+        result["error"] = f"spec folder not found: {spec_folder}"
+        return result, 0
+    doc = os.path.join(folder, RETRO_DOC)
+    if not os.path.isfile(doc):
+        return result, 0
+    result["doc"] = doc
+    result["found"] = True
+    return result, _read_retro_doc_into(result, doc)
+
+
+# --------------------------------------------------------------------------- #
+# --discover-specs --roots
+# --------------------------------------------------------------------------- #
+DISCOVER_MAX_DEPTH = 4
+
+
+def build_discover_specs_result(roots):
+    """Walk each existing root (depth ≤ 4, hidden dirs skipped) for spec folders
+    — any directory holding a ``stories.yaml``. Missing roots are ignored; zero
+    candidates is a verdict, not an error (exit 0 always)."""
+    result = {
+        "roots": [],
+        "candidates": [],
+        "hard_stop": False,
+        "hard_stop_reason": None,
+        "warnings": [],
+        "error": None,
+    }
+    found = []
+    seen = set()
+    for raw_root in roots or []:
+        root = spec_folder_abspath(raw_root)
+        if root not in result["roots"]:
+            result["roots"].append(root)
+        if not os.path.isdir(root):
+            continue
+
+        def _walk_error(exc, _root=root):
+            # An unreadable directory is a warning, never a crash or a silent skip.
+            result["warnings"].append(f"could not walk {getattr(exc, 'filename', _root)}: {exc}")
+
+        for dirpath, dirnames, filenames in os.walk(root, onerror=_walk_error):
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            depth = 0 if os.path.abspath(dirpath) == root else len(
+                os.path.relpath(dirpath, root).split(os.sep)
+            )
+            if depth >= DISCOVER_MAX_DEPTH:
+                dirnames[:] = []
+            if STORIES_FILE in filenames:
+                p = os.path.abspath(dirpath)
+                if p not in seen:
+                    seen.add(p)
+                    found.append(p)
+    for folder in sorted(found):
+        slug = spec_slug_for(folder)
+        info, hs_reason, _error = load_spec_folder(folder)
+        if info is None:
+            result["warnings"].append(f"{folder}: {hs_reason}")
+            result["candidates"].append(
+                {
+                    "spec_folder": folder,
+                    "spec_slug": slug,
+                    "epic_title": read_epic_title(folder, slug),
+                    "story_count": None,
+                    "done_count": None,
+                    "retrospective_status": (
+                        "done" if os.path.isfile(os.path.join(folder, RETRO_DOC)) else None
+                    ),
+                }
+            )
+            continue
+        attach_story_files(info)
+        result["warnings"].extend(f"{folder}: {w}" for w in info["warnings"])
+        result["candidates"].append(
+            {
+                "spec_folder": folder,
+                "spec_slug": info["spec_slug"],
+                "epic_title": info["epic_title"],
+                "story_count": len(info["stories"]),
+                "done_count": sum(1 for s in info["stories"] if s["status"] == "done"),
+                "retrospective_status": info["retrospective_status"],
+            }
+        )
     return result, 0
 
 
@@ -1536,6 +2489,53 @@ Blocking condition: none
 
 **Commands:**
 - `pytest -q` -- expected: all green
+"""
+
+
+_STORIES_FIXTURE = """\
+# Story breakdown for the rate-limiting spec (ids are NOT in numeric order:
+# list order is execution order).
+- id: "2"
+  title: Expose limiter metrics
+  description: >-
+    Emit per-route accept/reject counters the existing dashboard can
+    scrape; no new dashboard panels in this story.
+- id: "1"
+  title: 'Add rate limiting to the public API'
+  description: >-
+    Introduce a token-bucket limiter in front of the public endpoints.
+  spec_checkpoint: true
+  invoke_dev_with: |-
+    Rate limit state must be shared across instances;
+    use the existing Redis client.
+
+- id: "3-2"
+  title: Retry-After header tuning   # composite id inside a larger spec
+  description: Tune the Retry-After header values.
+  done_checkpoint: true
+"""
+
+_STORY_SPEC_FIXTURE = """\
+---
+title: 'Story spec'
+type: 'feature'
+created: '2026-08-17'
+status: '@@STATUS@@'
+review_loop_iteration: 0
+---
+
+<intent-contract>
+
+## Intent
+
+**Problem:** the limiter is invisible to ops.
+
+</intent-contract>
+
+## Tasks & Acceptance
+
+**Acceptance Criteria:**
+- Given a rejected request, when it is counted, then the dashboard shows it
 """
 
 
@@ -2058,6 +3058,486 @@ development_status:
     r, code = build_retro_verdict_result(rdir, "3")
     check("retro: non-UTF-8 doc ⇒ error exit 1, found true, verdict null", code == 1 and "UTF-8" in r["error"] and r["found"] is True and r["verdict"] is None)
 
+    # ---- stories mode: stories.yaml parse + validate ---------------------- #
+    def _story_spec(status):
+        return _STORY_SPEC_FIXTURE.replace("@@STATUS@@", status)
+
+    entries, parse_warnings = parse_stories_yaml(_STORIES_FIXTURE)
+    check("stories parse: three entries in LIST order (not filename sort)",
+          [e["id"] for e in entries] == ["2", "1", "3-2"] and not parse_warnings)
+    st_list, st_reason = _validate_stories(entries)
+    check("stories validate: fixture is valid", st_reason is None and len(st_list) == 3)
+    check("stories validate: '>-' folds lines with a space, strips the newline",
+          st_list[0]["description"]
+          == "Emit per-route accept/reject counters the existing dashboard can scrape; no new dashboard panels in this story.")
+    check("stories validate: '|-' keeps newlines",
+          st_list[1]["invoke_dev_with"]
+          == "Rate limit state must be shared across instances;\nuse the existing Redis client.")
+    check("stories validate: checkpoint booleans", st_list[1]["spec_checkpoint"] is True
+          and st_list[1]["done_checkpoint"] is False and st_list[2]["done_checkpoint"] is True)
+    check("stories validate: checkpoint defaults are False",
+          st_list[0]["spec_checkpoint"] is False and st_list[0]["done_checkpoint"] is False)
+    check("stories validate: invoke_dev_with defaults to ''",
+          st_list[0]["invoke_dev_with"] == "" and st_list[2]["invoke_dev_with"] == "")
+    check("stories validate: inline comment stripped from a plain title",
+          st_list[2]["title"] == "Retry-After header tuning")
+    check("stories validate: slug is the kebab-cased title",
+          st_list[1]["slug"] == "add-rate-limiting-to-the-public-api")
+    check("stories validate: 0-based position", [s["position"] for s in st_list] == [0, 1, 2])
+
+    e2, _w2 = parse_stories_yaml("- id: \"1\"\n  title: T\n  description: >\n    a\n    b\n  invoke_dev_with: |\n    x\n    y\n")
+    s2, r2 = _validate_stories(e2)
+    check("stories parse: '>' folds (clip chomping)", r2 is None and s2[0]["description"] == "a b")
+    check("stories parse: '|' keeps newlines (clip chomping)", s2[0]["invoke_dev_with"] == "x\ny")
+
+    e3, _w3 = parse_stories_yaml("- id: 1\n  title: T\n  description: d\n")
+    s3, r3 = _validate_stories(e3)
+    check("stories validate: unquoted numeric id ⇒ hard stop naming the quoting fix",
+          s3 is None and "quoted string" in r3 and 'id: "1"' in r3)
+    e4, _w4 = parse_stories_yaml("- id: \"1\"\n  title: T\n  description: d\n  status: done\n")
+    s4, r4 = _validate_stories(e4)
+    check("stories validate: a status field is rejected",
+          s4 is None and r4.startswith("stories.yaml must not carry a status field"))
+    s5, r5 = _validate_stories([{"id": "1", "title": "A", "description": "d"},
+                                {"id": "1", "title": "B", "description": "d"}])
+    check("stories validate: duplicate ids rejected", s5 is None and "duplicate id" in r5)
+    s6, r6 = _validate_stories([{"id": "3", "title": "A", "description": "d"},
+                                {"id": "3-2", "title": "B", "description": "d"}])
+    check("stories validate: prefix collision \"3\"/\"3-2\" rejected",
+          s6 is None and "collide" in r6 and "prefix-free" in r6)
+    s7, r7 = _validate_stories([{"id": "1", "title": "T"}])
+    check("stories validate: missing description rejected", s7 is None and "'description'" in r7)
+    s8, r8 = _validate_stories([{"title": "T", "description": "d"}])
+    check("stories validate: missing id rejected", s8 is None and "'id'" in r8)
+    s9, r9 = _validate_stories(["nope"])
+    check("stories validate: non-mapping entry rejected", s9 is None and "not a mapping" in r9)
+    bad_list, bad_warn = parse_stories_yaml("foo: bar\n")
+    check("stories parse: a non-list document is rejected",
+          bad_list is None and "top-level YAML list" in bad_warn[0])
+
+    # id charset (stories-schema.md validity rule 4) — a `/` would escape the folder.
+    for bad_id in ("a/b", "a b", "a*b", "../x", "a.b"):
+        s_bad, r_bad = _validate_stories([{"id": bad_id, "title": "T", "description": "d"}])
+        check(f"stories validate: id {bad_id!r} rejected (letters/digits/dashes only)",
+              s_bad is None and r_bad is not None
+              and f'id "{bad_id}" must contain only letters, digits and dashes' in r_bad
+              and "validity rule 4" in r_bad)
+    s_ok, r_ok = _validate_stories([{"id": "3-2a", "title": "T", "description": "d"}])
+    check("stories validate: a dashed alphanumeric id is accepted", r_ok is None and s_ok)
+
+    # UTF-8 BOM must not make a valid stories.yaml look like a non-list.
+    bom_items, bom_warn = parse_stories_yaml("﻿" + _STORIES_FIXTURE)
+    check("stories parse: a UTF-8 BOM is stripped",
+          bom_items is not None and [e["id"] for e in bom_items] == ["2", "1", "3-2"]
+          and not bom_warn)
+
+    # Booleans are strict: only true/false (case-insensitive, quoted or not).
+    for raw_bool, want in (("true", True), ("TRUE", True), ('"true"', True), ("'True'", True),
+                           ("false", False), ("FALSE", False), ('"false"', False)):
+        eb, _wb = parse_stories_yaml(
+            f'- id: "1"\n  title: T\n  description: d\n  spec_checkpoint: {raw_bool}\n')
+        sb, rb = _validate_stories(eb)
+        check(f"stories validate: spec_checkpoint {raw_bool} ⇒ {want}",
+              rb is None and sb[0]["spec_checkpoint"] is want)
+    for raw_bool in ("nope", "yes", "on", "1", "off"):
+        eb, _wb = parse_stories_yaml(
+            f'- id: "1"\n  title: T\n  description: d\n  done_checkpoint: {raw_bool}\n')
+        sb, rb = _validate_stories(eb)
+        check(f"stories validate: non-boolean done_checkpoint {raw_bool!r} ⇒ hard stop",
+              sb is None and rb == "stories.yaml entry 1: done_checkpoint must be a boolean "
+                                   f"(true|false), got '{raw_bool}'")
+    eb, _wb = parse_stories_yaml('- id: "1"\n  title: T\n  description: d\n  spec_checkpoint:\n')
+    sb, rb = _validate_stories(eb)
+    check("stories validate: an EMPTY checkpoint value keeps the default (False)",
+          rb is None and sb[0]["spec_checkpoint"] is False)
+
+    # Tab indentation: a fatal, precise reason (not a bogus "missing field").
+    tab_items, tab_warn = parse_stories_yaml('- id: "1"\n\ttitle: T\n\tdescription: d\n')
+    check("stories parse: tab indentation ⇒ fatal with the line number",
+          tab_items is None and tab_warn[0] == "stories.yaml line 2: tab indentation is not valid YAML")
+    tab_body, tab_body_warn = parse_stories_yaml(
+        '- id: "1"\n  title: T\n  description: d\n  invoke_dev_with: |-\n\tuse a tab here\n')
+    check("stories parse: a TAB-indented block-scalar body is the same fatal (not a silent '')",
+          tab_body is None
+          and tab_body_warn[0] == "stories.yaml line 5: tab indentation is not valid YAML")
+    ok_items, ok_warn = parse_stories_yaml(
+        '- id: "1"\n  title: T\n  description: d\n  invoke_dev_with: |-\n    a\tb\n')
+    check("stories parse: a TAB *inside* block-scalar content is payload, not indentation",
+          ok_items is not None and not ok_warn
+          and _validate_stories(ok_items)[0][0]["invoke_dev_with"] == "a\tb")
+
+    # An unquoted value carrying ': ' parses here but not in a real YAML parser.
+    colon_items, colon_warn = parse_stories_yaml(
+        '- id: "1"\n  title: Refactor: the parser\n  description: d\n')
+    check("stories parse: unquoted ': ' ⇒ a warning naming the entry",
+          colon_items is not None
+          and any(w == "entry 1: unquoted value contains ': ' — quote it or bmad-build-auto "
+                       "will fail to parse stories.yaml" for w in colon_warn))
+    quiet_items, quiet_warn = parse_stories_yaml(
+        '- id: "1"\n  title: \'Refactor: the parser\'\n  description: d\n')
+    check("stories parse: the same value QUOTED is not warned about",
+          quiet_items is not None and not quiet_warn)
+    check("stories parse: the fixture (block scalars + inline comments) warns about nothing",
+          not parse_stories_yaml(_STORIES_FIXTURE)[1])
+
+    # Multi-document: only the first document is read.
+    multi_items, multi_warn = parse_stories_yaml(
+        '---\n- id: "1"\n  title: One\n  description: d\n---\n- id: "2"\n  title: Two\n  description: d\n')
+    check("stories parse: a second '---' ⇒ warning; only the first document is read",
+          multi_items is not None and [e["id"] for e in multi_items] == ["1"]
+          and any("more than one YAML document" in w and "only the FIRST document is read" in w
+                  for w in multi_warn))
+
+    # ---- stories mode: the spec folders ----------------------------------- #
+    specs_dir = os.path.join(root, "specs")
+    other_dir = os.path.join(root, "other")
+    sf = os.path.join(specs_dir, "spec-rate-limiting")
+    write("specs/spec-rate-limiting/stories.yaml", _STORIES_FIXTURE)
+    write("specs/spec-rate-limiting/SPEC.md",
+          "---\ntitle: 'Rate limiting the public API'\ncompanions: []\n---\n\n# Ignored heading\n")
+    write("specs/spec-rate-limiting/stories/2-expose-limiter-metrics.md", _story_spec("in-review"))
+    # `10-…` must NOT match story id "1" (the id prefix needs a following dash).
+    write("specs/spec-rate-limiting/stories/10-decoy.md", _story_spec("done"))
+
+    status_yaml = "".join(
+        f'- id: "{n}"\n  title: Story {n}\n  description: d{n}\n' for n in range(1, 8)
+    )
+    sf_stat = os.path.join(specs_dir, "spec-statuses")
+    write("specs/spec-statuses/stories.yaml", status_yaml)
+    write("specs/spec-statuses/SPEC.md", "# Statuses spec\n\nNo frontmatter here.\n")
+    for n, st in enumerate(STORY_FILE_STATUSES, start=1):
+        write(f"specs/spec-statuses/stories/{n}-story-{n}.md", _story_spec(st))
+
+    sf_done = os.path.join(specs_dir, "spec-alldone")
+    write("specs/spec-alldone/stories.yaml",
+          '- id: "1"\n  title: One\n  description: d\n- id: "2"\n  title: Two\n  description: d\n')
+    write("specs/spec-alldone/SPEC.md", "# All done\n")
+    write("specs/spec-alldone/stories/1-one.md", _story_spec("done"))
+    write("specs/spec-alldone/stories/2-two.md", _story_spec("done"))
+    write("specs/spec-alldone/RETROSPECTIVE.md",
+          "---\ndate: '2026-08-16'\nverdict: accepted\ncriteria: declared\nheadless: true\n---\n# Retro\n")
+
+    sf_backlog = os.path.join(specs_dir, "spec-backlog")
+    write("specs/spec-backlog/stories.yaml",
+          '- id: "1"\n  title: One\n  description: d\n- id: "2"\n  title: Two\n  description: d\n')
+    write("specs/spec-backlog/SPEC.md", "# Fresh\n")
+
+    write("specs/a/b/c/spec-depth4/stories.yaml", '- id: "1"\n  title: Deep\n  description: d\n')
+    write("specs/a/b/c/spec-depth4/SPEC.md", "# Depth four\n")
+    write("specs/a/b/c/d/spec-depth5/stories.yaml", '- id: "1"\n  title: Deeper\n  description: d\n')
+    write("specs/a/b/c/d/spec-depth5/SPEC.md", "# Depth five\n")
+    write("specs/.hidden/spec-hidden/stories.yaml", '- id: "1"\n  title: Hidden\n  description: d\n')
+    write("specs/.hidden/spec-hidden/SPEC.md", "# Hidden\n")
+
+    # Negative folders live OUTSIDE specs/ so --discover-specs stays predictable.
+    write("other/spec-nostories/SPEC.md", "# No breakdown yet\n")
+    write("other/spec-nospec/stories.yaml", '- id: "1"\n  title: One\n  description: d\n')
+    write("other/spec-badyaml/stories.yaml", "not: a list\n")
+    write("other/spec-badyaml/SPEC.md", "# Bad\n")
+    write("other/spec-precedence/SPEC.md", "# Precedence\n")
+    write("other/spec-precedence/stories.yaml",
+          '- id: "1"\n  title: Rollout groundwork\n  description: d\n'
+          '- id: "2"\n  title: Phase 1 rollout\n  description: d\n'
+          '- id: "3"\n  title: Rollout metrics\n  description: d\n')
+    unreadable_sf = os.path.join(other_dir, "spec-unreadable")
+    write("other/spec-unreadable/SPEC.md", "# Unreadable\n")
+    with open(os.path.join(unreadable_sf, "stories.yaml"), "wb") as fh:
+        fh.write(b'- id: "1"\n  title: \xff\n  description: d\n')
+    os.makedirs(os.path.join(root, "emptyroot"), exist_ok=True)
+
+    # A spec folder whose story FILES are broken in every way that yields
+    # `status: null` — the needs-human cases build-auto HALTs on.
+    sf_bad = os.path.join(other_dir, "spec-badstatus")
+    write("other/spec-badstatus/SPEC.md", "# Bad statuses\n")
+    write("other/spec-badstatus/stories.yaml",
+          "".join(f'- id: "{n}"\n  title: Story {n}\n  description: d\n' for n in range(1, 6)))
+    write("other/spec-badstatus/stories/1-done.md", _story_spec("done"))
+    write("other/spec-badstatus/stories/2-wat.md", _story_spec("wat"))
+    with open(os.path.join(sf_bad, "stories", "3-unreadable.md"), "wb") as fh:
+        fh.write(b"---\nstatus: 'done'\n---\n\xff\n")
+    write("other/spec-badstatus/stories/5-one.md", _story_spec("in-progress"))
+    write("other/spec-badstatus/stories/5-two.md", _story_spec("in-progress"))
+
+    # A file-level parse warning (unquoted ': ') with no story files at all.
+    write("other/spec-colonwarn/SPEC.md", "# Colon\n")
+    write("other/spec-colonwarn/stories.yaml",
+          '- id: "1"\n  title: Refactor: the parser\n  description: d\n')
+
+    # ---- load_spec_folder negatives --------------------------------------- #
+    info, hs, err = load_spec_folder(os.path.join(other_dir, "spec-nostories"))
+    check("spec folder: missing stories.yaml ⇒ the /bmad-spec hint",
+          info is None and hs.startswith("no stories.yaml in ")
+          and 'run /bmad-spec "break this into stories" first' in hs)
+    info, hs, err = load_spec_folder(os.path.join(other_dir, "spec-nospec"))
+    check("spec folder: missing SPEC.md ⇒ hard stop", info is None and hs.startswith("no SPEC.md in "))
+    info, hs, err = load_spec_folder(os.path.join(other_dir, "spec-badyaml"))
+    check("spec folder: unparseable stories.yaml ⇒ hard stop",
+          info is None and hs.startswith("invalid stories.yaml in "))
+    info, hs, err = load_spec_folder(unreadable_sf)
+    check("spec folder: non-UTF-8 stories.yaml ⇒ the unreadable reason + error",
+          info is None and hs == UNREADABLE_STORIES_REASON and "UTF-8" in err)
+    info, hs, err = load_spec_folder(os.path.join(root, "no-such-folder"))
+    check("spec folder: missing folder ⇒ hard stop", info is None and "spec folder not found" in hs)
+    write("other/spec-empty/SPEC.md", "# Empty\n")
+    write("other/spec-empty/stories.yaml", "# only a comment\n")
+    info, hs, err = load_spec_folder(os.path.join(other_dir, "spec-empty"))
+    check("spec folder: empty stories.yaml ⇒ hard stop", info is None and hs.startswith("empty stories.yaml in "))
+
+    # ---- --resolve --spec-folder ------------------------------------------ #
+    r, code = build_stories_resolve_result(sf, "1")
+    check("stories resolve: exact id, exit 0", code == 0 and r["story_key"] == "spec-rate-limiting-1")
+    check("stories resolve: sprint fields nulled",
+          r["epic_num"] is None and r["story_num"] is None and r["story_suffix"] is None)
+    check("stories resolve: identity fields",
+          r["story_source"] == "stories" and r["spec_slug"] == "rate-limiting"
+          and r["story_id"] == "1" and r["story_label"] == "story-rate-limiting-1"
+          and r["epic_label"] == "spec-rate-limiting" and r["spec_folder"] == sf)
+    check("stories resolve: entry payload",
+          r["title"] == "Add rate limiting to the public API"
+          and r["slug"] == "add-rate-limiting-to-the-public-api"
+          and r["description"].startswith("Introduce a token-bucket limiter")
+          and r["spec_checkpoint"] is True and r["done_checkpoint"] is False
+          and r["invoke_dev_with"].startswith("Rate limit state"))
+    check("stories resolve: no story file ⇒ backlog, story_file null",
+          r["current_status"] == "backlog" and r["story_file"] is None
+          and r["story_file_status"] is None and r["draft_spec"] is False)
+    check("stories resolve: positional facts from LIST order",
+          r["position"] == 1 and r["epic_story_count"] == 3 and r["is_first_in_epic"] is False
+          and r["is_last_in_epic"] is False and r["stories_after_in_epic"] == 1)
+    check("stories resolve: epic facts",
+          r["epic_status"] == "in-progress" and r["epic_title"] == "Rate limiting the public API"
+          and r["retrospective_status"] is None)
+    r, code = build_stories_resolve_result(sf, "2")
+    check("stories resolve: id \"2\" is FIRST (list order, not numeric)",
+          code == 0 and r["position"] == 0 and r["is_first_in_epic"] is True
+          and r["stories_after_in_epic"] == 2)
+    check("stories resolve: in-review maps to review; story_file resolved",
+          r["current_status"] == "review" and r["story_file_status"] == "in-review"
+          and r["story_file"].endswith("stories/2-expose-limiter-metrics.md"))
+    r, code = build_stories_resolve_result(sf, "3-2")
+    check("stories resolve: composite id is last", code == 0 and r["is_last_in_epic"] is True
+          and r["stories_after_in_epic"] == 0 and r["story_key"] == "spec-rate-limiting-3-2")
+    r, code = build_stories_resolve_result(sf, "spec-rate-limiting-3-2")
+    check("stories resolve: full story key", code == 0 and r["story_id"] == "3-2")
+    r, code = build_stories_resolve_result(sf, "METRICS")
+    check("stories resolve: case-insensitive title substring", code == 0 and r["story_id"] == "2")
+    r, code = build_stories_resolve_result(sf, "public-api")
+    check("stories resolve: slug substring", code == 0 and r["story_id"] == "1")
+    r, code = build_stories_resolve_result(sf, "er")
+    check("stories resolve: ambiguous substring ⇒ exit 1 + candidate keys",
+          code == 1 and r["hard_stop"] is True
+          and r["candidates"] == ["spec-rate-limiting-2", "spec-rate-limiting-3-2"])
+    r, code = build_stories_resolve_result(sf, "nope")
+    check("stories resolve: not found ⇒ exit 1", code == 1 and "not found" in r["hard_stop_reason"])
+    r, code = build_stories_resolve_result(sf, "")
+    check("stories resolve: empty ref ⇒ exit 1", code == 1 and "empty story reference" in r["hard_stop_reason"])
+    sfp = os.path.join(other_dir, "spec-precedence")
+    r, code = build_stories_resolve_result(sfp, "1")
+    check("stories resolve: exact id beats a title substring",
+          code == 0 and r["story_id"] == "1" and r["title"] == "Rollout groundwork")
+    r, code = build_stories_resolve_result(sfp, "Rollout")
+    check("stories resolve: substring across three ⇒ ambiguous",
+          code == 1 and len(r["candidates"]) == 3)
+    r, code = build_stories_resolve_result(os.path.join(other_dir, "spec-nostories"), "1")
+    check("stories resolve: missing stories.yaml ⇒ hard stop exit 1",
+          code == 1 and r["hard_stop"] is True and "no stories.yaml in " in r["hard_stop_reason"])
+
+    # An unreadable / unrecognized / ambiguous story-file status is needs-human,
+    # never a silent `status: null` pick.
+    r, code = build_stories_resolve_result(sf_bad, "2")
+    check("stories resolve: unrecognized story-file status ⇒ hard stop exit 1",
+          code == 1 and r["hard_stop"] is True
+          and r["hard_stop_reason"].startswith('story id "2": story file ')
+          and "an unrecognized status ('wat')" in r["hard_stop_reason"]
+          and "(needs-human)" in r["hard_stop_reason"])
+    r, code = build_stories_resolve_result(sf_bad, "3")
+    check("stories resolve: unreadable story file ⇒ hard stop exit 1",
+          code == 1 and "is unreadable" in r["hard_stop_reason"]
+          and "(needs-human)" in r["hard_stop_reason"])
+    r, code = build_stories_resolve_result(sf_bad, "5")
+    check("stories resolve: ambiguous story file ⇒ hard stop exit 1 + candidates",
+          code == 1 and "ambiguous story file match" in r["hard_stop_reason"]
+          and "(needs-human)" in r["hard_stop_reason"] and len(r["candidates"]) == 2)
+    r, code = build_stories_resolve_result(sf_bad, "4")
+    check("stories resolve: a healthy story resolves even with broken siblings",
+          code == 0 and r["current_status"] == "backlog")
+    check("stories resolve: warnings are narrowed to the resolved story",
+          r["warnings"] == [])
+    r, code = build_stories_resolve_result(sf_bad, "1")
+    check("stories resolve: a done story carries no sibling warnings",
+          code == 0 and r["current_status"] == "done" and r["warnings"] == [])
+    r, code = build_stories_resolve_result(os.path.join(other_dir, "spec-colonwarn"), "1")
+    check("stories resolve: file-level parse warnings survive the narrowing",
+          code == 0 and len(r["warnings"]) == 1 and "unquoted value contains" in r["warnings"][0])
+
+    # ---- --stories --spec-folder ------------------------------------------ #
+    r, code = build_stories_list_result(sf_stat)
+    check("stories list: exit 0", code == 0 and r["hard_stop"] is False)
+    check("stories list: every story-file status maps to the pipeline vocabulary",
+          [i["status"] for i in r["epic_stories"]]
+          == ["backlog", "ready-for-dev", "in-progress", "review", "done", "blocked", "backlog"])
+    check("stories list: raw story_file_status preserved",
+          [i["story_file_status"] for i in r["epic_stories"]]
+          == ["draft", "ready-for-dev", "in-progress", "in-review", "done", "blocked", None])
+    check("stories list: draft_spec only on the draft file",
+          [i["draft_spec"] for i in r["epic_stories"]] == [True] + [False] * 6)
+    check("stories list: epic_title falls back to the first '# ' heading",
+          r["epic_title"] == "Statuses spec" and r["spec_slug"] == "statuses")
+    check("stories list: identity + positional facts",
+          r["epic_label"] == "spec-statuses" and r["epic_num"] is None
+          and r["epic_story_count"] == 7
+          and r["epic_stories"][0]["is_first_in_epic"] is True
+          and r["epic_stories"][6]["is_last_in_epic"] is True
+          and r["epic_stories"][0]["stories_after_in_epic"] == 6
+          and r["epic_stories"][0]["key"] == "spec-statuses-1"
+          and r["epic_stories"][0]["story_label"] == "story-statuses-1")
+    check("stories list: next_story_key = first entry not done; not all_done",
+          r["next_story_key"] == "spec-statuses-1" and r["all_done"] is False
+          and r["epic_status"] == "in-progress" and r["retrospective_status"] is None)
+    r, code = build_stories_list_result(sf_done)
+    check("stories list: all done ⇒ all_done, no next, epic done, retro done",
+          code == 0 and r["all_done"] is True and r["next_story_key"] is None
+          and r["epic_status"] == "done" and r["retrospective_status"] == "done")
+    r, code = build_stories_list_result(sf_backlog)
+    check("stories list: no story files ⇒ backlog epic, next = first entry",
+          code == 0 and r["epic_status"] == "backlog" and r["all_done"] is False
+          and r["next_story_key"] == "spec-backlog-1")
+    r, code = build_stories_list_result(sf)
+    check("stories list: order is list order",
+          [i["story_id"] for i in r["epic_stories"]] == ["2", "1", "3-2"]
+          and r["next_story_key"] == "spec-rate-limiting-2")
+    r, code = build_stories_list_result(unreadable_sf)
+    check("stories list: unreadable stories.yaml is an I/O failure ⇒ exit 1",
+          code == 1 and r["hard_stop"] is True and r["hard_stop_reason"] == UNREADABLE_STORIES_REASON)
+    r, code = build_stories_list_result(os.path.join(other_dir, "spec-badyaml"))
+    check("stories list: a parse verdict stays exit 0", code == 0 and r["hard_stop"] is True)
+    r, code = build_stories_list_result(sf_bad)
+    check("stories list: a null-status story ⇒ hard_stop naming every broken id, exit 0",
+          code == 0 and r["hard_stop"] is True
+          and r["hard_stop_reason"].count("(needs-human)") == 3
+          and r["hard_stop_reason"].startswith('story id "2": ')
+          and 'story id "3": ' in r["hard_stop_reason"]
+          and 'story id "5": ' in r["hard_stop_reason"])
+    check("stories list: next_story_key NEVER points at a null-status entry",
+          r["next_story_key"] is None and r["all_done"] is False
+          and [i["status"] for i in r["epic_stories"]] == ["done", None, None, "backlog", None])
+    check("stories list: the broken entries still enumerate with their warnings",
+          len(r["epic_stories"]) == 5 and len(r["warnings"]) == 3)
+
+    # ---- --find-spec --spec-folder --story-id ------------------------------ #
+    r, code = build_stories_find_spec_result(sf_stat, "5")
+    check("stories find-spec: exactly one ⇒ found",
+          code == 0 and r["found"] is True and r["ambiguous"] is False and r["status"] == "done"
+          and r["spec_path"].endswith("stories/5-story-5.md") and r["siblings"] == []
+          and r["impl_dir"] is None and r["story_key"] == "spec-statuses-5")
+    r, code = build_stories_find_spec_result(sf_stat, "7")
+    check("stories find-spec: no candidate ⇒ found false, exit 0",
+          code == 0 and r["found"] is False and r["candidates"] == [] and r["hard_stop"] is False)
+    r, code = build_stories_find_spec_result(sf, "1")
+    check("stories find-spec: '10-decoy.md' does not match id \"1\"",
+          code == 0 and r["found"] is False)
+    write("specs/spec-statuses/stories/8-unresolved.md", _story_spec("blocked"))
+    r, code = build_stories_find_spec_result(sf_stat, "8")
+    check("stories find-spec: a {id}-unresolved.md halt file is an ordinary candidate",
+          code == 0 and r["found"] is True and r["status"] == "blocked")
+    write("specs/spec-statuses/stories/9-ambiguous.md", _story_spec("blocked"))
+    write("specs/spec-statuses/stories/9-real-work.md", _story_spec("in-progress"))
+    r, code = build_stories_find_spec_result(sf_stat, "9")
+    check("stories find-spec: two candidates ⇒ ambiguous hard stop exit 1",
+          code == 1 and r["ambiguous"] is True and r["found"] is False
+          and len(r["candidates"]) == 2 and "ambiguous story file match" in r["hard_stop_reason"])
+    r, code = build_stories_find_spec_result(os.path.join(root, "no-such-folder"), "1")
+    check("stories find-spec: missing folder ⇒ error, exit 0",
+          code == 0 and r["found"] is False and "spec folder not found" in r["error"])
+    bad_story = os.path.join(sf_stat, "stories", "11-bad.md")
+    with open(bad_story, "wb") as fh:
+        fh.write(b"---\nstatus: 'done'\n---\n\xff\n")
+    r, code = build_stories_find_spec_result(sf_stat, "11")
+    check("stories find-spec: unreadable candidate ⇒ warning, still found",
+          code == 0 and r["found"] is True and r["warnings"] and r["status"] is None)
+    os.remove(bad_story)
+
+    # ---- --retro-verdict --spec-folder ------------------------------------- #
+    r, code = build_stories_retro_verdict_result(sf_done)
+    check("stories retro: fixed RETROSPECTIVE.md, epic null",
+          code == 0 and r["found"] is True and r["epic"] is None and r["verdict"] == "accepted"
+          and r["date"] == "2026-08-16" and r["headless"] is True
+          and r["spec_folder"] == sf_done and r["doc"].endswith("RETROSPECTIVE.md"))
+    r, code = build_stories_retro_verdict_result(sf)
+    check("stories retro: absent ⇒ found false, exit 0",
+          code == 0 and r["found"] is False and r["verdict"] is None and r["error"] is None)
+    write("specs/spec-rate-limiting/RETROSPECTIVE.md",
+          "---\ndate: '2026-08-17'\nverdict: accepted-with-open-items\ncriteria: profiled\nheadless: false\n---\n# Retro\n")
+    r, code = build_stories_retro_verdict_result(sf)
+    check("stories retro: full verdict vocabulary",
+          code == 0 and r["verdict"] == "accepted-with-open-items" and r["headless"] is False)
+    rr, _c = build_stories_resolve_result(sf, "1")
+    check("stories resolve: retrospective_status flips to done once the doc exists",
+          rr["retrospective_status"] == "done")
+    write("specs/spec-backlog/RETROSPECTIVE.md", "---\ndate: '2026-08-17'\nverdict: approved\n---\n")
+    r, code = build_stories_retro_verdict_result(sf_backlog)
+    check("stories retro: unrecognized verdict ⇒ null + warning",
+          code == 0 and r["found"] is True and r["verdict"] is None and r["warnings"])
+    bad_retro = os.path.join(other_dir, "spec-nospec", "RETROSPECTIVE.md")
+    with open(bad_retro, "wb") as fh:
+        fh.write(b"---\nverdict: accepted\n---\n\xff\n")
+    r, code = build_stories_retro_verdict_result(os.path.join(other_dir, "spec-nospec"))
+    check("stories retro: non-UTF-8 doc ⇒ error exit 1",
+          code == 1 and r["found"] is True and "UTF-8" in r["error"] and r["verdict"] is None)
+    os.remove(bad_retro)
+    r, code = build_stories_retro_verdict_result(os.path.join(root, "no-such-folder"))
+    check("stories retro: missing folder ⇒ error, exit 0",
+          code == 0 and r["found"] is False and "spec folder not found" in r["error"])
+
+    # ---- --discover-specs --roots ------------------------------------------ #
+    r, code = build_discover_specs_result([specs_dir, os.path.join(root, "missing-root")])
+    slugs = [c["spec_slug"] for c in r["candidates"]]
+    check("discover: candidates sorted by path; hidden + depth>4 skipped; missing root ignored",
+          code == 0 and slugs == ["depth4", "alldone", "backlog", "rate-limiting", "statuses"])
+    check("discover: roots echoed (including the missing one)", len(r["roots"]) == 2)
+    by_slug = {c["spec_slug"]: c for c in r["candidates"]}
+    check("discover: counts + retro status",
+          by_slug["alldone"]["story_count"] == 2 and by_slug["alldone"]["done_count"] == 2
+          and by_slug["alldone"]["retrospective_status"] == "done"
+          and by_slug["statuses"]["story_count"] == 7 and by_slug["statuses"]["done_count"] == 1
+          and by_slug["backlog"]["done_count"] == 0)
+    check("discover: epic_title resolved per candidate",
+          by_slug["rate-limiting"]["epic_title"] == "Rate limiting the public API"
+          and by_slug["statuses"]["epic_title"] == "Statuses spec")
+    check("discover: spec_folder is absolute", by_slug["statuses"]["spec_folder"] == sf_stat)
+    r, code = build_discover_specs_result([other_dir])
+    other_slugs = [c["spec_slug"] for c in r["candidates"]]
+    check("discover: a folder without stories.yaml is not a candidate",
+          code == 0 and "nostories" not in other_slugs)
+    broken = {c["spec_slug"]: c for c in r["candidates"]}
+    check("discover: an unparseable candidate is still listed with story_count null + a warning",
+          broken["badyaml"]["story_count"] is None and broken["badyaml"]["done_count"] is None
+          and any("badyaml" in w for w in r["warnings"]))
+    check("discover: a candidate with no SPEC.md is still listed",
+          broken["nospec"]["story_count"] is None and any("nospec" in w for w in r["warnings"]))
+    r, code = build_discover_specs_result([os.path.join(root, "emptyroot")])
+    check("discover: zero candidates is a verdict (exit 0)", code == 0 and r["candidates"] == []
+          and r["hard_stop"] is False and r["error"] is None)
+    r, code = build_discover_specs_result([sf])
+    check("discover: a root that IS a spec folder yields one candidate",
+          code == 0 and len(r["candidates"]) == 1 and r["candidates"][0]["spec_slug"] == "rate-limiting")
+    r, code = build_discover_specs_result([])
+    check("discover: no roots ⇒ empty verdict", code == 0 and r["candidates"] == [] and r["roots"] == [])
+    walk_root = os.path.join(root, "walkroot")
+    write("walkroot/spec-ok/SPEC.md", "# Ok\n")
+    write("walkroot/spec-ok/stories.yaml", '- id: "1"\n  title: One\n  description: d\n')
+    blocked_dir = os.path.join(walk_root, "blocked")
+    os.makedirs(blocked_dir, exist_ok=True)
+    if getattr(os, "geteuid", lambda: 0)() != 0:
+        os.chmod(blocked_dir, 0)
+        try:
+            r, code = build_discover_specs_result([walk_root])
+            check("discover: an unreadable directory is a warning, not a crash or a silent skip",
+                  code == 0 and len(r["candidates"]) == 1
+                  and any(w.startswith("could not walk ") and "blocked" in w for w in r["warnings"]))
+        finally:
+            os.chmod(blocked_dir, stat.S_IRWXU)
+
     # ---- CLI guards -------------------------------------------------------- #
     def _main(argv):
         out = io.StringIO()
@@ -2129,6 +3609,84 @@ development_status:
     code, out = _main(["--mark-status", "1-2-account-management", "--to", "backlog", "--sprint-status", ms, "--allow-regress"])
     check("cli: mark-status --allow-regress", code == 0 and json.loads(out)["sprint_updated"] is True)
 
+    # ---- CLI guards: stories mode ------------------------------------------ #
+    def _main_err(argv):
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = main(argv)
+        except SystemExit as exc:
+            return exc.code, err.getvalue()
+        return code, err.getvalue()
+
+    code, out = _main(["--resolve", "1", "--spec-folder", sf])
+    check("cli: stories resolve ok",
+          code == 0 and json.loads(out)["story_key"] == "spec-rate-limiting-1"
+          and json.loads(out)["story_source"] == "stories")
+    code, out = _main(["--resolve", "nope", "--spec-folder", sf])
+    check("cli: stories resolve not found ⇒ exit 1", code == 1 and json.loads(out)["hard_stop"] is True)
+    code, out = _main(["--stories", "--spec-folder", sf_stat])
+    check("cli: --stories ok", code == 0 and json.loads(out)["next_story_key"] == "spec-statuses-1")
+    code, out = _main(["--stories", "--spec-folder", sf_bad])
+    check("cli: --stories with a broken story-file status ⇒ exit 0, hard_stop, no next key",
+          code == 0 and json.loads(out)["hard_stop"] is True
+          and json.loads(out)["next_story_key"] is None)
+    code, out = _main(["--resolve", "2", "--spec-folder", sf_bad])
+    check("cli: --resolve on a broken story-file status ⇒ exit 1",
+          code == 1 and "(needs-human)" in json.loads(out)["hard_stop_reason"])
+    code, out = _main(["--stories", "--spec-folder", unreadable_sf])
+    check("cli: --stories on an unreadable stories.yaml ⇒ exit 1",
+          code == 1 and json.loads(out)["hard_stop"] is True)
+    code, out = _main(["--find-spec", "--spec-folder", sf_stat, "--story-id", "5"])
+    check("cli: stories find-spec ok", code == 0 and json.loads(out)["found"] is True
+          and json.loads(out)["status"] == "done")
+    code, out = _main(["--find-spec", "--spec-folder", sf_stat, "--story-id", "9"])
+    check("cli: stories find-spec ambiguous ⇒ exit 1", code == 1 and json.loads(out)["ambiguous"] is True)
+    code, out = _main(["--retro-verdict", "--spec-folder", sf])
+    check("cli: stories retro-verdict ok",
+          code == 0 and json.loads(out)["verdict"] == "accepted-with-open-items"
+          and json.loads(out)["epic"] is None)
+    code, out = _main(["--discover-specs", "--roots", specs_dir, os.path.join(root, "missing-root")])
+    check("cli: discover-specs ok", code == 0 and len(json.loads(out)["candidates"]) == 5)
+    code, out = _main(["--spec", os.path.join(sf_stat, "stories", "5-story-5.md")])
+    check("cli: --spec reads a stories-mode story file unchanged",
+          code == 0 and json.loads(out)["status"] == "done")
+
+    code, err = _main_err(["--mark-status", "spec-rate-limiting-1", "--to", "done", "--spec-folder", sf])
+    check("cli: --mark-status in stories mode ⇒ usage error exit 2 with the reason",
+          code == 2 and "unsupported in stories mode" in err
+          and "bmad-build-auto owns the story-file status" in err)
+    code, _ = _main(["--mark-status", "spec-rate-limiting-1", "--spec-folder", sf])
+    check("cli: --mark-status --spec-folder is rejected even without --to", code == 2)
+    code, _ = _main(["--resolve", "1", "--spec-folder", sf, "--sprint-status", sp])
+    check("cli: --spec-folder + --sprint-status ⇒ exit 2", code == 2)
+    code, _ = _main(["--resolve", "1", "--spec-folder", sf, "--planning-dir", plan])
+    check("cli: --spec-folder + --planning-dir ⇒ exit 2", code == 2)
+    code, _ = _main(["--stories"])
+    check("cli: --stories requires --spec-folder", code == 2)
+    code, _ = _main(["--find-spec", "--spec-folder", sf])
+    check("cli: stories find-spec requires --story-id", code == 2)
+    code, _ = _main(["--find-spec", "--spec-folder", sf, "--story-key", "1-2-x", "--story-id", "1"])
+    check("cli: --story-key is rejected in stories mode", code == 2)
+    code, _ = _main(["--find-spec", "--impl-dir", fs_dir, "--story-key", "2-6a-digest-delivery", "--story-id", "1"])
+    check("cli: --story-id only with --find-spec --spec-folder", code == 2)
+    code, _ = _main(["--resolve", "1", "--spec-folder", sf, "--story-id", "1"])
+    check("cli: --story-id rejected outside find-spec", code == 2)
+    code, _ = _main(["--discover-specs"])
+    check("cli: --discover-specs requires --roots", code == 2)
+    code, _ = _main(["--discover-specs", "--spec-folder", sf, "--roots", specs_dir])
+    check("cli: --discover-specs rejects --spec-folder", code == 2)
+    code, _ = _main(["--epic", "1", "--sprint-status", sp, "--roots", specs_dir])
+    check("cli: --roots only with --discover-specs", code == 2)
+    code, _ = _main(["--retro-verdict", "--spec-folder", sf, "--epic", "1"])
+    check("cli: stories retro-verdict rejects --epic", code == 2)
+    code, _ = _main(["--retro-verdict", "--spec-folder", sf, "--impl-dir", rdir])
+    check("cli: stories retro-verdict rejects --impl-dir", code == 2)
+    code, _ = _main(["--stories", "--spec-folder", sf, "--discover-specs", "--roots", specs_dir])
+    check("cli: two stories-mode modes rejected", code == 2)
+    code, _ = _main(["--spec", spec_p, "--spec-folder", sf])
+    check("cli: --spec-folder rejected with --spec", code == 2)
+
     shutil.rmtree(root, ignore_errors=True)
 
     if failures:
@@ -2143,18 +3701,23 @@ development_status:
 # --------------------------------------------------------------------------- #
 def main(argv=None):
     parser = argparse.ArgumentParser(description="auto-bmad story-source adapter (sprint-status / build-auto spec reader + status flip)")
-    parser.add_argument("--resolve", metavar="REF", help="resolve an explicit story reference (E-S, E.S, E-Sx, full key, or slug fragment)")
+    parser.add_argument("--resolve", metavar="REF", help="resolve an explicit story reference (sprint: E-S, E.S, E-Sx, full key, slug fragment; stories: id, key, title fragment)")
     parser.add_argument("--epic", metavar="N", help="enumerate epic N (N or epic-N); with --retro-verdict: the epic number to read")
     parser.add_argument("--mark-status", metavar="KEY", help="flip KEY's development_status entry to --to STATUS")
     parser.add_argument("--to", metavar="STATUS", help="with --mark-status: target status (backlog|ready-for-dev|in-progress|review|done)")
     parser.add_argument("--allow-regress", action="store_true", help="with --mark-status: allow a lower-ranked target status")
-    parser.add_argument("--find-spec", action="store_true", help="locate the story's bmad-build-auto spec (needs --impl-dir + --story-key)")
+    parser.add_argument("--find-spec", action="store_true", help="locate the story's bmad-build-auto spec (sprint: --impl-dir + --story-key; stories: --spec-folder + --story-id)")
     parser.add_argument("--spec", metavar="PATH", help="read a bmad-build-auto spec (frontmatter + Auto Run Result + last review pass)")
-    parser.add_argument("--retro-verdict", action="store_true", help="read the newest epic-N-retro-*.md verdict (needs --impl-dir + --epic)")
-    parser.add_argument("--sprint-status", metavar="PATH", help="path to sprint-status.yaml")
+    parser.add_argument("--retro-verdict", action="store_true", help="read a retrospective verdict (sprint: --impl-dir + --epic; stories: --spec-folder)")
+    parser.add_argument("--stories", action="store_true", help="stories mode: enumerate a spec folder's stories.yaml (needs --spec-folder)")
+    parser.add_argument("--discover-specs", action="store_true", help="stories mode: find spec folders holding a stories.yaml (needs --roots)")
+    parser.add_argument("--sprint-status", metavar="PATH", help="sprint mode: path to sprint-status.yaml")
+    parser.add_argument("--spec-folder", metavar="DIR", help="stories mode: a bmad-spec spec folder (SPEC.md + stories.yaml); excludes --sprint-status/--planning-dir")
     parser.add_argument("--planning-dir", metavar="DIR", help="with --resolve/--epic: planning_artifacts dir (story/epic titles from the epics docs)")
     parser.add_argument("--impl-dir", metavar="DIR", help="with --find-spec/--retro-verdict: implementation_artifacts dir")
     parser.add_argument("--story-key", metavar="KEY", help="with --find-spec: the sprint-status story key")
+    parser.add_argument("--story-id", metavar="ID", help="with --find-spec --spec-folder: the stories.yaml story id")
+    parser.add_argument("--roots", metavar="DIR", nargs="+", help="with --discover-specs: the roots to walk (missing roots are ignored)")
     parser.add_argument("--self-test", action="store_true", help="run built-in fixtures and exit")
     args = parser.parse_args(argv)
 
@@ -2172,11 +3735,54 @@ def main(argv=None):
         modes.append("spec")
     if args.retro_verdict:
         modes.append("retro-verdict")
+    if args.stories:
+        modes.append("stories")
+    if args.discover_specs:
+        modes.append("discover-specs")
     if args.epic is not None and not args.retro_verdict:
         modes.append("epic")
     if len(modes) != 1:
-        parser.error("exactly one mode is required: --resolve | --epic | --mark-status | --find-spec | --spec | --retro-verdict | --self-test")
+        parser.error(
+            "exactly one mode is required: --resolve | --epic | --stories | --discover-specs | "
+            "--mark-status | --find-spec | --spec | --retro-verdict | --self-test"
+        )
     mode = modes[0]
+
+    # ---- stories mode (--spec-folder) ------------------------------------ #
+    stories_mode = args.spec_folder is not None
+    if stories_mode:
+        if mode == "mark-status":
+            parser.error(
+                "--mark-status is unsupported in stories mode: bmad-build-auto owns the "
+                "story-file status"
+            )
+        if args.sprint_status is not None:
+            parser.error("--spec-folder (stories mode) is not valid with --sprint-status (sprint mode)")
+        if args.planning_dir is not None:
+            parser.error("--spec-folder (stories mode) is not valid with --planning-dir (stories mode has no epics documents)")
+        if mode not in ("resolve", "stories", "find-spec", "retro-verdict"):
+            parser.error("--spec-folder is only valid with --resolve/--stories/--find-spec/--retro-verdict")
+        if args.impl_dir is not None:
+            parser.error("--impl-dir is not valid with --spec-folder (stories mode)")
+        if mode == "find-spec":
+            if args.story_key is not None:
+                parser.error("--story-key is sprint mode only; stories mode uses --story-id")
+            if not args.story_id:
+                parser.error("--find-spec --spec-folder requires --story-id ID")
+        if mode == "retro-verdict" and args.epic is not None:
+            parser.error("--epic is not valid with --spec-folder (stories mode reads {spec-folder}/RETROSPECTIVE.md)")
+    else:
+        if mode == "stories":
+            parser.error("--stories requires --spec-folder DIR")
+    if args.story_id is not None and not (mode == "find-spec" and stories_mode):
+        parser.error("--story-id is only valid with --find-spec --spec-folder")
+    if args.roots is not None and mode != "discover-specs":
+        parser.error("--roots is only valid with --discover-specs")
+    if mode == "discover-specs":
+        if not args.roots:
+            parser.error("--discover-specs requires --roots DIR [DIR ...]")
+        if stories_mode:
+            parser.error("--discover-specs takes --roots, not --spec-folder")
 
     if args.to is not None and mode != "mark-status":
         parser.error("--to is only valid with --mark-status")
@@ -2196,9 +3802,15 @@ def main(argv=None):
         return code
 
     if mode == "resolve":
+        if stories_mode:
+            return emit(*build_stories_resolve_result(args.spec_folder, args.resolve))
         if not args.sprint_status:
-            parser.error("--resolve requires --sprint-status")
+            parser.error("--resolve requires --sprint-status (or --spec-folder for stories mode)")
         return emit(*build_resolve_result(args.sprint_status, args.resolve, args.planning_dir))
+    if mode == "stories":
+        return emit(*build_stories_list_result(args.spec_folder))
+    if mode == "discover-specs":
+        return emit(*build_discover_specs_result(args.roots))
     if mode == "epic":
         if not args.sprint_status:
             parser.error("--epic requires --sprint-status")
@@ -2214,15 +3826,19 @@ def main(argv=None):
             parser.error("--mark-status requires --to STATUS")
         return emit(*mark_status(args.sprint_status, args.mark_status, args.to, args.allow_regress))
     if mode == "find-spec":
+        if stories_mode:
+            return emit(*build_stories_find_spec_result(args.spec_folder, args.story_id))
         if not args.impl_dir or not args.story_key:
-            parser.error("--find-spec requires --impl-dir DIR and --story-key KEY")
+            parser.error("--find-spec requires --impl-dir DIR and --story-key KEY (or --spec-folder DIR --story-id ID)")
         return emit(*build_find_spec_result(args.impl_dir, args.story_key, args.sprint_status))
     if mode == "spec":
         result = read_spec(args.spec)
         return emit(result, 0 if result["exists"] and not result["error"] else 1)
     if mode == "retro-verdict":
+        if stories_mode:
+            return emit(*build_stories_retro_verdict_result(args.spec_folder))
         if not args.impl_dir or args.epic is None:
-            parser.error("--retro-verdict requires --impl-dir DIR and --epic N")
+            parser.error("--retro-verdict requires --impl-dir DIR and --epic N (or --spec-folder DIR)")
         return emit(*build_retro_verdict_result(args.impl_dir, args.epic))
     parser.error("no mode selected")  # unreachable
     return 2

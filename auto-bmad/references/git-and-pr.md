@@ -16,6 +16,7 @@ Orchestrator-owned, never delegated:
 - the **clean-tree gate** before every build-auto invocation and the `head_before` capture around it — git-only.
 - the **Phase 0 probes** — `preflight.py` (git state/mode, `uv`, Python 3.11, nested-subagent capability, `_bmad/config.toml`, `AGENTS.md`), the config-drift heal, the review-layers TOML sync (`build_auto_custom.py`) — `pipeline.md` Phase 0.
 - the **sprint-status write-back around build-auto** — `story_plan.py --mark-status` at Phase 3 end (`ready-for-dev`), Phase 5 start (`in-progress`, incl. the epic lift) and end (`review`), the Phase 8 pre-retro `done` flip, the Phase 9 `done` flip. The orchestrator never edits the spec.
+  - **Stories mode has NO status write-back at all** — the story file's frontmatter is the status and `bmad-build-auto` owns it; `--mark-status` is rejected there. Every flip line in this file (incl. the Phase 8/9 flips and epic mode's batch flip) simply does not run (`stories-mode.md` §6, §8).
 - the **retro verdict gate** ask (Phase 0 / E0) — `pipeline.md` Phase 0.
 - the Phase 9 **pre-push report write + commit** (`docs(story-{e}-{s}): pipeline report`) — the story-level report file is written and committed *before* push, so it ships in the PR diff.
 - the **CI wait** + draft conversion — when `git.offer_merge` is on.
@@ -48,10 +49,10 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
 - **Detached/unknown HEAD** → hard-stop even on a clean tree.
 
 ## Branching (Phase 1 / epic E1)
-- **Story branch:** `{git.branch_prefix}{e}-{s}-{slug}` (default prefix `story/`), e.g. `story/1-2-user-auth`.
+- **Story branch:** `{git.branch_prefix}{e}-{s}-{slug}` (default prefix `story/`), e.g. `story/1-2-user-auth`; stories mode `{git.branch_prefix}{spec_slug}-{id}-{slug}` with `{slug}` = kebab-case of the entry's `title` (`stories-mode.md` §3).
   - `{s}` includes the split suffix when the key has one — `story/2-6a-digest-delivery`.
   - Slug = the story-key title part (already kebab-case).
-- **Epic branch** (epic mode — the ONE branch of the run): `{git.epic_branch_prefix}{e}-{slug}` (default prefix `epic/`), e.g. `epic/1-account-system`.
+- **Epic branch** (epic mode — the ONE branch of the run): `{git.epic_branch_prefix}{e}-{slug}` (default prefix `epic/`), e.g. `epic/1-account-system`; stories mode `{git.epic_branch_prefix}{spec_slug}`.
   - Slug is resolved in E0 and stored as the anchor's `epic_slug` so resume reuses it.
     - Source: kebab-case of `epic_title` from `story_plan.py --epic {e} --sprint-status <impl>/sprint-status.yaml --planning-dir <planning>`; fallback the first story-key slug stem; else `epic-{e}`. Never a grep of the planning docs.
   - Per-story commits (the orchestrator's `story-{e}-{s}` commits AND build-auto's own) land on THIS branch; never on base.
@@ -63,7 +64,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
 - Use Conventional Commits, **in full** — never subject-only ("Message body" below):
   - a `type(scope): subject` line;
   - **plus a body** (required on every commit).
-- Scope is the story or epic: `story-{e}-{s}` (e.g. `story-2-6a`) or `epic-{e}`.
+- Scope is the story or epic: `story-{e}-{s}` (e.g. `story-2-6a`) or `epic-{e}` — i.e. `{story_label}` / `{epic_label}`, which stories mode fills as `story-{spec_slug}-{id}` / `spec-{spec_slug}` (`stories-mode.md` §3).
 - **Per-phase subjects** are inline in `pipeline.md` / `epic-pipeline.md` — the normative strings live there; the two clean-tree-gate subjects below are this file's.
 - **Who commits what:**
   - **build-auto** commits its own diff inside the Phase 5 build run and every Phase 7 review pass (implement → review → finalize; never pushes). The plan run (Phase 3) commits nothing — the orchestrator's `plan spec` commit carries the untracked spec.
@@ -135,19 +136,19 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
      - This condition can only be evaluated *after* the push.
      - If it fires → the PR is **converted to draft after the fact** with `gh pr ready --undo <pr-number>` (the initial `gh pr create` is issued without `--draft` for clauses 1–3 only).
 
-- **The negation of this same draft predicate is the "clean completion" test** that decides whether Phase 9 also flips the BMAD-level story status (`sprint-status.yaml`) to `done` (`pipeline.md` Phase 9):
+- **The negation of this same draft predicate is the "clean completion" test** that decides whether Phase 9 also flips the BMAD-level story status (`sprint-status.yaml`) to `done` (`pipeline.md` Phase 9). In stories mode `clean_completion` still drives the draft PR and the merge prompt, but there is **no flip** (`state_plan.py --finalize --story-source stories`):
   - predicate false AND not already flipped (`bmad_status_flipped_at` null) ⇒ `python3 {skill-root}/scripts/story_plan.py --mark-status {key} --to done --sprint-status <impl>/sprint-status.yaml` (also lifts `epic-{e}` to `done` when every story is `done`), `bmad_status_flipped_at: 9`;
   - any clause true ⇒ leave as is (`review` — or `done` when the Phase 8 pre-retro flip already ran; a later CI failure never regresses the entry, the caveat lives in the PR draft state + report).
   - `state_plan.py --finalize` emits both verdicts coupled in one JSON — `draft` and `clean_completion`/`flip_bmad_status`.
   - It is the *predicate* that decides, NOT the PR's actual draft flag: the `no_pr_draft` flag (`--no-pr-draft`) forces only `draft` false and never touches `clean_completion`.
   - Keep the two coupled if you edit it.
-- Title: a conventional summary of the story, e.g. `feat(story-1-2): user authentication`.
+- Title: a conventional summary of the story, e.g. `feat(story-1-2): user authentication` (stories mode `feat(story-{spec_slug}-{id}): {title}`).
 - Body must include:
   - one-paragraph summary of what the story delivered;
   - a link to the spec (`<spec_path>` as a repo-relative path);
   - a build result line — build-auto `status`, follow-up review passes, deferred count;
   - TEA outcomes / epic gate decision (if applicable);
-  - `## Open action items (epic {e})` — from `sprint_plan.py status`, only when the story is last in its epic;
+  - `## Open action items (epic {e})` — from `sprint_plan.py status`, only when the story is last in its epic (**sprint mode only** — omitted in stories mode, which has no source for it);
   - a `## Needs attention` checklist of open questions, deferred work, human-action items, and the `⚠️ Retrospective verdict: rejected — <doc>` line when it applies (empty section omitted);
 - Capture the returned PR URL into state (`pr_url`) for the **chat** report (chat-only artifact).
 - **CI link & wait:**
@@ -200,7 +201,7 @@ Epic mode produces **one** of each artifact for a whole epic (`epic-pipeline.md`
 - **Base-readiness guard (E0):** a git-only check — never a code read.
   - Epic mode branches off `{base}` and assumes already-`done` stories are in `{base}`.
   - The check: a `done` story has a `{git.branch_prefix}{e}-{s}-*` branch NOT merged into `{base}`.
-    - Detect with `git branch --list "{git.branch_prefix}{e}-{s}-*"` then `git merge-base --is-ancestor <branch> <base_branch>`.
+    - Detect with `git branch --list "{git.branch_prefix}{e}-{s}-*"` (stories mode `"{git.branch_prefix}{spec_slug}-{id}-*"`) then `git merge-base --is-ancestor <branch> <base_branch>`.
   - If that check holds → **ASK** before branching (`epic-pipeline.md` E0):
     - proceed off base — that story's work won't be in this epic's PR;
     - or stop and merge it first.
@@ -209,15 +210,15 @@ Epic mode produces **one** of each artifact for a whole epic (`epic-pipeline.md`
   - Per-story commits keep their `story-{e}-{s}` scopes and subjects — they land on the epic branch unchanged (incl. the clean-tree gate commits and build-auto's own commits, recorded per the `commits[]` rule).
   - Epic-scoped subjects (`epic-{e}` scope) are inline in `epic-pipeline.md`, per E-step. Body rules are unchanged.
 - **PR title/body:**
-  - Title: `feat(epic-{e}): <epic summary>`.
+  - Title: `feat(epic-{e}): <epic summary>` (stories mode `feat(spec-{spec_slug}): {epic_title}`).
   - Body must include:
     - a one-paragraph epic summary;
     - a **per-story rollup** — one line per landed story (`build status / review passes / deferred / trace`), from the anchor's `stories_landed` + each per-story state; E0-skipped stories are listed under **Skipped**, not in the rollup;
     - links to each story's spec (repo-relative `spec_path`);
     - the epic gate decision (E8a) + the retrospective verdict (E8b);
-    - `## Open action items (epic {e})` from `sprint_plan.py status`;
+    - `## Open action items (epic {e})` from `sprint_plan.py status` (**sprint mode only** — omitted in stories mode, which has no source for it);
     - a `## Needs attention` checklist aggregating deferred items across all stories, the stories whose review is unverified, E8a gaps, blockers, and the retro `rejected` line when it applies.
-- **Batch BMAD-status flip:** on a clean completion every story in `stories_landed` flips to `done`, else none of them does — mechanics, the two chances and the caveated-epic mirror live in `epic-pipeline.md` E8b step 3 / E_final step 4.
+- **Batch BMAD-status flip** (sprint mode only — stories mode never flips): on a clean completion every story in `stories_landed` flips to `done`, else none of them does — mechanics, the two chances and the caveated-epic mirror live in `epic-pipeline.md` E8b step 3 / E_final step 4.
 
 ## Mode `local`
 - No push, no PR, no merge prompt — there's nothing to merge.

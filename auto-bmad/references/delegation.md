@@ -5,6 +5,7 @@
 - One entry per step, named by its heading.
 - `pipeline.md` / `epic-pipeline.md` reference each by heading name and never repeat the command.
 - Git/PR steps, sprint-status flips, state writes and the deferred-work archive are not delegated and have no entry here — the orchestrator runs them. See `git-and-pr.md` and `pipeline.md`.
+- **Stories mode** (`stories-mode.md`): the entries below carrying a *Stories mode variant* swap exactly the lines it shows; every other epic-scoped entry names the spec folder instead of `epic {e}` and uses `{epic_label}` for `epic-{e}` — nothing else changes.
 
 **Assembling a delegate prompt.** The delegate is a generic host subagent with no persona file, so every prompt is self-contained and the orchestrator assembles it:
 
@@ -53,18 +54,20 @@ Blockers: <what a human must do, one per line; or `none` — required when Outco
 
 **Placeholders (canonical glossary — `pipeline.md` / `epic-pipeline.md` reference this list, not their own copy).**
 `<...>` = a filesystem path the orchestrator resolves (always absolute); `{...}` = a non-path value it fills in (identity/config scalar, or an injected block).
-- `{e}` / `{s}` — epic / story number; `{s}` includes the optional split suffix (`6` or `6a`).
-- `{key}` — full sprint-status key (e.g. `2-6a-digest-delivery`); `{slug}` — the title part of the key; `{title}` — the story title (from `story_plan.py --resolve`/`--epic`, slug fallback).
+- `{e}` / `{s}` — epic / story number; `{s}` includes the optional split suffix (`6` or `6a`). Sprint mode only.
+- `{story_label}` / `{epic_label}` — the mode-neutral commit/PR scopes: sprint `story-{e}-{s}` / `epic-{e}`; stories `story-{spec_slug}-{id}` / `spec-{spec_slug}` (`stories-mode.md` §3).
+- `{key}` — the story key: sprint-status key (e.g. `2-6a-digest-delivery`), stories mode `spec-{spec_slug}-{story_id}`; `{slug}` — the title part of the key; `{title}` — the story title (from `story_plan.py --resolve`/`--epic`, slug fallback).
 - `{branch}` — the story (or epic) branch the orchestrator created in Phase 1 / E1.
 - `<project_root>` — absolute cwd; `{skill-root}` — the installed auto-bmad skill dir.
 - `<impl>` — the `implementation_artifacts` dir; `<planning>` — the `planning_artifacts` dir.
 - `<state>` = `<output_folder>/auto-bmad/state/{key}.yaml`; `<state-dir>` = `<output_folder>/auto-bmad/state`.
-- `<anchor>` — the **epic anchor** `<state-dir>/epic/epic-{e}.yaml` (`state-and-resume.md` → "state/epic/epic-{e}.yaml").
+- `<anchor>` — the **epic anchor** `<state-dir>/epic/epic-{e}.yaml` — stories mode `<state-dir>/epic/spec-{spec_slug}.yaml` (`state-and-resume.md` → "state/epic/epic-{e}.yaml").
 - `<base>` = the runtime config's `git.base_branch` (`git-and-pr.md` → "Mode detection"); `<sprint_plan_script>` = `skills.sprint_plan_script` from the preflight JSON.
-- `<spec_path>` — this story's build-auto spec (`<impl>/spec-{e}-{s}-<slug>.md`), read from state (`spec_path`, set by `story_plan.py --find-spec` in Phase 3).
-- `{spec_paths}` — the epic's spec files, comma-separated (one `--find-spec` per landed / `done` story). Epic-scoped entries only.
-- `{carry_over_block}` — the previous epic's open action items, wrapped in `<carry_over_context>` … `</carry_over_context>` tags (`build-plan` below); empty when none.
-- `{epic_test_files}` — the git-only test-file list for epic {e} (`testarch-test-review (epic gate)` below).
+- `<spec_path>` — this story's build-auto spec (`<impl>/spec-{e}-{s}-<slug>.md`; stories mode `{spec_folder}/stories/{story_id}-<slug>.md`), read from state (`spec_path`, set by `story_plan.py --find-spec` in Phase 3). **Stories mode never passes it to build-auto** — folder+id dispatch does (`stories-mode.md` §5); the TEA entries and the `--spec` reads still use it.
+- `{spec_folder}` / `{story_id}` — stories mode only: the absolute `bmad-spec` spec folder and the `stories.yaml` entry id (from `story_plan.py --resolve`/`--stories`); `{invoke_dev_with}` — that entry's free-text field, appended verbatim **to the `build-plan` dispatch only** when non-empty (planning context, never scope; `build-run` / `followup-review` never carry it — `stories-mode.md` §5).
+- `{spec_paths}` — the epic's spec files, comma-separated (one `--find-spec` per landed / `done` story; stories mode: the folder's `stories/*.md`). Epic-scoped entries only.
+- `{carry_over_block}` — the previous epic's open action items, wrapped in `<carry_over_context>` … `</carry_over_context>` tags (`build-plan` below); empty when none (always empty in stories mode — no source).
+- `{epic_test_files}` — the git-only test-file list for epic {e} (`testarch-test-review (epic gate)` below); the per-story-mode `<epic_start>` grep uses `{story_label}`'s prefix (`stories-mode.md` §3).
 - `{test_artifacts}` — TEA's configured `test_artifacts` dir (`_bmad/tea/config.yaml`; default `<output_folder>/test-artifacts`). The orchestrator never reads it (no YAML read) and never resolves it into a prompt — prose/expectation notes only; delegates report actual artifact paths in Files changed.
 
 ---
@@ -90,6 +93,25 @@ additional scope for this story):
 - [{owner}] {action}
 </carry_over_context>
 ```
+**Stories mode variant** (`stories-mode.md` §5) — the **whole body becomes** the fence below (`{carry_over_block}` is always empty here, so it is dropped; the draft-spec variant below is never used — folder+id resumes a `draft` story file by itself):
+```
+Run `/bmad-build-auto` in <project_root> with EXACTLY this invocation intent (it is the whole intent — do not add
+scope, and do not paraphrase the halt phrase):
+
+Spec folder `{spec_folder}` (absolute path), story id "{story_id}" — folder+id dispatch: do not pass a spec
+file path. Branch `{branch}` is the intended branch for this work (judge it against the epic). Halt after planning.
+
+{invoke_dev_with}
+
+build-auto loads `{spec_folder}/SPEC.md` + its companions and the other `{spec_folder}/stories/*.md` as planning
+context (no epic-<N>-context.md is compiled under folder+id), then writes this story's file; the run must end with
+build-auto's HALT — status `ready-for-dev` (story file written) or `blocked`. Do not implement anything in this run.
+Return the structured result; in Status give the HALT status, the blocking condition verbatim if any, and the
+absolute path of the id-keyed story file `{spec_folder}/stories/{story_id}-*.md` (under folder+id there is never a
+bmad-build-auto-result-*.md file).
+```
+`{invoke_dev_with}` — the entry's field verbatim after a blank line, only when non-empty; it is planning context build-auto carries into its plan step, never scope. **This is the only build-auto dispatch that may carry it** (`build-run` / `followup-review` below must not).
+
 Draft-spec variant (resume of an interrupted plan, or a human-repaired `blocked` spec set back to `draft`):
 ```
 Run `/bmad-build-auto <spec_path>` in <project_root>. The argument is the absolute path of an existing spec whose
@@ -111,6 +133,17 @@ Return the structured result; in Status give the HALT status, the blocking condi
 `followup_review_recommended` value and the number of `deferred:` items in its frontmatter, plus a one-line summary of
 what was implemented (for the commit/PR text).
 ```
+**Stories mode variant** (`stories-mode.md` §5) — replace the **first two sentences** (`Run /bmad-build-auto <spec_path> in <project_root>.` through `… the orchestrator owns push/PR).`) with:
+```
+Run `/bmad-build-auto` in <project_root> with EXACTLY this invocation intent, and nothing else appended: Spec folder
+`{spec_folder}` (absolute path), story id "{story_id}" — folder+id dispatch: do not pass a spec file path. Branch
+`{branch}` is the intended branch for this work (judge it against the epic).
+build-auto routes by the story file's own status (`ready-for-dev`/`in-progress` ⇒ implement); it implements the story
+file, reviews the change with its configured review layers, triages and patches, finalizes and COMMITS its own changes
+(it must not push — the orchestrator owns push/PR).
+```
+The rest of the body (from `This story's spec is the whole scope …`) is unchanged, and `<spec_path>` there means the id-keyed story file. **Never append `{invoke_dev_with}` here** — this dispatch routes straight to build-auto's implement step, where extra prompt text becomes the implementation handoff and a disagreement with the story file HALTs `handoff conflicts with spec`.
+
 PERSIST: the state `build` block comes from `story_plan.py --spec <spec_path>` (`status` authoritative, plus `followup_review_recommended`, `review_loop_iteration`, `deferred_count`, `warnings`, `auto_run_result.blocking_condition`); `commits[]` via `git log <head_before>..HEAD`.
 The delegate's `Deferred work` prose is NOT written to state — the spec frontmatter `deferred:` list is the source, harvested at the Phase 7 tail (`deferred_ledger.py harvest`). Flow: `pipeline.md` Phase 5.
 
@@ -126,6 +159,17 @@ The run must end with build-auto's HALT — status `done` or `blocked`.
 Return the structured result; in Status give the HALT status, the blocking condition verbatim if any, this pass's triage
 counts from the spec's `## Review Triage Log` (patch / bad_spec / defer / reject) and the spec's `followup_review_recommended`.
 ```
+**Stories mode variant** (`stories-mode.md` §5) — replace the **first two sentences** (`Run /bmad-build-auto <spec_path> in <project_root>.` through `… finalizes and commits its own changes (never push).`) with:
+```
+Run `/bmad-build-auto` in <project_root> with EXACTLY this invocation intent, and nothing else appended: Spec folder
+`{spec_folder}` (absolute path), story id "{story_id}" — folder+id dispatch: do not pass a spec file path. Branch
+`{branch}` is the intended branch for this work (judge it against the epic).
+The story file is at `done`, so build-auto starts a fresh, independent review pass over the whole change (its full
+review layer roster), triages the findings, patches what it can, re-verifies, finalizes and commits its own changes
+(never push).
+```
+The rest of the body (from `You are the second-opinion reviewer …`) is unchanged, and `<spec_path>` there means the id-keyed story file. **Never append `{invoke_dev_with}` here** — build-auto hands the invocation intent to every review layer verbatim, so that text would become the reviewed intent.
+
 PERSIST: `followup_passes += 1`; `build.*` refreshed from `story_plan.py --spec`.
 `last_review_pass` (that JSON's last `## Review Triage Log` entry — `patch` / `bad_spec` / `defer` / `reject`) plus frontmatter `followup_review_recommended` decide "meaningful" at the HITL halt; `last_review_pass` is session memory, not a state field. Flow: `pipeline.md` Phase 7.
 
@@ -138,6 +182,8 @@ pick the higher tier). Do not read or modify code.
 Return the structured result; in Status give: risk (low|med|high), the selected TEA set from the matrix (atdd, automate,
 or none), and a one-line rationale naming the signal.
 ```
+**Stories mode variant** — replace the first two sentences with: `Classify story "{story_id}" ("{title}") of the spec folder {spec_folder} for test risk. Read ONLY that story's entry in {spec_folder}/stories.yaml (its title + description) and {spec_folder}/SPEC.md for context — the implementation spec does not exist yet` (`stories-mode.md` §9); the rubric sentence and the Status ask are unchanged.
+
 PERSIST: `tea_risk`, `tea_selected` (state); the trace advisory is added by policy, not by the delegate — `tea-policy.md` §3.
 
 ### testarch-test-design (epic level)  (Phase 2 / E2 → profile `tea_epic`)
@@ -272,6 +318,19 @@ its action items through the skill's own update command.
 Return the structured result; in Status give the document path, its frontmatter `verdict` (accepted |
 accepted-with-open-items | rejected) and the number of action items added.
 ```
+**Stories mode variant** (`stories-mode.md` §6) — the whole body becomes:
+```
+Run `/bmad-retrospective -H {spec_folder}` in <project_root> — headless retrospective of the spec folder
+{spec_folder} (a named folder is stories mode). Take every decision yourself from the evidence the skill gathers
+(SPEC.md, stories.yaml in list order, the story files under stories/, the diff and commits); never open a team
+discussion and never wait for input (there is no human in this session). Make no sprint_status.py call, create no
+sprint-status file, and edit no SPEC.md, stories.yaml or story artifact.
+Produce the full retrospective document ({spec_folder}/RETROSPECTIVE.md).
+Return the structured result; in Status give the document path, its frontmatter `verdict` (accepted |
+accepted-with-open-items | rejected) and the number of action items it records.
+```
+PERSIST there: `doc` + `verdict` via `story_plan.py --retro-verdict --spec-folder {spec_folder}`; `retro.open_action_items` is `null` (no scripted source).
+
 PERSIST: `retro{doc, verdict, open_action_items}` — `doc` + `verdict` via `story_plan.py --retro-verdict --impl-dir <impl> --epic {e}` (never the delegate's prose); `open_action_items` = the count of `sprint_plan.py status` `open_action_items` with `epic == {e}`. Flow: `pipeline.md` Phase 8.
 
 ---

@@ -1,13 +1,15 @@
 code: abm
 name: "Auto-BMAD Orchestrator"
-description: "Drive the BMAD build lane end-to-end — bmad-build-auto plan → build → follow-up review per story, or a whole epic in one run (`/auto-bmad epic`) — with risk-gated TEA, epic-boundary gates + retrospective, git branch/commits/PR/CI and a report; every step delegated to a model-tuned subagent on Claude Code, Codex, or opencode."
+description: "Drive the BMAD build lane end-to-end — bmad-build-auto plan → build → follow-up review per story, or a whole epic in one run (`/auto-bmad epic`) — from either story source: sprint-status.yaml or a bmad-spec spec folder's stories.yaml (`--spec <folder>`). Risk-gated TEA, epic-boundary gates + retrospective, git branch/commits/PR/CI and a report; every step delegated to a model-tuned subagent on Claude Code, Codex, or opencode."
 module_version: 0.29.0
 default_selected: false
 module_greeting: >
   auto-bmad is installed. Run `/auto-bmad` in a BMAD project to drive the next story
   end-to-end (bmad-build-auto plan -> build -> follow-up review, plus risk-gated TEA and
   epic-boundary work), or `/auto-bmad epic` to drive a WHOLE epic in one run (one branch,
-  one PR; it warns + confirms first). You can steer a single run with plain-language
+  one PR; it warns + confirms first). Stories come from sprint-status.yaml, or from a
+  bmad-spec spec folder's stories.yaml -- add `--spec <folder>` (it asks which folder when
+  there is no sprint status). You can steer a single run with plain-language
   instructions, e.g. `/auto-bmad stop before the review`. Prerequisites:
   BMAD >= 6.11, `uv` + Python 3.11, and nested subagents enabled for your host (preflight
   tells you the exact fix). Retune delegate models in `{output_folder}/auto-bmad/config.yaml`;

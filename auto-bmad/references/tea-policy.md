@@ -13,7 +13,8 @@ Per story, the matrix below selects from two skills:
 
 ### Risk classification
 Score the signals from the story's epic entry (title, description, acceptance criteria as written in the epics
-document) and described scope. Triage happens once, in Phase 0, before the build-auto spec exists — never re-triage later.
+document) and described scope. Stories mode: the `stories.yaml` entry's title + description plus `SPEC.md`
+(`stories-mode.md` §9) — thinner input, so the "pick the higher tier" rule below matters more. Triage happens once, in Phase 0, before the build-auto spec exists — never re-triage later.
 
 **High** — any of:
 - authentication, authorization, sessions, secrets, crypto, or permissions
@@ -60,7 +61,7 @@ Select `trace-advisory` (add it to `tea_selected`) at Phase-0 triage **iff all**
   - So `>= 3` skips the last three stories.
 - `epic_story_count >= tea.story_trace_advisory.min_epic_stories` (default 6) — the **long-epic gate**: dormant on short epics, self-activating on long ones.
 
-`epic_story_count` and `stories_after_in_epic` come from the `story_plan.py --epic`/`--resolve` read that sets `is_first_in_epic`/`is_last_in_epic`. Record both in state alongside `tea_risk`.
+`epic_story_count` and `stories_after_in_epic` come from the `story_plan.py --epic`/`--resolve` read that sets `is_first_in_epic`/`is_last_in_epic` (stories mode: `--stories`/`--resolve`, derived from `stories.yaml` list order). Record both in state alongside `tea_risk`.
 
 ### Notes
 - Low risk ⇒ `tea_selected = []` and Phases 4 & 6 are skipped — the story still gets build-auto's built-in review (+ the follow-up pass).

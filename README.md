@@ -4,7 +4,7 @@
 
 A **BMAD module** that runs the **[BMAD](https://github.com/bmad-code-org/BMAD-METHOD) build lane end-to-end — one story at a time, or an [entire epic in one run](#run-a-whole-epic)**, on **Claude Code, Codex, or opencode**, with **[human-in-the-loop checkpoints](#human-in-the-loop-stops)** at the decisions that matter.
 
-`auto-bmad` wraps BMAD's own unattended story primitive, **`bmad-build-auto`** (plan → build → review), in a resumable pipeline: it picks the next story from `sprint-status.yaml` (or takes one as an argument), runs `bmad-build-auto` to **plan** the story into a spec, then to **build** it (implement → review → finalize, with build-auto's own review layers *plus* auto-bmad's security and cross-model layers), then runs a **follow-up review pass on a second model**, adds the optional TEA (Test Architect) skills by risk, keeps the sprint status in sync, and finishes with a branch, a PR, and a report of open questions, deferred work, and anything that needs your attention — then stops so **you** decide when to start the next story. Or run a **whole epic at once** with [`/auto-bmad epic`](#run-a-whole-epic) — the same lane looped over the epic's stories, no per-story halts, one branch, one PR, one epic-end retrospective.
+`auto-bmad` wraps BMAD's own unattended story primitive, **`bmad-build-auto`** (plan → build → review), in a resumable pipeline: it picks the next story from your story source — `sprint-status.yaml`, or a `bmad-spec` spec folder's `stories.yaml` (see [Two story sources](#two-story-sources)) — or takes one as an argument, runs `bmad-build-auto` to **plan** the story into a spec, then to **build** it (implement → review → finalize, with build-auto's own review layers *plus* auto-bmad's security and cross-model layers), then runs a **follow-up review pass on a second model**, adds the optional TEA (Test Architect) skills by risk, keeps the sprint status in sync, and finishes with a branch, a PR, and a report of open questions, deferred work, and anything that needs your attention — then stops so **you** decide when to start the next story. Or run a **whole epic at once** with [`/auto-bmad epic`](#run-a-whole-epic) — the same lane looped over the epic's stories, no per-story halts, one branch, one PR, one epic-end retrospective.
 
 The orchestrator **only delegates and reports** — it never reads or edits story code, and never edits the spec. Every step runs in **your host's native subagents with per-phase models** (Claude Code, Codex, opencode): the heavy plan/build steps on your strongest model, the follow-up review on a *different* model, triage and the retrospective on a faster one. Nothing is rendered into your repo — the models live in a `profiles` block in auto-bmad's config, and the same project runs unchanged under any of the three tools (the host is re-detected every run). Where a host has no subagents at all, the pipeline runs inline — same phases, same stops.
 
@@ -99,8 +99,11 @@ Run from the root of a BMAD-enabled project:
 /auto-bmad                       # implement the next story from sprint-status.yaml
 /auto-bmad --story 1-3           # implement a specific story (epic 1, story 3)
 /auto-bmad --story 1-3-user-auth
+/auto-bmad --spec _bmad-output/specs/spec-rate-limits            # next story of a bmad-spec spec folder
+/auto-bmad --spec _bmad-output/specs/spec-rate-limits --story 2  # a specific story of that folder
 /auto-bmad epic                  # implement an ENTIRE epic in one run (see "Run a whole epic")
 /auto-bmad epic --epic 2         # implement a specific epic
+/auto-bmad epic --spec _bmad-output/specs/spec-rate-limits       # the whole spec folder as one epic
 /auto-bmad stop before the review     # steer a single run in plain language (see "Steer a single run")
 /auto-bmad --story 1-3 approve the spec first   # pause after planning so you can approve/edit the spec
 /auto-bmad setup                 # (re)configure: register, first-run interview, sync review layers
@@ -116,11 +119,20 @@ Run from the root of a BMAD-enabled project:
 - A per-story **report log** is saved to `<output_folder>/auto-bmad/reports/<story>.md` — each run appends a timestamped section (never overwritten on resume), and a clean run **commits it before push so it ships in the PR diff**. It holds the story-level outputs: this run's instructions, TEA outcomes, the build-auto result, follow-up review passes, timing (total elapsed plus an AI-run vs human-wait split), open questions, deferred work, blockers, the epic-end retrospective verdict, and the one-line pipeline **disposition** (clean / caveated / halted + reason). PR/CI links, merge method, and the final status flip are printed to chat only.
 - **Everything auto-bmad does per phase, and every point where it stops for you, is in the two tables below** — the phase playbook and the human-in-the-loop stops.
 
+### Two story sources
+
+auto-bmad runs the same lane from either source, and picks between them for you:
+
+- **Sprint** — PRD → epics → `/bmad-sprint-planning` → `sprint-status.yaml`. The default; a bare `/auto-bmad` uses it whenever that file exists.
+- **Spec** — `/bmad-spec` → "break this into stories" → a spec folder holding `SPEC.md` + `stories.yaml` (ordered stories with `id` / `title` / `description`, plus optional `spec_checkpoint`, `done_checkpoint` and `invoke_dev_with` notes). Target it with `--spec <folder>`; with no `--spec` and no `sprint-status.yaml`, auto-bmad looks for spec folders and **asks** which to use — never silently.
+
+What differs in the spec route: there is **no sprint-status write-back** (each story's status lives in its own `stories/<id>-*.md` file, written by `bmad-build-auto`), the entry's **checkpoints are honoured** — `spec_checkpoint` pauses for spec approval, `done_checkpoint` stops after that story, epic runs included — and the epic-end retrospective lands in `<spec-folder>/RETROSPECTIVE.md`. Branches, commits and reports are keyed on the spec folder (`story/<spec>-<id>-<slug>`, `story-<spec>-<id>`). Everything else — delegation, profiles, TEA, PR/CI/merge, resume — is identical. Mechanics: `references/stories-mode.md`.
+
 ## What it does per story
 
 | Phase | Step | Skill | When |
 |-------|------|-------|------|
-| 0 | Preflight (BMAD config, `uv`/Python, nested subagents, git, required skills), config heal, story pick, per-story TEA risk triage | `sprint_plan.py status` (BMAD's picker); triage is a small delegate | always |
+| 0 | Preflight (BMAD config, `uv`/Python, nested subagents, git, required skills), config heal, story pick, per-story TEA risk triage | `sprint_plan.py status` (BMAD's picker; the spec route picks from `stories.yaml` order instead); triage is a small delegate | always |
 | 1 | Create `story/X-Y-slug` branch | — | always |
 | 2 | Epic-level test design | `bmad-testarch-test-design` | first story of epic, TEA on |
 | 3 | **Plan** — build-auto plans the story into a spec and halts (`Halt after planning.` ⇒ spec at `ready-for-dev`); sprint entry → `ready-for-dev`; then the optional **spec-approval halt** | `bmad-build-auto` | always |
@@ -135,7 +147,7 @@ Each orchestrator phase ends with a conventional commit (build-auto's own commit
 
 ## Run a whole epic
 
-`/auto-bmad epic` (or `/auto-bmad epic --epic N`) drives an **entire epic** — every actionable story — in one run, then **one PR**. It runs the same per-story lane (plan → build → follow-up review, with TEA) for each story in order, on one `epic/N-slug` branch, with one CI wait and one merge prompt at the end.
+`/auto-bmad epic` (or `/auto-bmad epic --epic N`, or `/auto-bmad epic --spec <folder>` for a spec folder) drives an **entire epic** — every actionable story — in one run, then **one PR**. It runs the same per-story lane (plan → build → follow-up review, with TEA) for each story in order, on one `epic/N-slug` branch, with one CI wait and one merge prompt at the end.
 
 - **It warns and asks you to confirm up front** — an epic runs **fully unattended between preflight and the merge prompt**: no spec-approval halt, no per-story review halt, no epic-end trace-gate ask (remediation runs mechanically up to the cap). The only stops left are the **preflight safety asks** (config update, adopting a half-done epic, a base-branch readiness check, the previous epic's retro verdict) and the final **merge prompt**.
 - **Review stays automatic:** every build run carries build-auto's review layers plus auto-bmad's security/cross-model layers, and the follow-up pass on the second model runs whenever its gate holds. A story whose spec still recommends another review after its last pass — or a run you told to skip that pass — makes the epic **ship a draft**.
@@ -154,7 +166,7 @@ auto-bmad runs autonomously between the points below — delegated subagents ans
 |------|------|----------------------|
 | **First-run setup** | First `/auto-bmad` in a project (or `/auto-bmad setup`) | One-time questions: **Quick** (TEA on/off — plus a one-time framework/CI scaffolding offer if TEA's on and none is set up) or **Full** (also git mode/prefix, the follow-up review policy, which extra review layers to write, spec approval). Writes `config.yaml` + the review layers, then stops — **start a new session and re-run `/auto-bmad`** so the first story runs on fresh context. |
 | **Config update** | Preflight, only when an auto-bmad update shipped new config keys/profiles | Apply the new defaults & continue (append-only — your values are kept), or stop to edit `config.yaml` first. Epic mode asks once, up front. |
-| **Spec approval** *(opt-in)* | After Phase 3, when `build.spec_approval: true`, or you ask for it in the invocation — never in epic mode | Approve & continue, or stop to edit the spec; the next `/auto-bmad --story <key>` re-opens the halt (your spec edits are committed as `spec edits (human)`). |
+| **Spec approval** *(opt-in)* | After Phase 3, when `build.spec_approval: true`, you ask for it in the invocation, or the story's `stories.yaml` entry sets `spec_checkpoint` (that one fires in epic runs too) — otherwise never in epic mode | Approve & continue, or stop to edit the spec; the next `/auto-bmad --story <key>` re-opens the halt (your spec edits are committed as `spec edits (human)`). |
 | **Follow-up review done** | Phase 7 — after the follow-up review pass (or when the review is unverified because no pass ran) | Choose: run another review pass (a fresh build-auto review on the second model), continue, or stop. While paused you're encouraged to run an external review (a human, another model/AI); on continue auto-bmad **re-reviews any changes you made** (one more build-auto pass) and, if they were meaningful, asks once more. When the spec still recommends another review, a **Continue — ship as ready** option overrides the draft. If you stop, re-running `/auto-bmad --story <key>` re-opens the halt. |
 | **Epic trace gate failed** | Phase 8 — `bmad-testarch-trace` returns `FAIL` (requirements/ACs lack test coverage) | Choose: remediate & re-gate (auto-expand coverage, then re-run trace; capped by `tea.gate_max_iterations`, default 2), waive and continue (PR opened as a **draft** with the gaps noted), or stop. `CONCERNS` is advisory and doesn't pause. Epic mode remediates without asking. |
 | **Previous epic rejected** | Starting the first story of an epic (or an epic run) when the previous epic's retrospective verdict is `rejected` | Proceed anyway, or stop and resolve the previous epic first. |

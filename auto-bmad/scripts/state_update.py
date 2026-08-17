@@ -12,6 +12,15 @@ fields, never dropped. ``--self-test`` parses the live schema block out of
 level plus the ``phase8_steps`` / ``build`` / ``retro`` sub-keys — so a doc edit that drifts the
 schema fails loud (the lockstep pattern from ``config_plan.py``).
 
+**Story source.** ``story_source`` (``sprint`` — the default — or ``stories``) records which
+adapter produced this story. In ``stories`` mode (a ``bmad-spec`` spec folder: ``SPEC.md`` +
+``stories.yaml`` + ``stories/{id}-*.md``) ``spec_folder`` (absolute) and ``story_id`` carry the
+identity, and ``epic_num`` / ``story_num`` / ``story_suffix`` are ``null`` — there is no sprint
+key grammar. Report rendering follows: the ``**Story:**`` line reads ``spec {spec_slug}, story
+{story_id}`` and the epic report's ``**Epic:**`` line ``spec {spec_slug}``, where ``spec_slug`` =
+``basename(spec_folder)`` minus a leading ``spec-`` (the story key is ``spec-{spec_slug}-{id}``,
+the epic anchor's ``spec-{spec_slug}``). Full flow: ``references/stories-mode.md``.
+
 Subcommands (each emits a single JSON object on stdout):
 
 * ``init``          — create the state file from a full ``--json`` payload. Stamps ``started_at``
@@ -46,7 +55,16 @@ Subcommands (each emits a single JSON object on stdout):
                       absent; NEVER overwrites existing sections — a full rewrite requires
                       ``--overwrite-confirmed``. ``--allow-missing-state`` covers the pre-init
                       hard-stop (Phase 0 — "always produce a report" before ``init`` ever ran):
-                      renders against a default state keyed off the state file's name.
+                      renders against a default state keyed off the state file's name. Because
+                      the key alone cannot carry the story source, that path also accepts
+                      ``--story-source sprint|stories``, ``--story-id ID`` and
+                      ``--spec-folder DIR``, which SEED the default state so the header reads
+                      ``(spec {spec_slug}, story {story_id})`` instead of a sprint-shaped one
+                      (``--story-id``/``--spec-folder`` without ``--story-source`` imply
+                      ``stories``); any of the three WITHOUT ``--allow-missing-state`` is a usage
+                      error (exit 2) and all three are ignored when the state file exists — the
+                      state file is the single source of the identity. Every identifier part that
+                      is still unknown renders ``?``, never the literal ``None``.
                       With ``--epic`` it renders the *epic-rollup* template instead (epic header +
                       per-story rollup + epic gate / TEA / retrospective + open-questions/deferred
                       checklist), keyed off the epic anchor, with its own
@@ -70,7 +88,9 @@ Usage:
     state_update.py timing-start   --state-file PATH
     state_update.py timing-pause   --state-file PATH
     state_update.py report-section --report-file PATH --state-file PATH --json -|FILE
-                                   [--epic] [--overwrite-confirmed] [--allow-missing-state]
+                                   [--epic] [--overwrite-confirmed] [--allow-missing-state
+                                   [--story-source sprint|stories] [--story-id ID]
+                                   [--spec-folder DIR]]
     state_update.py --self-test
 """
 from __future__ import annotations
@@ -103,7 +123,8 @@ BUILD_KEYS = ("status", "blocking_condition", "followup_review_recommended",
 RETRO_KEYS = ("doc", "verdict", "open_action_items")                    # epic-end retrospective
 
 SCHEMA_ORDER = (
-    "story_key", "epic_num", "story_num", "story_suffix", "branch", "status",
+    "story_key", "epic_num", "story_num", "story_suffix",
+    "story_source", "spec_folder", "story_id", "branch", "status",
     "updated_at", "started_at", "completed_at", "active_seconds", "timing_anchor",
     "is_first_in_epic", "is_last_in_epic",
     "git_mode", "base_branch",
@@ -129,6 +150,7 @@ BLOCK_LIST_FIELDS = {"open_questions", "deferred_work", "blockers", "constraints
 LIST_FIELDS = FLOW_LIST_FIELDS | BLOCK_LIST_FIELDS
 MAP_FIELDS = {"story_trace", "overrides", "phase8_steps", "build", "retro"}
 _MAP_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")   # what load_state's map reader can parse back
+STORY_SOURCES = ("sprint", "stories")                 # sprint-status.yaml | a bmad-spec spec folder
 _PHASE8_MARKERS = (None, "done")                      # closed vocabulary (pipeline.md Phase 8) …
 _PHASE8_TRACE_GATE_EXTRA = ("waived", "failed")       # … which trace_gate alone extends
 _FIXED_MAP_KEYS = {"phase8_steps": PHASE8_KEYS, "build": BUILD_KEYS, "retro": RETRO_KEYS}
@@ -154,6 +176,7 @@ def default_state() -> dict:
     for k in ("followup_passes", "gate_iterations", "deferred_work_archived"):
         d[k] = 0
     d["story_suffix"] = ""                      # "" when the key has no split suffix
+    d["story_source"] = "sprint"                # sprint (sprint-status.yaml) | stories (spec folder)
     d["ci_status"] = "unknown"
     d["story_trace"] = None                     # null until the trace advisory runs
     d["overrides"] = {}
@@ -498,7 +521,14 @@ def _validate_patch(patch: dict) -> None:
                         f"phase8_steps.{sub} marker {marker!r} is off-vocabulary — expected "
                         + " | ".join("null" if m is None else m for m in allowed))
         if k in INT_FIELDS and v is not None and not _int_coercible(v):
+            # epic_num / story_num are null in stories mode (no sprint key grammar);
+            # every other int field keeps its numeric default.
             raise ContractError(f"{k} must be an integer (or null), got {v!r}")
+        if k == "story_source" and v is not None and v not in STORY_SOURCES:
+            # Closed vocabulary: the whole pipeline branches on it (naming, status
+            # write-back, the retro/spec reads), so a typo must not ride along.
+            raise ContractError(
+                f"story_source {v!r} is off-vocabulary — expected " + " | ".join(STORY_SOURCES))
 
 
 def _stored_list(state: dict, key: str) -> list:
@@ -690,9 +720,61 @@ def _list_block(label: str, items, trailing: str = "") -> list:
     return out
 
 
+def _or_q(value) -> str:
+    """Render a report identifier part, or ``?`` when it is unknown — a report
+    line must never print the literal ``None``."""
+    text = "" if value is None else str(value).strip()
+    return text or "?"
+
+
+def _is_stories(state: dict) -> bool:
+    """True when this state file's story source is a bmad-spec spec folder."""
+    return str(state.get("story_source") or "sprint").strip().lower() == "stories"
+
+
+def _spec_slug(state: dict) -> str:
+    """The spec slug of a stories-mode state file.
+
+    Derived from ``spec_folder`` — its basename minus a leading ``spec-`` (the
+    single documented derivation). Falls back to the ``story_key`` grammar
+    ``spec-{spec_slug}-{story_id}`` only when ``spec_folder`` is null (the
+    ``--allow-missing-state`` report path, which knows the key but no folder)."""
+    folder = str(state.get("spec_folder") or "").strip().rstrip("/")
+    if folder:
+        base = os.path.basename(folder)
+        # Same rule as story_plan.spec_slug_for: a folder literally named
+        # `spec-` keeps its name (stripping would leave an empty slug).
+        if base.startswith("spec-") and len(base) > len("spec-"):
+            return base[len("spec-"):]
+        return base
+    key = str(state.get("story_key") or "").strip()
+    if key.startswith("spec-"):
+        key = key[len("spec-"):]
+    sid = str(state.get("story_id") or "").strip()
+    if sid and key.endswith("-" + sid):
+        key = key[: -(len(sid) + 1)]
+    return key or "(unknown)"
+
+
 def _story_label(state: dict) -> str:
-    """``story_num`` plus the split suffix when the key carries one (``6`` / ``6a``)."""
-    return f"{state.get('story_num')}{state.get('story_suffix') or ''}"
+    """The report's story identifier — the parenthetical after the story key.
+
+    sprint mode: ``epic {epic_num}, story {story_num}{story_suffix}`` (``6`` / ``6a``).
+    stories mode: ``spec {spec_slug}, story {story_id}``.
+
+    A missing part degrades to ``?`` — never the literal ``None`` (the
+    ``--allow-missing-state`` report path renders before any field is known)."""
+    if _is_stories(state):
+        return f"spec {_spec_slug(state)}, story {_or_q(state.get('story_id'))}"
+    return (f"epic {_or_q(state.get('epic_num'))}, "
+            f"story {_or_q(state.get('story_num'))}{state.get('story_suffix') or ''}")
+
+
+def _epic_label(state: dict) -> str:
+    """The epic report's epic identifier (backticked): sprint ``{epic_num}``;
+    stories ``spec {spec_slug}`` (the anchor's key is ``spec-{spec_slug}``).
+    A missing ``epic_num`` degrades to ``?``, never the literal ``None``."""
+    return f"spec {_spec_slug(state)}" if _is_stories(state) else _or_q(state.get("epic_num"))
 
 
 def _short_sha(sha) -> str:
@@ -729,8 +811,7 @@ def render_section(state: dict, payload: dict, timestamp: str, resumed: int) -> 
     lines = [
         f"## Report — {timestamp} ({tag})",
         "",
-        f"**Story:** `{state.get('story_key')}` (epic {state.get('epic_num')}, "
-        f"story {_story_label(state)}) — {pos}.",
+        f"**Story:** `{state.get('story_key')}` ({_story_label(state)}) — {pos}.",
         f"**Spec:** `{state.get('spec_path')}`" if state.get("spec_path") else "**Spec:** (none)",
         f"**Branch:** `{state.get('branch') or '(unknown)'}` "
         f"(HEAD `{_short_sha(payload.get('head_sha'))}`).",
@@ -792,7 +873,7 @@ def render_epic_section(state: dict, payload: dict, timestamp: str, resumed: int
     lines = [
         f"## Report — {timestamp} ({tag})",
         "",
-        f"**Epic:** `{state.get('epic_num')}` — {count_text}.",
+        f"**Epic:** `{_epic_label(state)}` — {count_text}.",
         f"**Branch:** `{state.get('branch') or '(unknown)'}` "
         f"(HEAD `{_short_sha(payload.get('head_sha'))}`).",
         f"**Pipeline status:** {_prose(payload, 'pipeline_status', '(none)')}",
@@ -829,14 +910,38 @@ def render_epic_section(state: dict, payload: dict, timestamp: str, resumed: int
 def cmd_report_section(report_file: Path, state_file: Path, payload: dict,
                        overwrite_confirmed: bool,
                        allow_missing_state: bool = False,
-                       epic: bool = False) -> dict:
+                       epic: bool = False,
+                       story_source: str | None = None,
+                       story_id: str | None = None,
+                       spec_folder: str | None = None) -> dict:
+    seeds = {"--story-source": story_source, "--story-id": story_id,
+             "--spec-folder": spec_folder}
+    given = sorted(k for k, v in seeds.items() if v is not None)
+    if given and not allow_missing_state:
+        raise UsageError(
+            ", ".join(given) + " is only valid with --allow-missing-state (otherwise the "
+            "state file is the single source of the story identity)")
+    if story_source is not None and story_source not in STORY_SOURCES:
+        raise UsageError(
+            f"--story-source {story_source!r} is off-vocabulary — expected "
+            + " | ".join(STORY_SOURCES))
     if allow_missing_state and not state_file.is_file():
         # Pre-init hard-stop (Phase 0): the state file is only created by
         # Phase 1's `init`, but "always produce a report" still holds. Render
         # against a default state keyed off the state file's name; Story/
-        # Branch/Timing lines show their not-started defaults.
+        # Branch/Timing lines show their not-started defaults. The three
+        # identity seeds below are the ONLY way stories mode can be known here
+        # (the key alone cannot carry it).
         state = default_state()
         state["story_key"] = state_file.stem
+        if story_source is not None:
+            state["story_source"] = story_source
+        elif story_id is not None or spec_folder is not None:
+            state["story_source"] = "stories"   # the only source with these fields
+        if story_id is not None:
+            state["story_id"] = story_id
+        if spec_folder is not None:
+            state["spec_folder"] = spec_folder
     else:
         state = _read_existing(state_file)
     timestamp = _now_iso()
@@ -1324,6 +1429,141 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
                 except UsageError as exc:
                     assert dead_key in str(exc), exc
 
+            # --- stories mode (story_source: stories) ------------------------ #
+            # init carries the three stories fields; epic_num/story_num/story_suffix
+            # are null (no sprint key grammar) and must round-trip as null.
+            ssf = tmp / "state" / "spec-digest-delivery-3-2.yaml"
+            clock["iso"] = "2026-05-28T13:55:02Z"
+            cmd_init(ssf, {"story_key": "spec-digest-delivery-3-2",
+                           "epic_num": None, "story_num": None, "story_suffix": None,
+                           "story_source": "stories",
+                           "spec_folder": "/abs/out/specs/spec-digest-delivery",
+                           "story_id": "3-2",
+                           "branch": "story/digest-delivery-3-2-render-digest",
+                           "is_first_in_epic": True, "epic_story_count": 5,
+                           "stories_after_in_epic": 4})
+            sst = full_state(load_state(ssf))
+            assert sst["story_source"] == "stories" and sst["story_id"] == "3-2", sst
+            assert sst["spec_folder"] == "/abs/out/specs/spec-digest-delivery", sst
+            assert sst["epic_num"] is None and sst["story_num"] is None, sst
+            assert sst["story_suffix"] is None, sst["story_suffix"]
+            stext = ssf.read_text(encoding="utf-8")
+            assert re.search(r"^epic_num: null$", stext, re.M), stext
+            assert re.search(r"^story_id: \"3-2\"$|^story_id: 3-2$", stext, re.M), stext
+            # a purely numeric id stays a STRING through the emit/parse round-trip
+            # (stories.yaml ids are quoted strings; an int would break the id-keyed
+            # `stories/{id}-*.md` match and the `spec-{slug}-{id}` key)
+            nsf = tmp / "state" / "spec-digest-delivery-1.yaml"
+            cmd_init(nsf, {"story_key": "spec-digest-delivery-1", "story_source": "stories",
+                           "epic_num": None, "story_num": None, "story_suffix": None,
+                           "spec_folder": "/abs/out/specs/spec-digest-delivery", "story_id": "1"})
+            nst = full_state(load_state(nsf))
+            assert nst["story_id"] == "1" and isinstance(nst["story_id"], str), nst["story_id"]
+            # a default (sprint) state keeps the shipped default + the sprint rendering
+            assert default_state()["story_source"] == "sprint", default_state()["story_source"]
+            assert _is_stories(sst) and not _is_stories(default_state())
+            # spec_slug: the folder basename minus a leading `spec-`; the story-key
+            # fallback only when spec_folder is null
+            assert _spec_slug(sst) == "digest-delivery", _spec_slug(sst)
+            assert _spec_slug({"story_source": "stories",
+                               "story_key": "spec-digest-delivery-3-2",
+                               "story_id": "3-2"}) == "digest-delivery"
+            assert _story_label(sst) == "spec digest-delivery, story 3-2", _story_label(sst)
+            assert _story_label({"story_num": 6, "story_suffix": "a", "epic_num": 2}) \
+                == "epic 2, story 6a"
+            # off-vocabulary story_source is refused (closed vocabulary)
+            try:
+                cmd_set(ssf, {"story_source": "spec-folder"})
+                raise AssertionError("off-vocabulary story_source must raise ContractError")
+            except ContractError as exc:
+                assert "story_source" in str(exc), exc
+            # report rendering: the Story line names the spec + id, not epic/story ints
+            srf = tmp / "reports" / "spec-digest-delivery-3-2.md"
+            clock["iso"] = "2026-05-28T14:30:00Z"
+            cmd_report_section(srf, ssf, {"disposition_tag": "final",
+                                          "pipeline_status": "✅ clean completion.",
+                                          "head_sha": "0f1e2d3c4b5a"}, False)
+            srt = srf.read_text(encoding="utf-8")
+            assert ("**Story:** `spec-digest-delivery-3-2` (spec digest-delivery, story 3-2) "
+                    "— first-in-epic.") in srt, srt
+            assert "epic None" not in srt and "story None" not in srt, srt
+            # epic anchor: state/epic/spec-{spec_slug}.yaml, key spec-{spec_slug}, epic_num null
+            esf2 = tmp / "state" / "epic" / "spec-digest-delivery.yaml"
+            cmd_init(esf2, {"story_key": "spec-digest-delivery", "epic_num": None,
+                            "story_source": "stories",
+                            "spec_folder": "/abs/out/specs/spec-digest-delivery",
+                            "epic_slug": "digest-delivery", "epic_story_count": 5,
+                            "branch": "epic/digest-delivery"})
+            erf2 = tmp / "reports" / "spec-digest-delivery.md"
+            cmd_report_section(erf2, esf2, {"disposition_tag": "final",
+                                            "epic_summary": "5 stories.",
+                                            "head_sha": "0f1e2d3c4b5a"}, False, epic=True)
+            ert2 = erf2.read_text(encoding="utf-8")
+            assert "**Epic:** `spec digest-delivery` — 5 stories." in ert2, ert2
+            # and the sprint epic report is unchanged
+            assert "**Epic:** `1` — 4 stories." in erf.read_text(encoding="utf-8")
+
+            # --- pre-init report identity seeds (--allow-missing-state ONLY) -- #
+            # Without them a `spec-…` key renders "(epic None, story None)".
+            msf = tmp / "state" / "spec-digest-delivery-9.yaml"
+            mrf = tmp / "reports" / "spec-digest-delivery-9.md"
+            assert not msf.exists()
+            cmd_report_section(mrf, msf, {"disposition_tag": "halted — hard-stop"}, False,
+                               allow_missing_state=True, story_source="stories",
+                               story_id="9", spec_folder="/abs/out/specs/spec-digest-delivery")
+            mrt = mrf.read_text(encoding="utf-8")
+            assert ("**Story:** `spec-digest-delivery-9` (spec digest-delivery, story 9)"
+                    in mrt), mrt
+            assert "None" not in mrt, mrt
+            # --story-id/--spec-folder alone imply stories
+            mrf2 = tmp / "reports" / "spec-digest-delivery-8.md"
+            cmd_report_section(mrf2, tmp / "state" / "spec-digest-delivery-8.yaml",
+                               {"disposition_tag": "halted"}, False,
+                               allow_missing_state=True, story_id="8",
+                               spec_folder="/abs/out/specs/spec-digest-delivery")
+            assert "(spec digest-delivery, story 8)" in mrf2.read_text(encoding="utf-8")
+            # the sprint pre-init path is unchanged, and still never prints None
+            mrf3 = tmp / "reports" / "2-9-preinit.md"
+            cmd_report_section(mrf3, tmp / "state" / "2-9-preinit.yaml",
+                               {"disposition_tag": "halted"}, False, allow_missing_state=True)
+            mrt3 = mrf3.read_text(encoding="utf-8")
+            assert "**Story:** `2-9-preinit` (epic ?, story ?)" in mrt3, mrt3
+            assert "None" not in mrt3, mrt3
+            # each seed WITHOUT --allow-missing-state is a usage error
+            for seed in ({"story_source": "stories"}, {"story_id": "9"},
+                         {"spec_folder": "/abs/x"}):
+                try:
+                    cmd_report_section(tmp / "reports" / "seed-guard.md", ssf,
+                                       {"disposition_tag": "final"}, False, **seed)
+                    raise AssertionError(f"{seed} without --allow-missing-state must be refused")
+                except UsageError as exc:
+                    assert "--allow-missing-state" in str(exc), exc
+            assert not (tmp / "reports" / "seed-guard.md").exists()
+            # off-vocabulary --story-source is refused too
+            try:
+                cmd_report_section(tmp / "reports" / "seed-guard.md",
+                                   tmp / "state" / "nope.yaml", {"disposition_tag": "x"},
+                                   False, allow_missing_state=True, story_source="spec-folder")
+                raise AssertionError("off-vocabulary --story-source must raise UsageError")
+            except UsageError as exc:
+                assert "off-vocabulary" in str(exc), exc
+            # an EXISTING state file wins over the seeds (identity lives in state)
+            cmd_report_section(srf, ssf, {"disposition_tag": "final"}, False,
+                               allow_missing_state=True, story_id="999")
+            assert "story 999" not in srf.read_text(encoding="utf-8")
+            # --- _spec_slug / _story_label degradation ------------------------ #
+            # a folder literally named `spec-` keeps its name (story_plan parity)
+            assert _spec_slug({"story_source": "stories", "spec_folder": "/out/specs/spec-"}) \
+                == "spec-"
+            assert _spec_slug({"story_source": "stories", "spec_folder": "/out/specs/plain"}) \
+                == "plain"
+            assert _story_label({"story_source": "stories", "spec_folder": "/out/specs/spec-x"}) \
+                == "spec x, story ?"
+            assert _story_label({"story_source": "stories"}) == "spec (unknown), story ?"
+            assert _story_label({}) == "epic ?, story ?"
+            assert _epic_label({}) == "?"
+            assert _epic_label({"epic_num": 3}) == "3"
+
             # --- CLI surface: single JSON object on stdout + exit codes ------- #
             def run_cli(argv):
                 buf = io.StringIO()
@@ -1370,6 +1610,28 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
             rc, out = run_cli(["report-section", "--report-file", str(tmp / "reports" / "2-1-cli.md"),
                                "--state-file", str(sf3), "--json", str(jf)])
             assert rc == 2 and "story_key" in out["error"], (rc, out)  # unknown report key -> 2
+
+            # the pre-init identity seeds over the real CLI (one JSON object, exit codes)
+            pj = tmp / "preinit.json"
+            pj.write_text(json.dumps({"disposition_tag": "halted — hard-stop"}), encoding="utf-8")
+            cli_pre = ["report-section",
+                       "--report-file", str(tmp / "reports" / "spec-cli-2.md"),
+                       "--state-file", str(tmp / "state" / "spec-cli-2.yaml"),
+                       "--json", str(pj)]
+            rc, out = run_cli(cli_pre + ["--allow-missing-state", "--story-source", "stories",
+                                         "--story-id", "2",
+                                         "--spec-folder", "/abs/out/specs/spec-cli"])
+            assert rc == 0 and out["ok"], (rc, out)
+            assert "(spec cli, story 2)" in (tmp / "reports" / "spec-cli-2.md").read_text(
+                encoding="utf-8")
+            rc, out = run_cli(cli_pre + ["--story-id", "2"])          # no --allow-missing-state
+            assert rc == 2 and "--allow-missing-state" in out["error"], (rc, out)
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    run_cli(cli_pre + ["--allow-missing-state", "--story-source", "nope"])
+                raise AssertionError("--story-source choices must be enforced by argparse")
+            except SystemExit as exc:
+                assert exc.code == 2, exc.code
 
             # --- patch validation + emit round-trips (findings F1–F6) ---------- #
             def cli_json(payload, *argv0):
@@ -1628,7 +1890,14 @@ def main(argv=None) -> int:
         overwrite_confirmed={"action": "store_true"},
         allow_missing_state={"action": "store_true",
                              "help": "pre-init hard-stop (Phase 0): render with a "
-                                     "default state instead of erroring"})
+                                     "default state instead of erroring"},
+        story_source={"choices": list(STORY_SOURCES),
+                      "help": "with --allow-missing-state ONLY: seed the default state's "
+                              "story source (stories = a bmad-spec spec folder)"},
+        story_id={"help": "with --allow-missing-state ONLY: seed the stories.yaml story id "
+                          "so the header reads '(spec {slug}, story {id})'"},
+        spec_folder={"help": "with --allow-missing-state ONLY: seed the spec folder the "
+                             "spec slug is derived from"})
 
     args = parser.parse_args(argv)
     if args.self_test:
@@ -1651,7 +1920,8 @@ def main(argv=None) -> int:
         else:  # report-section
             result = cmd_report_section(Path(args.report_file), Path(args.state_file),
                                         payload, args.overwrite_confirmed,
-                                        args.allow_missing_state, args.epic)
+                                        args.allow_missing_state, args.epic,
+                                        args.story_source, args.story_id, args.spec_folder)
     except ContractError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1

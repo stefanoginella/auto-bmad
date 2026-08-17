@@ -123,12 +123,39 @@ CONTRACT_OWNERS = {
             "rule (any high patch, or 3×medium + 1×low ≥ 5), the `deferred:` item shape "
             "(summary/evidence/location/severity), the `## Review Triage Log` entry format, and the "
             "Finalize commit rule (commit reviewed-diff files + spec, verify clean, never push, HALT "
-            "`done`)"
+            "`done`); AND the folder+id dispatch auto-bmad's stories mode rides on — step-01 takes a "
+            "spec folder + a story id (never a spec path; the step-01 frontmatter slots "
+            "`spec_folder:` / `story_id:` are preflight's capability probe), reads that id's entry in "
+            "`{spec_folder}/stories.yaml`, matches `stories/{id}-*.md` by id prefix (0 ⇒ plan a new "
+            "story file, 1 ⇒ route by ITS frontmatter status, >1 ⇒ HALT), and halts with "
+            "`no stories.yaml found` / `story id not found in stories.yaml` / `ambiguous story file "
+            "match` / `no epic spec found` / `story already blocked` / `unrecognized status in "
+            "existing story file`; workflow.md write-back is id-keyed (always lands at "
+            "`stories/{id}-*.md`, incl. `{id}-unresolved.md` / `{id}-ambiguous.md`; the "
+            "implementation-artifacts fallback is never used under folder+id) and one invocation "
+            "advances exactly ONE story, never the next one"
         ),
-        "parsers": ["scripts/story_plan.py (--spec / --find-spec)", "scripts/state_plan.py",
+        "parsers": ["scripts/story_plan.py (--spec / --find-spec / --stories)", "scripts/state_plan.py",
+                    "scripts/preflight.py (skills.build_auto_folder_id)",
                     "scripts/deferred_ledger.py (harvest)", "scripts/build_auto_custom.py",
                     "assets/bmad-custom/bmad-build-auto.toml", "references/delegation.md",
-                    "references/pipeline.md"],
+                    "references/pipeline.md", "references/stories-mode.md"],
+    },
+    "bmad-spec": {
+        "tier": "critical",
+        "contract": (
+            "the spec-folder layout + stories.yaml schema auto-bmad's stories mode consumes: "
+            "`{output_folder}/specs/spec-{slug}/` holding `SPEC.md` (frontmatter `title`, a "
+            "`companions:` list) with the companion files beside it, and the OPTIONAL `stories.yaml` "
+            "sibling (never itself listed under `companions:`) written by the "
+            "\"break this into stories\" route; `assets/stories-schema.md` = an ordered top-level "
+            "list of `{id, title, description, spec_checkpoint?, done_checkpoint?, invoke_dev_with?}` "
+            "with the validity rules auto-bmad relies on — NO `status` field ever (the story file "
+            "owns status), ids are quoted strings that are unique AND prefix-free (so "
+            "`stories/<id>-*.md` pins exactly one file), and list order IS execution order"
+        ),
+        "parsers": ["scripts/story_plan.py (--stories / --resolve --spec-folder)",
+                    "references/stories-mode.md", "references/delegation.md"],
     },
     "bmad-sprint-planning": {
         "tier": "critical",
@@ -150,10 +177,15 @@ CONTRACT_OWNERS = {
             "`-H <epic>` headless invocation; the retro document's frontmatter `verdict` "
             "(accepted | accepted-with-open-items | rejected — the gate auto-bmad reads with "
             "`story_plan.py --retro-verdict`); `sprint_status.py update` — action_items shape "
-            "(id/action/owner/status open|in-progress|done/ref) and the retro key flip to `done`"
+            "(id/action/owner/status open|in-progress|done/ref) and the retro key flip to `done`; "
+            "AND its stories mode — a named spec FOLDER argument selects it (headless requires the "
+            "explicit folder), the doc is written to the fixed `{spec-folder}/RETROSPECTIVE.md`, its "
+            "frontmatter carries `verdict` WITHOUT an `epic` field, and no `sprint_status.py` call is "
+            "made (pending stories come from stories.yaml order + each story file's status)"
         ),
-        "parsers": ["scripts/story_plan.py (--retro-verdict)", "references/delegation.md (retrospective)",
-                    "references/pipeline.md (Phase 8.5)"],
+        "parsers": ["scripts/story_plan.py (--retro-verdict [--spec-folder])",
+                    "references/delegation.md (retrospective)",
+                    "references/pipeline.md (Phase 8.5)", "references/stories-mode.md"],
     },
     "bmad-project-context": {
         "tier": "low",
@@ -964,9 +996,21 @@ def _self_test() -> int:
           not any(k.startswith("bmad-review-") for k in CONTRACT_OWNERS))
     check("owners: tiers valid + parsers listed",
           all(v["tier"] in ("critical", "low") and v["parsers"] for v in CONTRACT_OWNERS.values()))
-    check("owners: critical owners are exactly build-auto / sprint-planning / retrospective",
+    check("owners: critical owners are exactly build-auto / spec / sprint-planning / retrospective",
           {k for k, v in CONTRACT_OWNERS.items() if v["tier"] == "critical"}
-          == {"bmad-build-auto", "bmad-sprint-planning", "bmad-retrospective"})
+          == {"bmad-build-auto", "bmad-spec", "bmad-sprint-planning", "bmad-retrospective"})
+    check("owners: build-auto contract covers the folder+id dispatch (stories mode)",
+          all(tok in CONTRACT_OWNERS["bmad-build-auto"]["contract"]
+              for tok in ("stories.yaml", "story id not found in stories.yaml",
+                          "ambiguous story file match", "story already blocked",
+                          "unrecognized status in existing story file", "spec_folder:", "story_id:")))
+    check("owners: bmad-spec contract names the schema fields + validity rules",
+          all(tok in CONTRACT_OWNERS["bmad-spec"]["contract"]
+              for tok in ("stories-schema.md", "spec_checkpoint", "done_checkpoint",
+                          "invoke_dev_with", "prefix-free", "SPEC.md", "companions:")))
+    check("owners: retrospective contract covers stories mode",
+          all(tok in CONTRACT_OWNERS["bmad-retrospective"]["contract"]
+              for tok in ("RETROSPECTIVE.md", "sprint_status.py")))
     check("owners: build-auto contract names the placeholders + halt lines",
           all(tok in CONTRACT_OWNERS["bmad-build-auto"]["contract"]
               for tok in ("{diff_output}", "{diff_file}", "{claims_file}", "{verbatim_intent}",

@@ -109,6 +109,27 @@ Encoded rules (the normative definitions live in the reference docs / spec §1):
   ``sprint_plan_script`` = the first ``<skills-dir>/bmad-sprint-planning/scripts/sprint_plan.py``
   in ``--skills-dirs`` order (only probed when ``--skills-dirs`` is given); ``null``
   ⇒ hard-stop (suppressed when ``bmad-sprint-planning`` itself is already reported missing).
+  ``build_auto_folder_id`` (P13) = does the installed build-auto support folder+id
+  dispatch — ``true`` when the first ``<skills-dir>/bmad-build-auto/step-01-clarify-and-route.md``
+  (same lookup order) has BOTH ``spec_folder:`` and ``story_id:`` in its leading
+  frontmatter, ``false`` when it has neither/one, ``null`` when no step-01 file was
+  found (or it was unreadable); ``build_auto_step01`` carries that file's path.
+* **story source** (``--story-source sprint|stories``, default ``sprint``): stories mode
+  is a ``bmad-spec`` spec folder (``SPEC.md`` + ``stories.yaml`` + ``stories/{id}-*.md``)
+  instead of ``sprint-status.yaml``. It changes exactly three verdicts:
+  - a missing ``sprint_plan.py`` — or a missing ``bmad-sprint-planning`` passed in
+    ``--require-skills`` — is a **warning**, never a hard-stop (nothing writes a sprint
+    status in stories mode);
+  - ``build_auto_folder_id`` other than ``true`` (only when ``--skills-dirs`` is given —
+    the probe needs them, like ``sprint_plan_script``) ⇒ hard-stop ``bmad-build-auto (<path or
+    'installed skill'>) has no folder+id dispatch (no spec_folder/story_id in step-01
+    frontmatter) — update BMAD to >= 6.11.0`` (in sprint mode the same probe is reported
+    and never stops);
+  - ``--spec-folder DIR`` (optional, stories mode only) ⇒ P14: ``DIR`` must be a directory
+    holding ``stories.yaml`` AND ``SPEC.md``, one hard-stop reason each (the stories.yaml
+    CONTENT is never read here — that is ``story_plan.py``'s job).
+  The echo block is ``stories`` (always present in a full call): ``{"story_source",
+  "spec_folder" (abs|null), "stories_yaml" (bool|null), "spec_md" (bool|null)}``.
 * **framework** (only with ``--detect-framework-ci``; first-run flow step 2):
   root-level ``playwright.config.*``, ``cypress.config.*``, ``jest.config.*``,
   ``vitest.config.*`` (final suffix .js/.cjs/.mjs/.ts/.cts/.mts/.json), ``pytest.ini``,
@@ -132,7 +153,9 @@ Output (every key always present; blocks not probed in this mode are ``null``)::
      "git": {"is_repo", "current_branch", "tree_clean", "dirty_files_count", "status_error",
              "base_branch", "mode", "gh_installed", "gh_authed", "github_remote"},
      "ci": {"workflows_present"},
-     "skills": {"checked", "missing", "sprint_plan_script"},
+     "skills": {"checked", "missing", "sprint_plan_script", "build_auto_folder_id",
+                "build_auto_step01"},
+     "stories": {"story_source", "spec_folder", "stories_yaml", "spec_md"},
      "framework": {"configs", "ci_present"} | null,
      "warnings": [...], "hard_stop": bool, "hard_stop_reasons": [...]}
 
@@ -141,7 +164,7 @@ Usage::
     preflight.py --project-root DIR --host claude-code|codex|opencode|other --tier subagents|inline
                  [--expected-branch NAME] [--require-skills CSV --skills-dirs CSV]
                  [--detect-framework-ci] [--tea-enabled] [--cross-model-tool codex|claude|opencode]
-                 [--cli-phases CSV]
+                 [--cli-phases CSV] [--story-source sprint|stories] [--spec-folder DIR]
     preflight.py --project-root DIR --central-config-only
     preflight.py --self-test
 
@@ -234,6 +257,22 @@ _MSG_SPRINT_PLAN_SCRIPT = (
     "bmad-sprint-planning skill has no scripts/sprint_plan.py"
     " (BMAD < 6.11? run npx bmad-method install --action update)"
 )
+_MSG_SPRINT_PLAN_SCRIPT_STORIES = (
+    "bmad-sprint-planning skill has no scripts/sprint_plan.py — not required in stories mode"
+    " (the spec folder's stories.yaml is the story source; build-auto owns the story-file status)"
+)
+_MSG_SPRINT_PLANNING_STORIES = (
+    "bmad-sprint-planning is not installed — not required in stories mode"
+    " (only the sprint-status.yaml source needs it)"
+)
+_MSG_NO_FOLDER_ID = (
+    "bmad-build-auto ({where}) has no folder+id dispatch (no spec_folder/story_id in step-01"
+    " frontmatter) — update BMAD to >= 6.11.0"
+)
+_MSG_NO_STORIES_YAML = (
+    "no stories.yaml in {folder} — run /bmad-spec \"break this into stories\" on that spec first"
+)
+_MSG_NO_SPEC_MD = "no SPEC.md in {folder} — not a bmad-spec spec folder"
 _MSG_UNKNOWN_HOST = "unknown host — nested subagents unverified"
 _MSG_INLINE = "inline tier — build-auto's subagents run at depth 1"
 _MSG_CLI_EXEMPT = (
@@ -855,11 +894,47 @@ def detect_ci(project_root: Path) -> dict:
     return {"workflows_present": present}
 
 
+def _frontmatter(text: str) -> str:
+    """The leading ``---`` … ``---`` block of a markdown file ("" when absent)."""
+    if not text.startswith("---"):
+        return ""
+    rest = text.split("\n", 1)
+    if len(rest) < 2:
+        return ""
+    body = rest[1]
+    end = re.search(r"^---\s*$", body, re.M)
+    return body[: end.start()] if end else ""
+
+
+def probe_build_auto_folder_id(skills_dirs: Sequence[Path]) -> tuple:
+    """Does the INSTALLED bmad-build-auto support folder+id dispatch (P13)?
+
+    Signal: the first ``<skills-dir>/bmad-build-auto/step-01-clarify-and-route.md``
+    (same lookup order as ``sprint_plan_script``) whose leading frontmatter carries
+    BOTH ``spec_folder:`` and ``story_id:`` — the two runtime slots the folder+id
+    route fills. Returns ``(True|False|None, path|None)``: ``None`` = the file was
+    not found (or unreadable) so the capability is unknown."""
+    for d in skills_dirs:
+        cand = d / "bmad-build-auto" / "step-01-clarify-and-route.md"
+        if not cand.is_file():
+            continue
+        path = str(cand.absolute())
+        try:
+            fm = _frontmatter(cand.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return None, path
+        ok = bool(re.search(r"^\s*spec_folder\s*:", fm, re.M)) and \
+            bool(re.search(r"^\s*story_id\s*:", fm, re.M))
+        return ok, path
+    return None, None
+
+
 def check_skills(required: Sequence[str], skills_dirs: Sequence[Path]) -> dict:
     """A skill is present iff a directory of that name exists under ANY skills dir;
     ``sprint_plan_script`` = the first ``bmad-sprint-planning/scripts/sprint_plan.py``
     in ``skills_dirs`` order, as an absolute path (``null`` when no dirs are given
-    or none has it)."""
+    or none has it); ``build_auto_folder_id`` / ``build_auto_step01`` = the
+    folder+id capability probe (``probe_build_auto_folder_id``)."""
     checked = [s for s in required if s]
     missing = [
         name for name in checked
@@ -871,12 +946,18 @@ def check_skills(required: Sequence[str], skills_dirs: Sequence[Path]) -> dict:
         if cand.is_file():
             script = str(cand.absolute())
             break
-    return {"checked": checked, "missing": missing, "sprint_plan_script": script}
+    folder_id, step01 = probe_build_auto_folder_id(skills_dirs)
+    return {"checked": checked, "missing": missing, "sprint_plan_script": script,
+            "build_auto_folder_id": folder_id, "build_auto_step01": step01}
 
 
-def classify_skills_hard_stop(skills: dict, skills_dirs_given: bool) -> list[str]:
+def classify_skills_hard_stop(skills: dict, skills_dirs_given: bool,
+                              story_source: str = "sprint") -> list[str]:
+    stories = story_source == "stories"
     reasons: list[str] = []
     for name in skills["missing"]:
+        if stories and name == "bmad-sprint-planning":
+            continue                      # stories mode: warned about, never required
         if name in _BMAD_611_SKILLS:
             hint = " (BMAD < 6.11? run npx bmad-method install --action update)"
         elif name.startswith("bmad-testarch-"):
@@ -884,9 +965,49 @@ def classify_skills_hard_stop(skills: dict, skills_dirs_given: bool) -> list[str
         else:
             hint = " — install it: npx bmad-method install --modules bmm"
         reasons.append(f"required skill missing: {name}{hint}")
-    if skills_dirs_given and skills["sprint_plan_script"] is None and "bmad-sprint-planning" not in skills["missing"]:
+    if (not stories and skills_dirs_given and skills["sprint_plan_script"] is None
+            and "bmad-sprint-planning" not in skills["missing"]):
         reasons.append(_MSG_SPRINT_PLAN_SCRIPT)
+    if stories and skills_dirs_given and not skills.get("build_auto_folder_id"):
+        # Stories mode dispatches build-auto by spec folder + story id; an older
+        # build-auto silently falls back to spec-path routing, which would plan the
+        # wrong file. Unknown (probe found no step-01) is treated as unsupported.
+        where = skills.get("build_auto_step01") or "installed skill"
+        reasons.append(_MSG_NO_FOLDER_ID.format(where=where))
     return reasons
+
+
+def classify_skills_warnings(skills: dict, skills_dirs_given: bool,
+                             story_source: str = "sprint") -> list[str]:
+    """Stories-mode downgrades of the sprint-only requirements (warn, never stop)."""
+    if story_source != "stories" or not skills_dirs_given:
+        return []
+    warnings: list[str] = []
+    if "bmad-sprint-planning" in skills["missing"]:
+        warnings.append(_MSG_SPRINT_PLANNING_STORIES)
+    elif skills["sprint_plan_script"] is None:
+        warnings.append(_MSG_SPRINT_PLAN_SCRIPT_STORIES)
+    return warnings
+
+
+def check_spec_folder(spec_folder: Path | None) -> tuple:
+    """Stories-mode spec-folder shape (P14) — existence only; the CONTENT of
+    ``stories.yaml`` is ``story_plan.py``'s business, never parsed here.
+    Returns ``(block, reasons)``; ``block`` is ``null`` when no folder was given."""
+    if spec_folder is None:
+        return None, []
+    folder = spec_folder.absolute()
+    block = {"spec_folder": str(folder), "stories_yaml": False, "spec_md": False}
+    if not folder.is_dir():
+        return block, [f"--spec-folder is not a directory: {folder}"]
+    block["stories_yaml"] = (folder / "stories.yaml").is_file()
+    block["spec_md"] = (folder / "SPEC.md").is_file()
+    reasons = []
+    if not block["stories_yaml"]:
+        reasons.append(_MSG_NO_STORIES_YAML.format(folder=folder))
+    if not block["spec_md"]:
+        reasons.append(_MSG_NO_SPEC_MD.format(folder=folder))
+    return block, reasons
 
 
 def detect_framework(project_root: Path, ci_present: bool) -> dict:
@@ -917,8 +1038,10 @@ def detect_framework(project_root: Path, ci_present: bool) -> dict:
 
 _NULL_BLOCKS = (
     "legacy_configs", "tea_config", "uv", "python311", "agents_md", "nesting",
-    "cross_model", "git", "ci", "skills", "framework",
+    "cross_model", "git", "ci", "skills", "stories", "framework",
 )
+
+_STORY_SOURCES = ("sprint", "stories")
 
 
 def preflight(
@@ -934,6 +1057,8 @@ def preflight(
     tea_enabled: bool = False,
     cross_model_tool: str | None = None,
     cli_phases: Sequence[str] = (),
+    story_source: str = "sprint",
+    spec_folder: Path | None = None,
     run: Runner | None = None,
     which: Which | None = None,
     env: Mapping[str, str] | None = None,
@@ -995,8 +1120,14 @@ def preflight(
     git = classify_git(run)
     reasons.extend(classify_git_hard_stop(git, expected_branch))
     ci = detect_ci(project_root)
+    story_source = story_source if story_source in _STORY_SOURCES else "sprint"
     skills = check_skills(require_skills, skills_dirs)
-    reasons.extend(classify_skills_hard_stop(skills, bool(skills_dirs)))
+    reasons.extend(classify_skills_hard_stop(skills, bool(skills_dirs), story_source))
+    warnings.extend(classify_skills_warnings(skills, bool(skills_dirs), story_source))
+    stories_block, stories_reasons = check_spec_folder(spec_folder)
+    reasons.extend(stories_reasons)
+    stories = {"story_source": story_source,
+               **(stories_block or {"spec_folder": None, "stories_yaml": None, "spec_md": None})}
 
     result.update({
         "legacy_configs": legacy,
@@ -1009,6 +1140,7 @@ def preflight(
         "git": git,
         "ci": ci,
         "skills": skills,
+        "stories": stories,
         "framework": detect_framework(project_root, ci["workflows_present"]) if detect_framework_ci else None,
         "warnings": warnings,
         "hard_stop": bool(reasons),
@@ -1204,6 +1336,33 @@ def _run_self_test() -> int:
     r = classify_skills_hard_stop({"checked": ["bmad-sprint-planning"], "missing": ["bmad-sprint-planning"], "sprint_plan_script": None}, True)
     assert len(r) == 1 and r[0].startswith("required skill missing: bmad-sprint-planning"), r
     assert classify_skills_hard_stop({"checked": [], "missing": [], "sprint_plan_script": None}, False) == []
+
+    # --- skills rules under --story-source stories ---
+    # sprint_plan.py / bmad-sprint-planning are warnings, never stops…
+    sk = {"checked": [], "missing": [], "sprint_plan_script": None, "build_auto_folder_id": True}
+    assert classify_skills_hard_stop(sk, True, "stories") == []
+    assert classify_skills_warnings(sk, True, "stories") == [_MSG_SPRINT_PLAN_SCRIPT_STORIES]
+    assert classify_skills_warnings(sk, True, "sprint") == [], "sprint mode never warns here"
+    assert classify_skills_warnings(sk, False, "stories") == [], "no skills dirs -> nothing probed"
+    sk_missing = {"checked": ["bmad-sprint-planning", "bmad-retrospective"],
+                  "missing": ["bmad-sprint-planning", "bmad-retrospective"],
+                  "sprint_plan_script": None, "build_auto_folder_id": True}
+    r = classify_skills_hard_stop(sk_missing, True, "stories")
+    assert r == ["required skill missing: bmad-retrospective — install it: npx bmad-method install --modules bmm"], r
+    assert classify_skills_warnings(sk_missing, True, "stories") == [_MSG_SPRINT_PLANNING_STORIES]
+    # …and the folder+id probe becomes the hard-stop (false AND null; path or a fallback label).
+    for value, where in ((False, "/skills/bmad-build-auto/step-01-clarify-and-route.md"),
+                         (None, None)):
+        sk2 = {"checked": [], "missing": [], "sprint_plan_script": "/x",
+               "build_auto_folder_id": value, "build_auto_step01": where}
+        r = classify_skills_hard_stop(sk2, True, "stories")
+        assert r == [_MSG_NO_FOLDER_ID.format(where=where or "installed skill")], r
+        assert "update BMAD to >= 6.11.0" in r[0], r
+        assert classify_skills_hard_stop(sk2, True, "sprint") == [], "sprint mode: reported, never a stop"
+        assert classify_skills_hard_stop(sk2, False, "stories") == [], "no skills dirs -> unprobed"
+    assert classify_skills_hard_stop(
+        {"checked": [], "missing": [], "sprint_plan_script": "/x", "build_auto_folder_id": True},
+        True, "stories") == []
 
     # --- uv / python311 ---
     uv = classify_uv(_fake_runner(_UV_OK), _fake_which(["uv"]))
@@ -1524,11 +1683,55 @@ def _run_self_test() -> int:
         assert s["sprint_plan_script"] is None, s  # skill dir exists but no script (BMAD < 6.11 shape)
         (d2 / "bmad-sprint-planning" / "scripts" / "sprint_plan.py").write_text("# stub")
         s = check_skills([], [d1, d2])
-        assert s == {"checked": [], "missing": [], "sprint_plan_script": str(d2 / "bmad-sprint-planning" / "scripts" / "sprint_plan.py")}, s
+        assert s == {"checked": [], "missing": [], "build_auto_folder_id": None,
+                     "build_auto_step01": None,
+                     "sprint_plan_script": str(d2 / "bmad-sprint-planning" / "scripts" / "sprint_plan.py")}, s
         (d1 / "bmad-sprint-planning" / "scripts").mkdir(parents=True)
         (d1 / "bmad-sprint-planning" / "scripts" / "sprint_plan.py").write_text("# stub")
         assert check_skills([], [d1, d2])["sprint_plan_script"].startswith(str(d1)), "first skills dir wins"
         assert check_skills([], [])["sprint_plan_script"] is None
+
+        # build_auto_folder_id: null (no step-01) -> false (old frontmatter) -> true.
+        assert probe_build_auto_folder_id([d1, d2]) == (None, None)
+        assert probe_build_auto_folder_id([]) == (None, None)
+        step01 = d1 / "bmad-build-auto" / "step-01-clarify-and-route.md"
+        step01.write_text("---\nspec_file: ''\n---\n\n# Step 1\n", encoding="utf-8")
+        ok, path = probe_build_auto_folder_id([d1, d2])
+        assert ok is False and path == str(step01.absolute()), (ok, path)
+        assert check_skills([], [d1, d2])["build_auto_folder_id"] is False
+        step01.write_text("---\nspec_file: ''\nspec_folder: '' # set at runtime\n"
+                          "story_id: '' # set at runtime\n---\n\n# Step 1\n", encoding="utf-8")
+        assert probe_build_auto_folder_id([d1, d2])[0] is True
+        # only the LEADING frontmatter counts (a body mention is not the contract)
+        step01.write_text("---\nspec_file: ''\n---\n\nspec_folder: x\nstory_id: y\n", encoding="utf-8")
+        assert probe_build_auto_folder_id([d1, d2])[0] is False
+        # the first skills dir holding a step-01 wins, like sprint_plan_script
+        (d2 / "bmad-build-auto").mkdir(parents=True)
+        (d2 / "bmad-build-auto" / "step-01-clarify-and-route.md").write_text(
+            "---\nspec_folder: ''\nstory_id: ''\n---\n", encoding="utf-8")
+        assert probe_build_auto_folder_id([d1, d2])[0] is False, "first dir wins"
+        assert probe_build_auto_folder_id([d2, d1])[0] is True
+        step01.write_text("---\nspec_file: ''\nspec_folder: ''\nstory_id: ''\n---\n", encoding="utf-8")
+
+        # --spec-folder (P14): existence only — stories.yaml CONTENT is story_plan.py's job.
+        assert check_spec_folder(None) == (None, []), "no folder given -> null block, no reasons"
+        sfolder = root / "_bmad-output" / "specs" / "spec-digest-delivery"
+        (sfolder / "stories").mkdir(parents=True)
+        blk, rs = check_spec_folder(sfolder)
+        assert blk["spec_folder"] == str(sfolder.absolute()), blk
+        assert blk == {"spec_folder": str(sfolder.absolute()), "stories_yaml": False, "spec_md": False}
+        assert len(rs) == 2 and any("no stories.yaml in" in x for x in rs), rs
+        assert any('/bmad-spec "break this into stories"' in x for x in rs), rs
+        assert any("no SPEC.md in" in x for x in rs), rs
+        (sfolder / "stories.yaml").write_text("- id: '1'\n", encoding="utf-8")
+        blk, rs = check_spec_folder(sfolder)
+        assert blk["stories_yaml"] is True and len(rs) == 1 and "SPEC.md" in rs[0], (blk, rs)
+        (sfolder / "SPEC.md").write_text("# Digest delivery\n", encoding="utf-8")
+        blk, rs = check_spec_folder(sfolder)
+        assert blk == {"spec_folder": str(sfolder.absolute()), "stories_yaml": True, "spec_md": True}, blk
+        assert rs == [], rs
+        blk, rs = check_spec_folder(root / "no-such-spec")
+        assert blk["stories_yaml"] is False and len(rs) == 1 and "not a directory" in rs[0], (blk, rs)
 
         # framework: prefix configs + pytest markers, root-level only.
         fr = detect_framework(root, ci_present=True)
@@ -1564,7 +1767,7 @@ def _run_self_test() -> int:
         )
         assert set(res) == {
             "python", "central_config", "legacy_configs", "tea_config", "uv", "python311", "agents_md", "nesting",
-            "cross_model", "git", "ci", "skills", "framework", "warnings", "hard_stop", "hard_stop_reasons",
+            "cross_model", "git", "ci", "skills", "stories", "framework", "warnings", "hard_stop", "hard_stop_reasons",
         }, sorted(res)
         assert res["hard_stop"] is False and res["hard_stop_reasons"] == [], res["hard_stop_reasons"]
         assert res["warnings"] == [], res["warnings"]
@@ -1616,7 +1819,51 @@ def _run_self_test() -> int:
         res = preflight(root, host="other", tier="subagents", run=_fake_runner(_ALL_OK), which=_fake_which(["uv"]), env={}, home=home)
         assert res["hard_stop"] is False and f"nesting: {_MSG_UNKNOWN_HOST}" in res["warnings"], res
         # No --skills-dirs: skills block empty, sprint_plan_script null, no stop for it.
-        assert res["skills"] == {"checked": [], "missing": [], "sprint_plan_script": None}, res["skills"]
+        assert res["skills"] == {"checked": [], "missing": [], "sprint_plan_script": None,
+                                 "build_auto_folder_id": None, "build_auto_step01": None}, res["skills"]
+
+        # --- story source: sprint (default) vs stories, end to end ---
+        # Sprint mode reports the folder+id probe and never stops on it; the
+        # stories block echoes the source with a null folder.
+        res = preflight(root, host="claude-code", tier="inline", require_skills=["bmad-build-auto"],
+                        skills_dirs=[d1, d2], run=_fake_runner(_ALL_OK), which=_fake_which(["uv"]),
+                        env={}, home=home)
+        assert res["stories"] == {"story_source": "sprint", "spec_folder": None,
+                                  "stories_yaml": None, "spec_md": None}, res["stories"]
+        assert res["skills"]["build_auto_folder_id"] is True, res["skills"]
+        assert res["hard_stop"] is False, res["hard_stop_reasons"]
+        # Stories mode with a good spec folder: no stop, folder echoed absolute.
+        res = preflight(root, host="claude-code", tier="inline", require_skills=["bmad-build-auto"],
+                        skills_dirs=[d1, d2], story_source="stories", spec_folder=sfolder,
+                        run=_fake_runner(_ALL_OK), which=_fake_which(["uv"]), env={}, home=home)
+        assert res["stories"] == {"story_source": "stories", "spec_folder": str(sfolder.absolute()),
+                                  "stories_yaml": True, "spec_md": True}, res["stories"]
+        assert res["hard_stop"] is False, res["hard_stop_reasons"]
+        # …a spec folder missing stories.yaml hard-stops with the precise reason.
+        (sfolder / "stories.yaml").unlink()
+        res = preflight(root, host="claude-code", tier="inline", skills_dirs=[d1, d2],
+                        story_source="stories", spec_folder=sfolder,
+                        run=_fake_runner(_ALL_OK), which=_fake_which(["uv"]), env={}, home=home)
+        assert res["hard_stop"] is True and any("no stories.yaml in" in x for x in res["hard_stop_reasons"]), res
+        (sfolder / "stories.yaml").write_text("- id: '1'\n", encoding="utf-8")
+        # …an old build-auto hard-stops in stories mode only, and a missing
+        # sprint_plan.py is downgraded to a warning there.
+        step01.write_text("---\nspec_file: ''\n---\n", encoding="utf-8")
+        (d1 / "bmad-sprint-planning" / "scripts" / "sprint_plan.py").unlink()
+        (d2 / "bmad-sprint-planning" / "scripts" / "sprint_plan.py").unlink()
+        res = preflight(root, host="claude-code", tier="inline", skills_dirs=[d1, d2],
+                        story_source="stories", run=_fake_runner(_ALL_OK), which=_fake_which(["uv"]),
+                        env={}, home=home)
+        assert res["skills"]["build_auto_folder_id"] is False, res["skills"]
+        assert res["hard_stop"] is True and any("has no folder+id dispatch" in x for x in res["hard_stop_reasons"]), res
+        assert _MSG_SPRINT_PLAN_SCRIPT not in res["hard_stop_reasons"], res["hard_stop_reasons"]
+        assert _MSG_SPRINT_PLAN_SCRIPT_STORIES in res["warnings"], res["warnings"]
+        res = preflight(root, host="claude-code", tier="inline", skills_dirs=[d1, d2],
+                        run=_fake_runner(_ALL_OK), which=_fake_which(["uv"]), env={}, home=home)
+        assert _MSG_SPRINT_PLAN_SCRIPT in res["hard_stop_reasons"], res["hard_stop_reasons"]
+        assert not any("folder+id" in x for x in res["hard_stop_reasons"]), res["hard_stop_reasons"]
+        step01.write_text("---\nspec_folder: ''\nstory_id: ''\n---\n", encoding="utf-8")
+        (d1 / "bmad-sprint-planning" / "scripts" / "sprint_plan.py").write_text("# stub")
 
         # --- --central-config-only: null blocks + limited hard-stops ---
         res = preflight(root, central_config_only=True, run=_fake_runner({}), which=_fake_which([]), env={}, home=home)
@@ -1678,6 +1925,26 @@ def _run_self_test() -> int:
         assert rc == 2 and "--cross-model-tool" in out["message"], out
         rc, out = cli("--project-root", str(root), "--host", "codex", "--tier", "hybrid")
         assert rc == 2 and "--tier" in out["message"], out
+        # story source through argv: bad value / --spec-folder outside stories mode /
+        # a relative --spec-folder resolved against --project-root and echoed absolute.
+        rc, out = cli("--project-root", str(root), "--host", "codex", "--tier", "inline",
+                      "--story-source", "spec")
+        assert rc == 2 and "--story-source" in out["message"], out
+        rc, out = cli("--project-root", str(root), "--host", "codex", "--tier", "inline",
+                      "--spec-folder", "_bmad-output/specs/spec-x")
+        assert rc == 2 and "--spec-folder requires --story-source stories" in out["message"], out
+        rc, out = cli("--project-root", str(root), "--central-config-only",
+                      "--story-source", "stories")
+        assert rc == 2 and "story_source" in out["message"], out
+        spec_dir = root / "_bmad-output" / "specs" / "spec-x"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "stories.yaml").write_text("- id: '1'\n", encoding="utf-8")
+        (spec_dir / "SPEC.md").write_text("# X\n", encoding="utf-8")
+        rc, out = cli("--project-root", str(root), "--host", "codex", "--tier", "inline",
+                      "--story-source", "stories", "--spec-folder", "_bmad-output/specs/spec-x")
+        assert out["stories"] == {"story_source": "stories", "spec_folder": str(spec_dir),
+                                  "stories_yaml": True, "spec_md": True}, out["stories"]
+        assert not any("stories.yaml" in x or "SPEC.md" in x for x in out["hard_stop_reasons"]), out
 
     # --- real end-to-end: temp git repo via the real subprocess runner (git/gh real; uv faked) ---
     with tempfile.TemporaryDirectory() as td:
@@ -1747,6 +2014,8 @@ def main() -> int:
     parser.add_argument("--tea-enabled", action="store_true", help="Also probe _bmad/tea/config.yaml (warn only); else tea_config is null.")
     parser.add_argument("--cross-model-tool", help="code_review.cross_model_layer value (codex|claude|opencode); its binary must be on PATH.")
     parser.add_argument("--cli-phases", default="", help="CSV of delegation.cli_phases keys (both build and followup_review ⇒ nesting exempt).")
+    parser.add_argument("--story-source", default="sprint", help="Story source: sprint (default, sprint-status.yaml) | stories (a bmad-spec spec folder).")
+    parser.add_argument("--spec-folder", help="Stories mode only: the spec folder to verify (stories.yaml + SPEC.md must exist).")
     args = parser.parse_args()
 
     if args.self_test:
@@ -1762,11 +2031,17 @@ def main() -> int:
     if not project_root.is_dir():
         return usage_error(f"project root not a directory: {project_root}")
 
+    if args.story_source not in _STORY_SOURCES:
+        return usage_error(f"--story-source must be one of {list(_STORY_SOURCES)}, got {args.story_source!r}")
+    if args.spec_folder and args.story_source != "stories":
+        return usage_error("--spec-folder requires --story-source stories")
+
     if args.central_config_only:
         extras = [
-            n for n in ("host", "tier", "expected_branch", "require_skills", "skills_dirs", "cross_model_tool", "cli_phases")
+            n for n in ("host", "tier", "expected_branch", "require_skills", "skills_dirs", "cross_model_tool", "cli_phases", "spec_folder")
             if getattr(args, n)
-        ] + [n for n in ("detect_framework_ci", "tea_enabled") if getattr(args, n)]
+        ] + [n for n in ("detect_framework_ci", "tea_enabled") if getattr(args, n)] \
+            + (["story_source"] if args.story_source != "sprint" else [])
         if extras:
             return usage_error(f"--central-config-only takes no other probe options (got: {extras})")
         result = preflight(project_root, central_config_only=True)
@@ -1803,6 +2078,10 @@ def main() -> int:
         tea_enabled=args.tea_enabled,
         cross_model_tool=args.cross_model_tool or None,
         cli_phases=cli_phases,
+        story_source=args.story_source,
+        # Same rule as --skills-dirs: `~` expanded, a relative path joins the project root.
+        spec_folder=(lambda p: p if p.is_absolute() else project_root / p)(
+            Path(args.spec_folder).expanduser()) if args.spec_folder else None,
     )
     print(json.dumps(result, indent=2))
     return 1 if result["hard_stop"] else 0

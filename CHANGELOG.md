@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A `bmad-spec` spec folder is now a story source.** `stories.yaml` runs the same lane, with
+  each story's status owned by `bmad-build-auto` instead of a sprint-status write-back.
+- **`--spec <folder>` targets a spec folder; with none given it asks.** Sprint status still wins when
+  `sprint-status.yaml` exists; otherwise auto-bmad finds spec folders and confirms — never silently.
+- **`spec_checkpoint` and `done_checkpoint` now pause a run.** The first re-opens the spec-approval
+  halt, the second stops after that story lands — epic runs included.
+
 ## [0.29.0] - 2026-08-17
 
 ### Removed

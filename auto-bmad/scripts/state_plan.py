@@ -30,10 +30,22 @@ Three modes, all emitting a single JSON object on stdout:
   ``reasons`` names each firing clause. Exit 0 = verdict delivered (draft or
   not), 1 = state file missing or unreadable (non-UTF-8 / I/O error — never a
   clean verdict derived from nothing), 2 = usage errors.
+  ``--story-source stories`` (default ``sprint``) is the ONLY other input: in
+  stories mode there is no BMAD status to flip — ``bmad-build-auto`` owns the
+  story file's frontmatter status — so ``flip_bmad_status`` is forced ``false``
+  and ``reasons`` carries the note ``stories mode: no BMAD-status flip
+  (build-auto owns the story-file status)``. ``draft`` / ``clean_completion``
+  and the four clauses are unchanged, so a ``reasons`` entry is NOT the same as
+  a fired clause — read ``clauses`` for the draft predicate. The echoed
+  ``story_source`` is in the result JSON.
 
 Every scan / epic-scan record and the story-mode result also carry the state's
 top-level ``branch`` scalar (``null`` when absent) so the orchestrator can pass
-``--expected-branch`` to the resume preflight without opening the state file.
+``--expected-branch`` to the resume preflight without opening the state file,
+plus the story-source identity a resume must trust over re-detection:
+``story_source`` (``sprint``|``stories``), ``spec_folder`` and ``story_id`` —
+all three ``null`` when the state file predates stories mode (then the run is
+sprint mode, the documented default).
 
 All three modes accept ``--scope epic`` to operate on the **epic anchors** under
 ``<state-dir>/epic`` instead of the per-story files: ``--scope epic`` (scan) lists
@@ -44,7 +56,8 @@ epic anchor. The per-story scan ignores the ``epic/`` subdirectory (it lists onl
 ``*.yaml`` files), so the two scopes never collide.
 
 Dependency-free: state files are flat ``key: value`` YAML, so the few top-level
-scalars we need (``status``, ``updated_at``, ``branch``) are read line by line —
+scalars we need (``status``, ``updated_at``, ``branch``, ``story_source``,
+``spec_folder``, ``story_id``) are read line by line —
 the finalize mode additionally reads the ``blockers`` list (inline ``[]`` or
 block items) and the ``review_unverified`` / ``gate_decision`` / ``ci_status``
 scalars. In-flight ordering uses ``updated_at`` (ISO-8601, sorts
@@ -54,7 +67,8 @@ Usage:
     state_plan.py --state-dir DIR
     state_plan.py --state-dir DIR --story-key 1-3-user-auth
     state_plan.py --state-dir DIR --story-key 1-3-user-auth --finalize \\
-        [--ci-status passed|failed|timeout|none|unknown] [--no-pr-draft]
+        [--ci-status passed|failed|timeout|none|unknown] [--no-pr-draft] \\
+        [--story-source sprint|stories]
     state_plan.py --self-test
 """
 from __future__ import annotations
@@ -71,7 +85,15 @@ _SCALAR_RE = {
     "status": re.compile(r"^status:\s*(.*?)\s*(?:#.*)?$"),
     "updated_at": re.compile(r"^updated_at:\s*(.*?)\s*(?:#.*)?$"),
     "branch": re.compile(r"^branch:\s*(.*)$"),   # value may be quoted; comment-stripped quote-aware below
+    # Story-source identity (stories mode = a bmad-spec spec folder). Absent in
+    # state files written before stories mode existed ⇒ null.
+    "story_source": re.compile(r"^story_source:\s*(.*)$"),
+    "spec_folder": re.compile(r"^spec_folder:\s*(.*)$"),
+    "story_id": re.compile(r"^story_id:\s*(.*)$"),
 }
+
+# The scalars every record carries, in emission order.
+_FIELDS = ("status", "updated_at", "branch", "story_source", "spec_folder", "story_id")
 
 
 def _unquote(value: str) -> str:
@@ -82,8 +104,9 @@ def _unquote(value: str) -> str:
 
 
 def read_state_file(path: str):
-    """Return {status, updated_at, branch} read from a flat state YAML (values may be None)."""
-    fields: "dict[str, str | None]" = {"status": None, "updated_at": None, "branch": None}
+    """Return {status, updated_at, branch, story_source, spec_folder, story_id}
+    read from a flat state YAML (values may be None)."""
+    fields: "dict[str, str | None]" = {name: None for name in _FIELDS}
     try:
         with open(path, "r", encoding="utf-8") as fh:
             for raw in fh:
@@ -115,6 +138,9 @@ def _story_record(state_dir: str, filename: str):
         "done": status == "done",
         "updated_at": fields["updated_at"],
         "branch": fields["branch"],
+        "story_source": fields["story_source"],
+        "spec_folder": fields["spec_folder"],
+        "story_id": fields["story_id"],
         "file": path,
         "_mtime": mtime,  # internal sort tiebreaker; stripped before output
     }
@@ -241,7 +267,7 @@ def _scan_epics(epic_dir: str):
 def _story(state_dir: str, story_key: str):
     path = os.path.join(state_dir, story_key + ".yaml")
     exists = os.path.isfile(path)
-    fields = read_state_file(path) if exists else {"status": None, "branch": None}
+    fields = read_state_file(path) if exists else {name: None for name in _FIELDS}
     status = fields["status"]
     return {
         "mode": "story",
@@ -251,6 +277,9 @@ def _story(state_dir: str, story_key: str):
         "exists": exists,
         "status": status,
         "branch": fields["branch"],
+        "story_source": fields["story_source"],
+        "spec_folder": fields["spec_folder"],
+        "story_id": fields["story_id"],
         "resume": exists and status != "done",
     }
 
@@ -300,6 +329,12 @@ def _strip_comment(value: str) -> str:
 # sibling clauses). passed/none/unknown do NOT — `unknown` means the CI wait
 # never ran (offer_merge off, or the run disabled the merge prompt).
 _CI_FIRES = ("failed", "timeout")
+
+_STORY_SOURCES = ("sprint", "stories")
+# Stories mode (a bmad-spec spec folder): the story file's frontmatter status is
+# owned by bmad-build-auto, so there is no sprint entry to flip at Phase 9. The
+# note rides in `reasons` next to any firing clause — it never makes a PR a draft.
+_STORIES_NO_FLIP = "stories mode: no BMAD-status flip (build-auto owns the story-file status)"
 
 
 def _scalar_or_none(value: str):
@@ -384,14 +419,17 @@ def read_finalize_fields(path: str):
     return fields
 
 
-def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_draft=False):
+def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_draft=False,
+                          story_source="sprint"):
     """Evaluate the draft predicate for one story. Returns (result, exit_code):
     0 = verdict delivered (draft or not), 1 = state file missing or unreadable."""
     path = os.path.join(state_dir, story_key + ".yaml")
+    stories_mode = str(story_source or "sprint").strip().lower() == "stories"
     result = {
         "mode": "finalize",
         "state_dir": state_dir,
         "story_key": story_key,
+        "story_source": "stories" if stories_mode else "sprint",
         "file": path,
         "blockers": [],
         "blocker_count": 0,
@@ -447,6 +485,10 @@ def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_
         reasons.append("gate_decision is WAIVED (epic trace gate shipped despite coverage gaps)")
     if clauses["ci_failed_or_timeout"]:
         reasons.append(f"ci_status is '{ci}' (CI failed or timed out)")
+    if stories_mode:
+        # Not a draft clause — the story file's frontmatter status is written by
+        # bmad-build-auto, so there is nothing for the orchestrator to flip.
+        reasons.append(_STORIES_NO_FLIP)
 
     result.update(
         {
@@ -460,7 +502,7 @@ def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_
             # ships non-draft, but the completion is still caveated.
             "draft": any_clause and not no_pr_draft,
             "clean_completion": not any_clause,
-            "flip_bmad_status": not any_clause,
+            "flip_bmad_status": (not any_clause) and not stories_mode,
             "reasons": reasons,
         }
     )
@@ -589,6 +631,64 @@ def _run_self_test():
     epfin, epcode = build_finalize_result(epic_dir, "epic-1")
     check("epic finalize reads the anchor", epcode == 0 and epfin["story_key"] == "epic-1")
 
+    # ---- story-source identity on every record (scan / story / epic-scan) --- #
+    sdir2 = os.path.join(tmp, "state-stories")
+    os.makedirs(os.path.join(sdir2, "epic"))
+
+    def write2(rel, body):
+        with open(os.path.join(sdir2, rel), "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+    write2("spec-rate-limiting-3-2.yaml",
+           'story_key: spec-rate-limiting-3-2\nstory_source: stories\n'
+           'spec_folder: "/abs/out/specs/spec-rate-limiting"\nstory_id: "3-2"\n'
+           'branch: story/rate-limiting-3-2-retry\nstatus: in-progress\n'
+           'updated_at: "2026-08-17T09:00:00Z"\n')
+    write2("1-4-legacy.yaml", 'story_key: 1-4-legacy\nstatus: in-progress\nupdated_at: "2026-08-16T09:00:00Z"\n')
+    write2("2-1-sprint.yaml",
+           'story_key: 2-1-sprint\nstory_source: sprint\nspec_folder: null\nstory_id: null\n'
+           'status: done\nupdated_at: "2026-08-15T09:00:00Z"\n')
+    write2(os.path.join("epic", "spec-rate-limiting.yaml"),
+           'story_key: spec-rate-limiting\nepic_num: null\nstory_source: stories\n'
+           'spec_folder: "/abs/out/specs/spec-rate-limiting"\nstory_id: null\n'
+           'status: in-progress\nactive_story: spec-rate-limiting-3-2\n'
+           'updated_at: "2026-08-17T09:05:00Z"\n')
+
+    sscan = build_result(sdir2)
+    srec = {r["story_key"]: r for r in sscan["stories"]}
+    check("scan: stories-mode record carries story_source/spec_folder/story_id",
+          srec["spec-rate-limiting-3-2"]["story_source"] == "stories"
+          and srec["spec-rate-limiting-3-2"]["spec_folder"] == "/abs/out/specs/spec-rate-limiting"
+          and srec["spec-rate-limiting-3-2"]["story_id"] == "3-2")
+    check("scan: a pre-stories-mode state file reports all three as null",
+          srec["1-4-legacy"]["story_source"] is None
+          and srec["1-4-legacy"]["spec_folder"] is None
+          and srec["1-4-legacy"]["story_id"] is None)
+    check("scan: explicit `null` scalars read as null, sprint stays sprint",
+          srec["2-1-sprint"]["story_source"] == "sprint"
+          and srec["2-1-sprint"]["spec_folder"] is None
+          and srec["2-1-sprint"]["story_id"] is None)
+    check("scan: in_flight records carry the identity too",
+          all("story_source" in r and "spec_folder" in r and "story_id" in r
+              for r in sscan["in_flight"]))
+    sstory = build_result(sdir2, "spec-rate-limiting-3-2")
+    check("story: identity emitted",
+          sstory["story_source"] == "stories" and sstory["story_id"] == "3-2"
+          and sstory["spec_folder"] == "/abs/out/specs/spec-rate-limiting")
+    smissing = build_result(sdir2, "spec-nope-1")
+    check("story: missing state file ⇒ identity null, no KeyError",
+          smissing["exists"] is False and smissing["story_source"] is None
+          and smissing["spec_folder"] is None and smissing["story_id"] is None)
+    sep = _scan_epics(os.path.join(sdir2, "epic"))
+    check("epic-scan: anchor carries the identity",
+          sep["epics"][0]["story_source"] == "stories"
+          and sep["epics"][0]["spec_folder"] == "/abs/out/specs/spec-rate-limiting"
+          and sep["epics"][0]["story_id"] is None
+          and sep["target_active_story"] == "spec-rate-limiting-3-2")
+    json.dumps(sscan), json.dumps(sstory), json.dumps(sep)
+    import shutil as _shutil
+    _shutil.rmtree(sdir2, ignore_errors=True)
+
     # Absent epic/ subdir: no resume (first epic run).
     noepic = _scan_epics(os.path.join(tmp, "no-epic-dir"))
     check("epic-scan: absent dir no resume", noepic["state_dir_exists"] is False and noepic["resume"] is False)
@@ -632,6 +732,29 @@ def _run_self_test():
     check("finalize clean: flip_bmad_status", res["flip_bmad_status"] is True)
     check("finalize clean: no reasons", res["reasons"] == [])
     check("finalize clean: ci from state", res["ci_status"] == "passed" and res["ci_status_source"] == "state")
+    check("finalize clean: story_source echoes sprint", res["story_source"] == "sprint")
+
+    # --story-source stories: same clauses/draft/clean verdict, no BMAD-status flip.
+    res, code = build_finalize_result(fin_dir, "2-1-clean", story_source="stories")
+    check("finalize stories: exit 0", code == 0)
+    check("finalize stories: story_source echoed", res["story_source"] == "stories")
+    check("finalize stories: clean_completion unchanged", res["clean_completion"] is True)
+    check("finalize stories: draft unchanged", res["draft"] is False)
+    check("finalize stories: no clause fires", not any(res["clauses"].values()))
+    check("finalize stories: no flip", res["flip_bmad_status"] is False)
+    check("finalize stories: reason recorded", res["reasons"] == [_STORIES_NO_FLIP])
+    # …and it rides alongside a firing clause without changing draft/clean.
+    write_fin("2-1b-stories-waived", gate_decision="WAIVED")
+    res, _ = build_finalize_result(fin_dir, "2-1b-stories-waived", story_source="stories")
+    check("finalize stories + waived: draft", res["draft"] is True and res["clean_completion"] is False)
+    check("finalize stories + waived: both reasons",
+          len(res["reasons"]) == 2 and res["reasons"][-1] == _STORIES_NO_FLIP)
+    check("finalize stories + waived: no flip", res["flip_bmad_status"] is False)
+    # a spec-{slug}-{id} key is opaque to the reader (no sprint grammar anywhere)
+    write_fin("spec-digest-delivery-3-2")
+    res, code = build_finalize_result(fin_dir, "spec-digest-delivery-3-2", story_source="stories")
+    check("finalize stories key: read by exact name",
+          code == 0 and res["story_key"] == "spec-digest-delivery-3-2")
 
     # Clause 1 — blockers (block-list form, comment stripped, items counted).
     write_fin("2-2-blocked", blockers=None)
@@ -818,6 +941,7 @@ def main(argv=None):
     parser.add_argument("--finalize", action="store_true", help="evaluate the Phase 9 draft predicate / clean-completion verdict for --story-key")
     parser.add_argument("--ci-status", choices=["passed", "failed", "timeout", "none", "unknown"], help="with --finalize: the live post-CI-wait value (overrides the state file)")
     parser.add_argument("--no-pr-draft", action="store_true", help="with --finalize: the no_pr_draft flag — forces draft=false, never touches clean_completion")
+    parser.add_argument("--story-source", choices=list(_STORY_SOURCES), default="sprint", help="with --finalize: the story source — stories (a bmad-spec spec folder) forces flip_bmad_status=false")
     parser.add_argument("--self-test", action="store_true", help="run built-in fixtures and exit")
     args = parser.parse_args(argv)
 
@@ -834,11 +958,12 @@ def main(argv=None):
     if args.finalize:
         if not args.story_key:
             parser.error("--finalize requires --story-key")
-        result, code = build_finalize_result(effective_dir, args.story_key, args.ci_status, args.no_pr_draft)
+        result, code = build_finalize_result(effective_dir, args.story_key, args.ci_status,
+                                             args.no_pr_draft, args.story_source)
         print(json.dumps(result, indent=2))
         return code
-    if args.ci_status or args.no_pr_draft:
-        parser.error("--ci-status/--no-pr-draft are only valid with --finalize")
+    if args.ci_status or args.no_pr_draft or args.story_source != "sprint":
+        parser.error("--ci-status/--no-pr-draft/--story-source are only valid with --finalize")
 
     if args.scope == "epic" and not args.story_key:
         result = _scan_epics(effective_dir)

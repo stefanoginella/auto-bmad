@@ -23,7 +23,8 @@ single normative list; in short:
 - **Phase 0 probes** — `preflight.py` (git state/mode, `uv`, Python 3.11, nested-subagent
   capability, `_bmad/config.toml`, `AGENTS.md` block, required skills), the config-drift heal
   (`config_plan.py`), and the review-layers TOML sync (`build_auto_custom.py`).
-- **Sprint-status write-back around build-auto** — `story_plan.py --mark-status`: Phase 3 end →
+- **Sprint-status write-back around build-auto** (sprint mode only — in stories mode there is no
+  write-back at all: build-auto owns the story-file status) — `story_plan.py --mark-status`: Phase 3 end →
   `ready-for-dev`, Phase 5 start → `in-progress` (+ the epic lift), Phase 5 end → `review`, the
   Phase 8 pre-retro `done` flip, the Phase 9 `done` flip. Scripted, never trusted to a delegate.
 - **Phase 7 halt handling** — external-review changes are detected with a **git-only check**
@@ -90,6 +91,9 @@ route) and `state-and-resume.md` (config/profiles schema).
   - `delegation-runtime.md` — host detection, nesting, the two spawn tiers.
   - `cli-route.md` — the opt-in `cli_phases` external-CLI route (resolver, argv, launch/wait,
     result contract, cross-model layer shapes). Loaded only when `cli_phases` is non-empty.
+  - `stories-mode.md` — the `bmad-spec` spec-folder story source (`stories.yaml` folder+id
+    dispatch): route selection, naming, status mapping, per-phase + E-step deltas, checkpoints.
+    Loaded only when `story_source == stories`.
   - `tea-policy.md` — TEA risk rubric / selection.
   - `git-and-pr.md` — ownership list, branching, commits, push, PR, merge prompt.
   - `state-and-resume.md` — config/state schema, profiles, removed-keys note, resume, reports.

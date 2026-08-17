@@ -41,32 +41,6 @@ non-fit — the closed record keeps the history without re-surfacing.
   auto-bmad still has no CI-gate mode. Deferral stands; the trace gate stays a delegated
   in-tool run.
 
-### `bmad-spec` stories mode — `stories.yaml` folder+id dispatch of `bmad-build-auto`
-
-- **What it is:** `bmad-spec` (BMAD 6.11) can break a `SPEC.md` into a sibling
-  `stories.yaml` (schema in `bmad-spec/assets/stories-schema.md`: ordered entries with
-  `id` / `title` / `description` plus caller-only `spec_checkpoint` / `done_checkpoint`
-  / `invoke_dev_with`). `bmad-build-auto` step-01 accepts a **folder+id dispatch** — a
-  spec folder + a story id instead of a spec path — reads that one entry, plans
-  `{spec_folder}/stories/{id}-{slug}.md` from `SPEC.md` and its companions, and never
-  advances to another id.
-- **Why nice:** it is the story source `bmad-spec` writes for "whichever tool dispatches
-  the stories"; its checkpoint fields map onto auto-bmad's spec-approval halt and
-  per-story stop.
-- **Why deferred:** auto-bmad's story source is `sprint-status.yaml` + the epics
-  documents (`story_plan.py --resolve/--epic`, `sprint_plan.py status`), and 0.27.0
-  dispatches build-auto by intent (`Story {e}.{s} … Halt after planning.`) then by spec
-  path. `stories.yaml` has no status field and no sprint-status write-back, so adopting
-  it means a second story-source adapter, not a prompt change. The v7 spec/ticket tree
-  is still uncommitted upstream — nothing in the `6.11.1-next.14` tree; per the
-  migration plan's GitHub read on 2026-08-15 (`docs/v7-migration-plan.md`), PR #2672
-  closed unmerged.
-- **Revisit when:** the v7 spec/ticket tree becomes the primary story source (a
-  `bmad-sprint-planning` or `bmad-build-auto` change that reads `stories.yaml` as the
-  default), **or** a `bmad-build-auto` step-01 change to the folder+id contract — the
-  single-adapter design (`story_plan.py`) is meant to make that a one-module swap.
-- **First noted:** 2026-08-15 v7 migration read (BMAD `6.11.1-next.14`).
-
 ### TEA live-verification evidence (`live-verification-results.json`)
 
 - **What it is:** TEA 1.22.1 taught `bmad-testarch-trace` to read
@@ -128,6 +102,29 @@ non-fit — the closed record keeps the history without re-surfacing.
 ## Closed
 
 Shipped entries stay here as history (the compat-check no longer re-surfaces them).
+
+### `bmad-spec` stories mode — `stories.yaml` folder+id dispatch of `bmad-build-auto` — **shipped in 0.30.0**
+
+- **What it was:** `bmad-spec` (BMAD 6.11) can break a `SPEC.md` into a sibling
+  `stories.yaml` (schema in `bmad-spec/assets/stories-schema.md`: ordered entries with
+  `id` / `title` / `description` plus caller-only `spec_checkpoint` / `done_checkpoint`
+  / `invoke_dev_with`). `bmad-build-auto` step-01 accepts a **folder+id dispatch** — a
+  spec folder + a story id instead of a spec path — reads that one entry, plans
+  `{spec_folder}/stories/{id}-{slug}.md` from `SPEC.md` and its companions, and never
+  advances to another id.
+- **Why it was deferred:** auto-bmad's story source was `sprint-status.yaml` + the epics
+  documents (`story_plan.py --resolve/--epic`, `sprint_plan.py status`), and 0.27.0
+  dispatched build-auto by intent then by spec path. `stories.yaml` has no status field
+  and no sprint-status write-back, so adopting it meant a second story-source adapter,
+  not a prompt change.
+- **How it closed:** the single-adapter design paid off — `story_plan.py` gained a
+  `--spec-folder` branch (`--discover-specs` / `--resolve` / `--stories` / `--find-spec`
+  / `--retro-verdict`) with the same JSON field names, and the pipeline gained one
+  conditional reference file (`references/stories-mode.md`). auto-bmad dispatches every
+  build-auto run by folder+id, writes no status (build-auto owns the story file's), honours
+  the two checkpoint fields in per-story *and* epic runs, and retros the folder headless
+  (`{spec_folder}/RETROSPECTIVE.md`).
+- **First noted:** 2026-08-15 v7 migration read (BMAD `6.11.1-next.14`). **Closed:** 2026-08-17.
 
 ### `bmad-build-auto` native unattended dev loop — **shipped in 0.27.0**
 
