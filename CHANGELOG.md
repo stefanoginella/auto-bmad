@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **First-run setup now tells you to commit its writes before the next run.** Otherwise Phase 0's
   dirty-base-branch check hard-stopped on the files setup itself created.
+- **The review layers no longer get an empty diff on BMAD 6.11.1.** It passes a `{diff_file}` path,
+  not `{diff_output}` text; auto-bmad detects which is installed and re-renders on the upgrade.
 
 ## [0.27.2] - 2026-08-16
 

@@ -40,7 +40,9 @@ auto-bmad's review extras are **two `[[workflow.review_layers]]` tables** (`auto
 `auto-bmad-cross-model`) that `build_auto_custom.py` writes into a marker-fenced managed region of
 the project's `_bmad/custom/bmad-build-auto.toml` — build-auto runs them inside its own review step;
 the orchestrator never fans out reviewers itself. Keep `assets/bmad-custom/bmad-build-auto.toml` in
-lockstep with upstream `bmad-build-auto/customize.toml`'s layer schema (compat-check "critical").
+lockstep with upstream `bmad-build-auto/customize.toml`'s layer schema (compat-check "critical") —
+it holds one `@@VARIANT:<schema>@@` branch per upstream diff-placeholder line (`diff_output` ≤ 6.11.0,
+`diff_file` ≥ 6.11.1) and the script picks the branch the installed skill uses.
 
 The mechanics live in the reference docs — **don't restate them here**: `git-and-pr.md`
 (ownership, branching, push, PR, merge prompt), `pipeline.md` (Phase 0 probes, status write-back,
@@ -135,8 +137,9 @@ route) and `state-and-resume.md` (config/profiles schema).
     `ci_run_url` by head SHA.
   - `build_auto_custom.py` — syncs the managed review-layers region of
     `_bmad/custom/bmad-build-auto.toml` from the runtime config (`--check`/`--apply`; models baked
-    from `profiles`; whole-file `tomllib` validation; duplicate-id guard). Setup, `reprovision`,
-    Phase 0 freshness.
+    from `profiles`; the diff-placeholder variant detected from the installed
+    `bmad-build-auto/customize.toml`; whole-file `tomllib` validation; duplicate-id guard). Setup,
+    `reprovision`, Phase 0 freshness.
   - `merge-help-csv.py` — the live self-registration merge into `_bmad/_config/bmad-help.csv`
     (anti-zombie; stdlib only, no PyYAML). Called with `--target`; never
     `--legacy-dir` (it would delete the per-module file setup just wrote).

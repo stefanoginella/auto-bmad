@@ -108,7 +108,8 @@ CONTRACT_OWNERS = {
             "review_loop_iteration/followup_review_recommended/context/warnings/deferred) + the "
             "status vocabulary (draft | ready-for-dev | in-progress | in-review | done | blocked); "
             "customize.toml `[[workflow.review_layers]]` schema (id/name/instruction/when) + the "
-            "runtime placeholders {diff_output} / {verbatim_intent} / {skill-root} and the "
+            "runtime placeholders {diff_output} (<= 6.11.0) / {diff_file} + {claims_file} "
+            "(>= 6.11.1) / {verbatim_intent} / {skill-root} and the "
             "`implementation_handoff` {spec_file}; workflow.md HALT protocol (`## Auto Run Result` "
             "with `Status:` / `Blocking condition:` lines, the no-spec "
             "`bmad-build-auto-result-<slug-or-timestamp>.md` fallback, `no subagents` halt); "
@@ -968,7 +969,8 @@ def _self_test() -> int:
           == {"bmad-build-auto", "bmad-sprint-planning", "bmad-retrospective"})
     check("owners: build-auto contract names the placeholders + halt lines",
           all(tok in CONTRACT_OWNERS["bmad-build-auto"]["contract"]
-              for tok in ("{diff_output}", "{verbatim_intent}", "{skill-root}", "Auto Run Result",
+              for tok in ("{diff_output}", "{diff_file}", "{claims_file}", "{verbatim_intent}",
+                          "{skill-root}", "Auto Run Result",
                           "Halt after planning.", "followup_review_recommended", "Review Triage Log")))
     check("fallback surface = owners ∪ TEA skills",
           set(FALLBACK_SURFACE) == set(CONTRACT_OWNERS) | set(TEA_SKILLS))

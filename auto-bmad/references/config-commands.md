@@ -38,7 +38,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
    - Stamp `profiles_source_version` with the `module_version` from `{skill-root}/assets/module.yaml`.
    - **Then sync the review layers:**
      ```
-     python3 {skill-root}/scripts/build_auto_custom.py --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml --apply
+     python3 {skill-root}/scripts/build_auto_custom.py --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml --skills-dirs <the per-host csv `pipeline.md` step 3 defines, for the step-0 host> --apply
      ```
      Surface its JSON (`layers`, `warnings`; `errors` / exit 2 ⇒ report the message — nothing was written — and still stop).
    - **Then stop — do not start the pipeline this session.** Report what was configured, then the commit note below, then: "start a fresh session and run `/auto-bmad`".
@@ -106,7 +106,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
    - **Predicate true** → open an `AskUserQuestion` (the sole interactive moment):
      - **Update config to v<module> now** *(recommended)* — append the new keys/profiles/mappings and restamp `profiles_source_version`; **append-only, so every value you've set and every profile you've added is preserved**.
      - **Leave it — just previewing** — write nothing.
-   - **Update** → re-run with `--apply`; confirm concisely from the `--apply` JSON — settings (`added_setup`) and preserved customisations (`kept_setup`) render exactly as the Phase 0 "Non-blocking live echo", plus the config-check-only adds the user already saw in step 3: added profiles/mappings (`reseeded_profiles` / `reseeded_phase_profiles`) and the `version_restamped` from→to. Then run the **same post-heal review-layers freshness step Phase 0 uses**: `build_auto_custom.py --check --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml` — `needs_apply` ⇒ re-run it with `--apply` and echo the regenerated `layers`; `errors` ⇒ surface them (the sync is refused, nothing written). No agent-file step exists. Stop.
+   - **Update** → re-run with `--apply`; confirm concisely from the `--apply` JSON — settings (`added_setup`) and preserved customisations (`kept_setup`) render exactly as the Phase 0 "Non-blocking live echo", plus the config-check-only adds the user already saw in step 3: added profiles/mappings (`reseeded_profiles` / `reseeded_phase_profiles`) and the `version_restamped` from→to. Then run the **same post-heal review-layers freshness step Phase 0 uses**, minus its `--skills-dirs` (this flow detects no host — the probe falls back to its default union and reports any two-install disagreement in `warnings`): `build_auto_custom.py --check --project-root <project_root> --config <output_folder>/auto-bmad/config.yaml` — `needs_apply` ⇒ re-run it with `--apply` and echo the regenerated `layers`; `errors` ⇒ surface them (the sync is refused, nothing written). No agent-file step exists. Stop.
    - **Leave it** → show the **How to act** guidance below and stop.
 
 **How to act** (shown whenever you don't apply):
