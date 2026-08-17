@@ -21,7 +21,7 @@ profiles:
   light:                   # mechanical / classification / advisory work
     claude:
       model: sonnet
-      effort: high         # CLI route / cross-model layer only (in-tool Claude Code effort inherits the session)
+      effort: xhigh         # CLI route / cross-model layer only (in-tool Claude Code effort inherits the session)
     codex:
       model: gpt-5.6-luna
       reasoning_effort: xhigh
@@ -34,7 +34,7 @@ profiles:
       effort: high
     codex:
       model: gpt-5.6-terra
-      reasoning_effort: xhigh
+      reasoning_effort: high
     opencode:
       model: ""
       variant: ""
@@ -45,7 +45,7 @@ profiles:
       effort: high
     codex:
       model: gpt-5.6-sol
-      reasoning_effort: xhigh
+      reasoning_effort: high
     opencode:
       model: ""
       variant: ""
