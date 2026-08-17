@@ -1,9 +1,11 @@
 # Upstream capability backlog
 
 Upstream BMAD/TEA capabilities auto-bmad has **seen and deliberately deferred** —
-"nice, not needed (yet)". This is a maintainer backlog, not a changelog: nothing
-under **Open** has shipped. Each entry records *why* we passed and a concrete
-**revisit trigger** so the decision is re-examined when the ground actually shifts.
+"nice, not needed (yet)" — plus the **dual-compat debt** auto-bmad carries while an
+upstream change rides the prerelease line. This is a maintainer backlog, not a
+changelog: nothing under **Open** has shipped. Each entry records *why* we passed
+and a concrete **revisit trigger** so the decision is re-examined when the ground
+actually shifts.
 
 The `/auto-bmad-compat-check` skill consults this file in **Step 4** on every run:
 for each entry, if that run's diff touches the entry's *Revisit when* trigger, the
@@ -13,6 +15,35 @@ one under **Closed** once it ships (with a CHANGELOG note) or is judged a perman
 non-fit — the closed record keeps the history without re-surfacing.
 
 ## Open
+
+### Drop the 6.11.0/6.11.1 dual-compat branches once 6.11.1 is stable
+
+- **What it is:** auto-bmad currently carries **two** parallel branches for the same
+  contract, because each one moved in the `6.11.1-next` prerelease line while the
+  stable release is still `6.11.0` and many users install `next`:
+  1. **Triage-log vocabulary** — `story_plan.py --spec` reads BOTH `- reject: N`
+     (≤ 6.11.0) and the `- dismissed:` list (≥ 6.11.1-next.22), and
+     `last_review_pass` carries `reject`, `dismissed` and `dismissed_reasons` with
+     one of the first two always null. Five prose lines name both vocabularies
+     (`pipeline.md` ×2, `delegation.md` ×2, `state-and-resume.md`).
+  2. **Review-layer diff placeholder** — `assets/bmad-custom/bmad-build-auto.toml`
+     holds an `@@VARIANT:diff_output@@` / `@@VARIANT:diff_file@@` branch per
+     placeholder line, and `build_auto_custom.py` probes the installed
+     `bmad-build-auto/customize.toml` to pick one (`diff_output` = the default and
+     today's stable; `diff_file` + `{claims_file}` = 6.11.1-next.21+).
+- **Why it exists:** the floor is 6.11.0, so neither branch can be dropped while the
+  stable line still writes the old shape. Both are additive and fail soft.
+- **Why deferred:** collapsing either one early breaks every user on stable.
+- **Revisit when:** **6.11.1 (or later) becomes the npm `latest` stable** *and*
+  auto-bmad raises its floor past 6.11.0 (a CHANGELOG-worthy decision — see
+  `/auto-bmad-compat-check` Step 5, which never raises the floor routinely). Then:
+  delete the `reject` key + its regression fixture and simplify the five prose lines
+  to `dismissed` alone; delete the `diff_output` variant branches, `DIFF_SCHEMAS`,
+  `DEFAULT_DIFF_SCHEMA`, the `--diff-placeholder` flag and the probe, leaving
+  `{diff_file}` inline. Both are pure deletions — no behavior change for users on
+  the raised floor.
+- **First noted:** 2026-08-17 compat check (bmad-method `6.11.0` stable,
+  `6.11.1-next.23` prerelease), when `next.22` removed the `reject` category.
 
 ### `tea-test-review` CLI as a headless review runner
 

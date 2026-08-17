@@ -292,7 +292,7 @@ Renderer defaults when a key is absent: `Overrides` → `none`, `Build` → `not
 
 **Build:** <build-auto result: spec status; review_loop_iteration; deferred N (harvested to the ledger); warnings; commits by build-auto; "not run" if Phase 5 never ran>.
 
-**Review:** <follow-up passes N (profile / cli route); last pass patch/bad_spec/defer/reject counts; followup still recommended?; HITL halt outcome (continued / stopped / skipped (clean) / auto-continued (epic — no halt)); review_unverified; "skipped" if no follow-up review>.
+**Review:** <follow-up passes N (profile / cli route); last pass patch/bad_spec/defer counts + reject (≤ 6.11.0) or dismissals (≥ 6.11.1); followup still recommended?; HITL halt outcome (continued / stopped / skipped (clean) / auto-continued (epic — no halt)); review_unverified; "skipped" if no follow-up review>.
 
 **Retrospective:** <epic-end only: verdict; N open action items (listed); doc path; "(none)" otherwise>.
 

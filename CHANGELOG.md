@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Review triage counts stay readable on the BMAD 6.11.1 prerelease.** That line replaced the
+  `reject` count with a `dismissed` list; auto-bmad now reads both, so the review halt and the report
+  keep their numbers on either BMAD.
+
+### Changed
+
+- **Delegates now launch a step's subagents in one batch, not one at a time.** The old wording read
+  as a serial recipe and could stretch a build-auto review over thirteen sequential spawns.
+
 ## [0.30.0] - 2026-08-17
 
 ### Added

@@ -109,7 +109,8 @@ Modes (exactly one per call):
     context: [], warnings: [], deferred: [{summary, evidence, location,
     severity}], deferred_count}, auto_run_result: {present, status,
     blocking_condition}, last_review_pass: {date, intent_gap, bad_spec, patch,
-    defer, reject}|null, status, parse_warnings: [], error}``. ``status`` = the
+    defer, reject, dismissed, dismissed_reasons: []}|null, status,
+    parse_warnings: [], error}``. ``status`` = the
     frontmatter status (AUTHORITATIVE); on a frontmatter parse failure it falls
     back to ``^status:\\s*['"]?([a-z-]+)`` and records a ``parse_warnings``
     entry. ``auto_run_result`` is optional corroboration: ``present`` = the
@@ -124,7 +125,14 @@ Modes (exactly one per call):
     disagrees with the frontmatter adds a ``parse_warnings`` entry, never
     overrides. ``last_review_pass`` = the LAST ``### … — Review pass`` block
     under ``## Review Triage Log``; each count is the leading integer of
-    ``- <cat>: N…``; unparseable ⇒ null. Everything else under ``## Auto Run
+    ``- <cat>: N…``; unparseable ⇒ null. The last category tracks BOTH upstream
+    vocabularies, so one of the two is always null: ``reject`` (a count, BMAD
+    <= 6.11.0) and ``dismissed`` (BMAD >= 6.11.1, which replaced reject with a
+    reason per dismissal) — the latter counted from ``- dismissed: N…``, from an
+    inline ``- dismissed: <reason>``, or from the child bullets under a bare
+    ``- dismissed:`` (indented or not) up to the next triage key; a lone
+    ``- none`` child ⇒ 0. ``dismissed_reasons`` carries those child bullets
+    verbatim (``[]`` when 0/null). Everything else under ``## Auto Run
     Result`` is advisory and NOT emitted. Missing file ⇒ ``exists: false`` +
     ``error`` + exit 1; unreadable / non-UTF-8 ⇒ ``exists: true`` + ``error``
     + exit 1.
@@ -1197,7 +1205,12 @@ def parse_frontmatter(text):
 # --------------------------------------------------------------------------- #
 _H2_RE = re.compile(r"^##\s+(.*?)\s*#*\s*$")
 _REVIEW_PASS_RE = re.compile(r"^###\s+(.*?)\s*[—–-]+\s*Review pass\s*$", re.IGNORECASE)
-_COUNT_RE = re.compile(r"^\s*[-*+]\s*\**(intent_gap|bad_spec|patch|defer|reject)\**\s*:\s*\**\s*(\d+)", re.IGNORECASE)
+_COUNT_RE = re.compile(r"^\s*[-*+]\s*\**(intent_gap|bad_spec|patch|defer|reject|dismissed)\**\s*:\s*\**\s*(\d+)", re.IGNORECASE)
+# Any top-level triage key — terminates the `dismissed:` child scan below.
+_TRIAGE_KEY_RE = re.compile(
+    r"^\s*[-*+]\s*\**(intent_gap|bad_spec|patch|defer|reject|dismissed|addressed_findings)\**\s*:", re.IGNORECASE)
+_DISMISSED_RE = re.compile(r"^\s*[-*+]\s*\**dismissed\**\s*:\s*\**\s*(.*?)\s*\**\s*$", re.IGNORECASE)
+_LIST_ITEM_RE = re.compile(r"^\s*[-*+]\s+(.*\S)\s*$")
 _RESULT_STATUS_RE = re.compile(r"^\s*(?:[-*+]\s*)?\**\s*Status\s*\**\s*:\s*\**\s*(.*?)\s*\**\s*$", re.IGNORECASE)
 _RESULT_BLOCK_RE = re.compile(r"^\s*(?:[-*+]\s*)?\**\s*Blocking condition\s*\**\s*:\s*\**\s*(.*?)\s*\**\s*$", re.IGNORECASE)
 _STATUS_FALLBACK_RE = re.compile(r"^status:\s*['\"]?([a-z-]+)", re.MULTILINE)
@@ -1366,13 +1379,46 @@ def read_spec(spec_path):
         if passes:
             last = passes[-1]
             lrp = {"date": last["date"], "intent_gap": None, "bad_spec": None,
-                   "patch": None, "defer": None, "reject": None}
-            for line in last["lines"]:
+                   "patch": None, "defer": None, "reject": None,
+                   "dismissed": None, "dismissed_reasons": []}
+            lines = last["lines"]
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                i += 1
                 cm = _COUNT_RE.match(line)
-                if cm:
+                if cm:                                   # `- <cat>: N…` (incl. `- dismissed: N`)
                     cat = cm.group(1).lower()
                     if lrp[cat] is None:
                         lrp[cat] = int(cm.group(2))
+                    continue
+                dm = _DISMISSED_RE.match(line)
+                if not dm or lrp["dismissed"] is not None:
+                    continue
+                # `- dismissed:` (>= 6.11.1) — one child bullet per dismissal, or `- none`.
+                inline = dm.group(1)
+                if inline:                               # `- dismissed: none` / a one-line dismissal
+                    lrp["dismissed"] = 0 if inline.lower() in _NONE_WORDS else 1
+                    if lrp["dismissed"]:
+                        lrp["dismissed_reasons"] = [inline]
+                    continue
+                reasons = []
+                while i < len(lines):                    # children: any bullet until the next key
+                    child = lines[i]
+                    if not child.strip():
+                        i += 1
+                        continue
+                    if _TRIAGE_KEY_RE.match(child):
+                        break
+                    im = _LIST_ITEM_RE.match(child)
+                    if not im:
+                        break
+                    reasons.append(im.group(1))
+                    i += 1
+                if len(reasons) == 1 and reasons[0].lower() in _NONE_WORDS:
+                    reasons = []
+                lrp["dismissed"] = len(reasons)
+                lrp["dismissed_reasons"] = reasons
             result["last_review_pass"] = lrp
     return result
 
@@ -2868,8 +2914,34 @@ development_status:
     check("spec: deferred[1] optional fields null", d1["summary"] == "Duplicate email check is case-sensitive" and d1["location"] is None and d1["severity"] is None)
     check("spec: deferred[1] evidence with backticks/colons", d1["evidence"] == "users table has no lower(email) index; `Foo@x.io` and `foo@x.io` both insert.")
     check("spec: auto_run_result", s["auto_run_result"] == {"present": True, "status": "done", "blocking_condition": None})
-    check("spec: last review pass is the LAST block", s["last_review_pass"] == {"date": "2026-08-12", "intent_gap": 0, "bad_spec": 0, "patch": 3, "defer": 2, "reject": 1})
+    check("spec: last review pass is the LAST block", s["last_review_pass"] == {"date": "2026-08-12", "intent_gap": 0, "bad_spec": 0, "patch": 3, "defer": 2, "reject": 1, "dismissed": None, "dismissed_reasons": []})
     check("spec: no parse warnings", s["parse_warnings"] == [])
+
+    # BMAD >= 6.11.1 replaced the `reject` count with a `dismissed` list (a reason per dismissal).
+    # Both vocabularies must parse; the fixture above is the <= 6.11.0 regression guard.
+    _REJECT_LINE = "- reject: 1: (high 0, medium 0, low 1)"
+
+    def with_dismissed(rel, block):
+        return read_spec(write(rel, _SPEC_FIXTURE.replace(_REJECT_LINE, block)))
+
+    s = with_dismissed("impl/spec-9-6-dismissed.md",
+                       "- dismissed:\n  - CSRF double-check — the guard at src/auth.py:31 already rejects it\n"
+                       "  - unused import — the import is used by the type annotation")
+    lrp = s["last_review_pass"]
+    check("spec dismissed: counted from the child bullets", lrp["dismissed"] == 2 and lrp["reject"] is None)
+    check("spec dismissed: reasons captured verbatim", lrp["dismissed_reasons"][1] == "unused import — the import is used by the type annotation")
+    check("spec dismissed: the next key still parses", lrp["patch"] == 3 and lrp["defer"] == 2)
+
+    lrp = with_dismissed("impl/spec-9-7-none.md", "- dismissed:\n  - none")["last_review_pass"]
+    check("spec dismissed: lone `- none` child ⇒ 0", lrp["dismissed"] == 0 and lrp["dismissed_reasons"] == [])
+    lrp = with_dismissed("impl/spec-9-8-inline.md", "- dismissed: 2: (high 0, medium 1, low 1)")["last_review_pass"]
+    check("spec dismissed: inline count form", lrp["dismissed"] == 2 and lrp["dismissed_reasons"] == [])
+    lrp = with_dismissed("impl/spec-9-9-inline-none.md", "- **dismissed**: none")["last_review_pass"]
+    check("spec dismissed: inline none ⇒ 0", lrp["dismissed"] == 0)
+    lrp = with_dismissed("impl/spec-9-10-flat.md", "- dismissed:\n- claim refuted by the guard upstream")["last_review_pass"]
+    check("spec dismissed: unindented children still counted", lrp["dismissed"] == 1 and lrp["patch"] == 3)
+    lrp = with_dismissed("impl/spec-9-11-absent.md", "- defer: 2: (high 0, medium 1, low 1)")["last_review_pass"]
+    check("spec dismissed: absent ⇒ null, no reasons", lrp["dismissed"] is None and lrp["reject"] is None and lrp["dismissed_reasons"] == [])
 
     # Same spec, ready-for-dev after the plan halt: no result lines ⇒ nulls; frontmatter authoritative.
     rfd = _SPEC_FIXTURE.replace("status: 'done'", "status: 'ready-for-dev'").split("## Review Triage Log")[0]
