@@ -196,5 +196,5 @@ Shipped entries stay here as history (the compat-check no longer re-surfaces the
   verdict through `story_plan.py --retro-verdict`, records
   `retro.{doc,verdict,open_action_items}` in state, surfaces a `rejected` verdict in the
   report / PR body / merge prompt, and asks before the next epic starts (Phase 0 / E0
-  retro verdict gate; `skip retro-gate`).
+  retro verdict gate).
 - **First noted:** 2026-08-04 (BMAD `6.10.1-next.49`). **Closed:** 2026-08-16.

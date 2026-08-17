@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Steer a run in plain language — the fixed override vocabulary is gone.** No more
+  `start at phase N` / `stop before X` / `skip <feature>` grammar; auto-bmad reads your
+  instruction, echoes how it understood it, then runs.
+
+### Changed
+
+- **Preflight asks lost their per-run opt-outs.** The config-drift pause and the previous-epic
+  retro gate always ask; turn the merge prompt off with `git.offer_merge: false`.
+
 ## [0.28.0] - 2026-08-17
 
 ### Changed

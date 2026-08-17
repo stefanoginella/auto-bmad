@@ -95,7 +95,6 @@ route) and `state-and-resume.md` (config/profiles schema).
   - `state-and-resume.md` — config/state schema, profiles, removed-keys note, resume, reports.
   - `config-commands.md` — the config commands (first-run flow, `reset-defaults`, `config-check`)
     + the shared drift-report rendering. Loaded only for a config command or the Phase 0 pause.
-  - `overrides.md` — invocation-override vocabulary.
 - `auto-bmad/assets/profiles.yaml` — the single per-profile source (model/effort blocks + the
   `phase_profiles` map). Custom profiles (any name) are first-class: `config_plan.py`'s heal passes
   them through, a whole-block reset prunes them.

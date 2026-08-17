@@ -967,12 +967,12 @@ def _run_self_test() -> int:  # noqa: C901 — fixture-driven, intentionally exh
                 pass
 
             # --- set: merge, _append, started_at guard, done stamp ---------- #
-            cmd_set(sf, {"followup_passes": 1, "overrides": {"skip": "tea"},
+            cmd_set(sf, {"followup_passes": 1, "overrides": {"note": "dry run"},
                          "spec_path": "/abs/impl/spec-1-2-user-auth.md",
                          "_append": {"commits": ["a1b2c3d"],
                                      "open_questions": ["Should X use Y: or Z?"]}})
             st = full_state(load_state(sf))
-            assert st["overrides"] == {"start_phase": "5", "skip": "tea"}, st["overrides"]
+            assert st["overrides"] == {"start_phase": "5", "note": "dry run"}, st["overrides"]
             assert st["commits"] == ["a1b2c3d"], st["commits"]
             assert st["open_questions"] == ["Should X use Y: or Z?"], st["open_questions"]
             assert st["spec_path"] == "/abs/impl/spec-1-2-user-auth.md", st["spec_path"]

@@ -42,8 +42,8 @@ code_review:
                                     #   at first run (first of codex, claude, opencode on PATH that is not the host, else "");
                                     #   absent key => ""; NOT in config-defaults.yaml (setup answer, heal-immune)
 build:
-  spec_approval: false              # opt-in per-story HITL halt between Phase 3 (plan) and Phase 4/5 (constant default; per-run override
-                                    #   `approve spec`; never in epic mode)
+  spec_approval: false              # opt-in per-story HITL halt between Phase 3 (plan) and Phase 4/5 (constant default; a run can also
+                                    #   ask for it in its instructions; never in epic mode)
 profiles:                           # copied VERBATIM (block style) from assets/profiles.yaml at first run — model/effort ONLY, no persona
   light:                            #   strings. Shown flow-style here for brevity:
     claude: {model: sonnet, effort: high}              # claude.model = the Agent tool's per-call model; claude.effort is used ONLY by the
@@ -92,9 +92,9 @@ tea_selected: [atdd, automate]   # from triage; [] if trivial or TEA off; may al
 tea_rationale: "touches auth -> High risk"
 epic_story_count: 12             # stories under epic {e} (from sprint-status); gates the long-epic trace advisory
 stories_after_in_epic: 7         # epic stories ordered after this one (0=last); with epic_story_count, drives the trace-advisory distance gate
-completed_phases: [0, 1, 2, 3]   # phase numbers from pipeline.md; gate-false no-op phases land here too (override-window skips do NOT); Phase 8 only once all six phase8_steps markers resolve
+completed_phases: [0, 1, 2, 3]   # phase numbers from pipeline.md; gate-false no-op phases land here too (a phase this run's instructions skipped does NOT); Phase 8 only once all six phase8_steps markers resolve
 spec_path: null                  # absolute path of the story's bmad-build-auto spec (story_plan.py --find-spec after the Phase 3 halt); every later phase reads it from here
-spec_approved: false             # true once the spec-approval halt was answered Approve, or immediately when approval is not required (build.spec_approval false and no `approve spec` override); resume re-opens the halt while false and required
+spec_approved: false             # true once the spec-approval halt was answered Approve, or immediately when approval is not required (build.spec_approval false and this run did not ask for approval); resume re-opens the halt while false and required
 build:                           # last bmad-build-auto result for this story (Phase 5, refreshed by every Phase 7 pass) — from story_plan.py --spec
   status: null                   #   draft | ready-for-dev | in-progress | in-review | done | blocked | null (not yet run)
   blocking_condition: null       #   when blocked: the spec's `## Auto Run Result` `Blocking condition:` line, else the delegate's reported condition, else "(not stated)" (the frontmatter status is authoritative — pipeline.md Phase 5)
@@ -104,7 +104,7 @@ build:                           # last bmad-build-auto result for this story (P
   warnings: []                   #   spec frontmatter `warnings` (e.g. oversized, multiple-goals) — a flat list inside the map; round-trips
 followup_passes: 0               # Phase 7 follow-up build-auto review passes run (incl. external-change re-reviews)
 hitl_halt: null                  # Phase 7 halt outcome: "continued" | "stopped" | "skipped (clean)" | "auto-continued (epic — no halt)" | null (not yet reached)
-review_unverified: false         # draft-predicate clause 2: `skip code-review`, or the spec still says followup_review_recommended: true after Phase 7's last pass (incl. followup: never) -> Phase 9 opens the PR as a draft
+review_unverified: false         # draft-predicate clause 2: this run skipped the follow-up review, or the spec still says followup_review_recommended: true after Phase 7's last pass (incl. followup: never) -> Phase 9 opens the PR as a draft
 story_trace: null                # Phase 7 tail trace advisory: {verdict: PASS|CONCERNS|FAIL, uncovered: [..], ran: true}; non-null = done (resume marker); verdict is delegate-derived from the skill's coverage numbers — advisory only, never blocks/drafts
 commits: [a1b2c3d, e4f5g6h]      # orchestrator commits (sha-lag rule) + build-auto's own (git log <head_before>..HEAD around every build-auto invocation — git-and-pr.md → "commits[]")
 phase8_steps:                    # per-sub-step epic-end resume markers, recorded in each sub-step's folded state write:
@@ -132,7 +132,8 @@ branch_deleted: false            # true if --delete-branch was used in the succe
 open_questions: []
 deferred_work: []
 blockers: []                     # each: short human-action description; a blocked phase's entries are removed when that phase completes on resume ("Blockers clear on resume" below)
-overrides: {}                    # this run's normalized invocation overrides (overrides.md); {} if none
+overrides: {}                    # free-form record of this run's instructions (SKILL.md -> Run instructions) plus orchestrator-set
+                                 #   entry markers (e.g. start_phase, no_pr_draft); {} if none
 constraints: []                  # caller-supplied constraints carried in via invocation (e.g. exact-string requirements); [] if none
 ```
 
@@ -155,7 +156,7 @@ Meaningful reused fields:
 - `completed_phases` — the epic **E-steps** as ints (`E0→0`, `E1→1`, `E2→2`, `E5→5`, `E8a→81`, `E8b→82`, `E_final→9`).
 - `gate_decision` / `gate_iterations` — epic-end trace gate.
 - `deferred_work_archived`.
-- `review_unverified` — aggregated from the landed stories (any story's `review_unverified: true`, or the `skip code-review` override); drives the epic PR draft predicate.
+- `review_unverified` — aggregated from the landed stories (any story's `review_unverified: true`, or a run that skipped the follow-up review); drives the epic PR draft predicate.
 - `retro` — the E8b retrospective block (`doc` / `verdict` / `open_action_items`), same shape as per story.
 - `bmad_status_flipped_at` — `82` (E8b pre-retro batch flip) | `9` (E_final) | null.
 - `pr_url` / `ci_run_url` / `ci_status`.
@@ -173,6 +174,8 @@ Plus net-new epic fields that ride as **preserved extras** — not in the per-st
 Ownership split (full flow: `epic-pipeline.md`): the per-story `state/{key}.yaml` files still exist (one per story the loop touches) and own intra-story resume; the anchor owns *which story / which E-step*.
 
 ## Target selection & resume logic
+`--story` and `epic` are mutually exclusive — both in one invocation ⇒ hard-stop `` `--story` picks one story; `epic` runs a whole epic — pick one ``.
+
 An explicit `--story <arg>` overrides the precedence below and targets that story directly: `story_plan.py --resolve <arg> --sprint-status <impl>/sprint-status.yaml --planning-dir <planning>`; `hard_stop` ⇒ surface the reason (not found, or ambiguous with its `candidates`) and stop.
 
 No-arg `/auto-bmad` chooses the target story with this precedence:
@@ -207,11 +210,14 @@ python3 {skill-root}/scripts/state_plan.py --state-dir {output_folder}/auto-bmad
   - `backlog` ⇒ start fresh.
   - `ready-for-dev` ⇒ start fresh; Phase 3 first probes `story_plan.py --find-spec` (a spec may pre-exist from a bare `/bmad-build-auto` run) and routes by its status — the resume matrix in `pipeline.md` P3.2.
   - **`review` or `in-progress` with NO state file** means the work happened outside auto-bmad (a hand-driven/brownfield story, or a lost state dir) — the full pipeline would re-plan and re-implement an already-built story. **ASK the user** (`AskUserQuestion`):
-    - **Enter at the matching phase** *(recommended — `in-progress` ⇒ Phase 5 Build (needs `--find-spec` to find the spec; hard-stop otherwise), `review` ⇒ Phase 7 follow-up review (spec must be `done`; else Phase 5) — entering Phase 7 with no Phase 5 result seeds `build.*` from `story_plan.py --spec <spec_path>` and runs ONE pass regardless of the recommendation gate, `skip code-review` still wins (`pipeline.md` Phase 7); first validate that phase's `start_phase` prerequisites per `overrides.md`, hard-stop if they fail)*.
+    - **Enter at the matching phase** *(recommended)* — `in-progress` ⇒ Phase 5 Build, `review` ⇒ Phase 7 follow-up review. **Validate the entry first and hard-stop with a precise message if it fails** (read spec facts only through `story_plan.py`; never open the spec yourself):
+      - **Phase 5** — the story's build-auto spec must exist at `ready-for-dev` or later (never `draft`/`blocked`): `python3 {skill-root}/scripts/story_plan.py --find-spec --impl-dir <impl> --story-key {key} --sprint-status <impl>/sprint-status.yaml` (`found: false` ⇒ hard-stop; `ambiguous: true` ⇒ hard-stop listing `candidates`); record `spec_path` in state.
+      - **Phase 7** — same spec requirement, plus the spec's `status` (`--spec <spec_path>`) is `done` and the sprint entry is `review` (`--resolve` → `current_status`); a `review` entry whose spec is not `done` enters at Phase 5 instead.
+      - Entering Phase 7 with no Phase 5 result seeds `build.*` from `story_plan.py --spec <spec_path>` and runs ONE pass regardless of the recommendation gate; an instruction to skip the follow-up review still wins (`pipeline.md` Phase 7).
     - **Run the full pipeline anyway** (a deliberate redo).
     - **Stop**.
-    - Record the chosen entry as `start_phase` in `overrides`.
-  - **Sanctioned regress paths** — the ONLY places the orchestrator passes `story_plan.py --mark-status … --allow-regress`: "Run the full pipeline anyway" for an `in-progress`/`review` story (Phase 3 → `ready-for-dev`, Phase 5 → `in-progress`); entering Phase 5 for a `review` story whose spec is not `done`; a confirmed full re-run of a `done` story (below); a `start_phase` override that re-enters a phase whose target status is below the entry's current one. Any other `refusing to regress` exit is a hard-stop (the entry moved outside auto-bmad — surface the message).
+    - Record the chosen entry as `start_phase` in the state's `overrides` map (an orchestrator-set entry marker, not a user instruction).
+  - **Sanctioned regress paths** — the ONLY places the orchestrator passes `story_plan.py --mark-status … --allow-regress`: "Run the full pipeline anyway" for an `in-progress`/`review` story (Phase 3 → `ready-for-dev`, Phase 5 → `in-progress`); entering Phase 5 for a `review` story whose spec is not `done`; a confirmed full re-run of a `done` story (below); an entry that re-enters a phase whose target status is below the entry's current one. Any other `refusing to regress` exit is a hard-stop (the entry moved outside auto-bmad — surface the message).
 - State `status: done` for the target (a completed run) → never redo silently: print the recorded report tail + `pr_url` and stop.
   - A clean completion flips the sprint entry to `done` at Phase 8 (pre-retro, last story) or Phase 9, so the picker moves on; a **caveated** one deliberately stays at `review`, so the picker re-surfaces it.
   - On a **no-arg** run this is the caveated case — the story sits at `review` (draft PR / blocker / waived gate / CI red), so the picker re-recommends it on every bare `/auto-bmad`. The stop text names the way forward explicitly: (1) resolve the recorded caveat, then flip the entry (`/auto-bmad --story {key}` re-opens Phase 9 only when the caveat is cleared, else it prints the same stop); (2) work another story: `/auto-bmad --story <next>` where `<next>` = the first `ready-for-dev`/`backlog` key after this one from `story_plan.py --epic {e}`, or, when the epic has none, "epic {e} has no unstarted stories — pick a key with `/auto-bmad --story <key>` or start the next epic with `/auto-bmad epic --epic <N>`". (`SKILL.md` lists this under not-silent stops.)
@@ -223,13 +229,13 @@ Draft predicate: computed by `state_plan.py --finalize` (Phase 9); the four clau
 
 ## reports/{key}.md
 The per-story report is a **log**, not a single overwritten document.
-- It carries only the **story-level** outputs that aren't recorded elsewhere — overrides, TEA outcomes, open questions, deferred work, blockers, next-story preview.
+- It carries only the **story-level** outputs that aren't recorded elsewhere — this run's instructions, TEA outcomes, open questions, deferred work, blockers, next-story preview.
 - The finalization **artifacts** (PR URL, CI run link, merge method + branch-deleted state, BMAD-status-flip outcome) are **chat-only**, so the file is written **once** pre-push and never re-touched after PR/CI/merge resolve.
 - The one-line **disposition** is NOT chat-only: it belongs in the `Pipeline status` line and covers clean / caveated / halted, plus a draft's summary reason.
 - Clean path: written + committed in **Phase 9 before push** (`docs(story-{e}-{s}): pipeline report`) so it ships in the PR diff (`pipeline.md` Phase 9; `git-and-pr.md` → "Ownership"). Any path that didn't reach that pre-push write gets the `SKILL.md` Step 3 fallback — same content, no commit.
 - Each run (first completion OR resume) **appends** a new `## Report — <ISO timestamp>` section via `state_update.py report-section` — the script never overwrites existing sections.
 - **Each section is a session delta, not a cumulative rollup** — `Phases run` / `Skipped` cover this session alone; a resume carries a `Continues:` back-reference. Don't re-derive an earlier (possibly cross-tool) run's TEA counts or review tally into a later section.
-- **Tag the `## Report` heading with this section's terminal disposition** — read the last tag to know where the story stands. Closed vocabulary: `(final)` (clean, BMAD status flipped `done`), `(final — caveated)` (finalized but left at `review`: draft PR / blocker / waived gate / CI red), `(halted — <reason>)` for a stop before Phase 9 (`needs-human`, `override stop_before: <phase>`, `override stop_after: <phase>` — the override tokens spelled as in `overrides.md`). Lineage is not in the tag — a prior section plus the `Continues:` line already mark a resume. (A clause-4 caveat — CI red/timeout — resolves only *after* the pre-push write, so it shows up in the chat report and in a later resume section's tag, never in the section written before push.)
+- **Tag the `## Report` heading with this section's terminal disposition** — read the last tag to know where the story stands. Closed vocabulary: `(final)` (clean, BMAD status flipped `done`), `(final — caveated)` (finalized but left at `review`: draft PR / blocker / waived gate / CI red), `(halted — <reason>)` for a stop before Phase 9 (`needs-human`, or `stopped: <the run instruction that ended it>` — quote the instruction as the user gave it). Lineage is not in the tag — a prior section plus the `Continues:` line already mark a resume. (A clause-4 caveat — CI red/timeout — resolves only *after* the pre-push write, so it shows up in the chat report and in a later resume section's tag, never in the section written before push.)
 - The **only** overwrite is a deliberate full re-run of an already-`done` story, after explicit user confirmation ("overwrite the existing report log for {key}?") — only then pass `--overwrite-confirmed` (without the flag the script always appends); if declined, append instead.
 - **Epic mode** writes ONE epic report — `reports/epic-{e}.md`, via `state_update.py report-section --epic` (the epic-rollup template + its own `EPIC_REPORT_PAYLOAD_KEYS` allowlist): epic header, the per-story rollup, the skipped stories, the epic-gate + TEA outcomes, the retrospective verdict, and the aggregated open-questions / deferred checklist. It replaces the per-story reports, committed once pre-push as `docs(epic-{e}): pipeline report`. Same append + disposition-tag rules as above (`epic-pipeline.md` E_final).
   **`--json` payload keys (exact names — unknown keys are REJECTED):** `disposition_tag`, `pipeline_status`, `continues`, `epic_summary`, `story_rollup` (list — one line per landed story: build status / review passes / deferred / trace), `stories_skipped` (list — one line per story with its reason: `already done` or the E0 skip note), `epic_gate`, `tea`, `retro` (verdict + open action items + doc path), `overrides`, `open_questions` (list), `deferred_work` (list) + `deferred_archived_note`, `needs_human` (list), `next` (includes the `/bmad-project-context refresh` recommendation), `head_sha`.
@@ -254,14 +260,14 @@ Renderer defaults when a key is absent: `Overrides` → `none`, `Build` → `not
 **Spec:** `<spec_path>` (from state; `(none)` before Phase 3)
 **Branch:** `<branch>` (HEAD `<short-sha>`).
 **Pipeline status:** <one-line summary, e.g. ✅ clean completion / halted at Phase 5 (needs-human: build-auto blocked) / draft (CI red)>.
-**Continues:** <on a resume, the prior section's ISO timestamp + its tag, e.g. `2026-05-29T15:05:06Z (halted — override stop_before: 7)`; `(none — first run)` on a first run — keep the line either way, like every other heading>.
+**Continues:** <on a resume, the prior section's ISO timestamp + its tag, e.g. `2026-05-29T15:05:06Z (halted — stopped: stop before the review)`; `(none — first run)` on a first run — keep the line either way, like every other heading>.
 
 **Timing:** started <ISO>; completed <ISO, or "in progress"> — elapsed <Hh Mm> (≈<Hh Mm> AI-run, ≈<Hh Mm> human/idle wait)<; resumed N× if >1 session>.
 
 **Phases run:** <comma-joined Phase N list for THIS session, with profile/model in parens for delegated phases; on a resume this is the session delta — earlier phases live in the section named by `Continues:`>.
 **Skipped:** <comma-joined Phase N list with reason in parens; this session>.
 
-**Overrides:** <one line — the invocation overrides applied this run (phase window, skips, approve spec); "none" if no invocation overrides applied>.
+**Overrides:** <one line — this run's instructions as you interpreted them, plus any orchestrator-set entry marker; "none" if the invocation carried none>.
 
 **TEA:** <which skills ran and their one-line outcome; "disabled" if tea.enabled=false; epic-gate decision if last story; for the per-story trace advisory, its verdict + any uncovered ACs (advisory, non-blocking)>.
 

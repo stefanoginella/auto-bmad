@@ -31,7 +31,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
 
 - Evaluated by `scripts/preflight.py`.
 - The orchestrator reads its JSON (`git.is_repo`, `git.current_branch`, `git.base_branch`, `git.mode`, `git.tree_clean`/`git.dirty_files_count`) — never re-derives these in shell.
-- Config `git.mode`: `auto` (default) ⇒ the detection below; `remote`/`local` force the mode. The `git_mode local` override forces `local` for the run.
+- Config `git.mode`: `auto` (default) ⇒ the detection below; `remote`/`local` force the mode. A run instructed to stay local forces `local` for that run.
 - The rules below are the normative definition the script implements:
 
 - **Is it a git repo?** `git rev-parse --is-inside-work-tree`; not a repo → hard-stop (suggest `git init`).
@@ -127,7 +127,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
   **Draft predicate (clauses 1–4):**
   1. a blocker was recorded (`blockers` non-empty);
   2. `review_unverified` is `true` — any of (Phase 7):
-     - the `skip code-review` override — or a phase-7 skip normalized to it — no follow-up pass ran (`overrides.md`);
+     - this run's instructions skipped the follow-up review, so no pass ran (`SKILL.md` → "Run instructions");
      - **or** the spec's `followup_review_recommended` is still `true` after Phase 7's last pass (incl. `code_review.followup: never`, where build-auto's own recommendation was never acted on);
      - (a post-halt re-review that still recommends a follow-up leaves it `true` — the human's "Continue — ship as ready" sets `no_pr_draft` instead of clearing it — `pipeline.md` Phase 7 step 3);
   3. `gate_decision` is `WAIVED` (Phase 8: the epic trace gate did not pass and the user — or the trace skill — chose to ship despite the coverage gaps);
@@ -139,7 +139,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
   - predicate false AND not already flipped (`bmad_status_flipped_at` null) ⇒ `python3 {skill-root}/scripts/story_plan.py --mark-status {key} --to done --sprint-status <impl>/sprint-status.yaml` (also lifts `epic-{e}` to `done` when every story is `done`), `bmad_status_flipped_at: 9`;
   - any clause true ⇒ leave as is (`review` — or `done` when the Phase 8 pre-retro flip already ran; a later CI failure never regresses the entry, the caveat lives in the PR draft state + report).
   - `state_plan.py --finalize` emits both verdicts coupled in one JSON — `draft` and `clean_completion`/`flip_bmad_status`.
-  - It is the *predicate* that decides, NOT the PR's actual draft flag: the `no_pr_draft` override (`--no-pr-draft`) forces only `draft` false and never touches `clean_completion`.
+  - It is the *predicate* that decides, NOT the PR's actual draft flag: the `no_pr_draft` flag (`--no-pr-draft`) forces only `draft` false and never touches `clean_completion`.
   - Keep the two coupled if you edit it.
 - Title: a conventional summary of the story, e.g. `feat(story-1-2): user authentication`.
 - Body must include:
@@ -152,7 +152,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
 - Capture the returned PR URL into state (`pr_url`) for the **chat** report (chat-only artifact).
 - **CI link & wait:**
   - The push/PR triggers a run when the repo has CI workflows (preflight reports `ci.workflows_present`; a hand probe uses `find .github/workflows -name '*.yml' -o -name '*.yaml'` or `test -d` — never a bare `ls .github/workflows/*` glob, which aborts unmatched under zsh/fish).
-  - **When to wait:** only if the merge prompt is effectively enabled this run — `git.offer_merge: true` AND no `skip merge-prompt` — AND clauses 1–3 have not already made the run caveated. Otherwise don't wait: link the run and leave `ci_status: unknown`.
+  - **When to wait:** only if the merge prompt is effectively enabled this run — `git.offer_merge: true` AND this run did not disable it — AND clauses 1–3 have not already made the run caveated. Otherwise don't wait: link the run and leave `ci_status: unknown`.
   - **How to wait:** one deterministic call — `python3 {skill-root}/scripts/ci_wait.py --pr <pr-number> --cap-minutes <git.ci_wait_minutes> --resolve-run-url --branch <branch> --head-sha <sha>` — then read `ci_status` and `ci_run_url` from its single JSON object.
     - Store the returned `ci_run_url` in state; `null` ⇒ fall back to the branch's Actions tab (`<repo_url>/actions?query=branch:<branch>`).
     - The script owns the poll cadence, cap, registration grace and output discipline. Exit 2 means it couldn't evaluate CI (gh missing/errored) — leave `ci_status: unknown`, never `failed`.
@@ -169,7 +169,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
 - The orchestrator **asks** the user whether to merge before reporting, then runs the chosen `gh` command on their behalf — only when ALL of:
   - the run is a **clean completion** (full draft predicate is false — clauses 1–4 above);
   - AND `git.offer_merge` is `true`;
-  - AND the run has no `skip merge-prompt` override;
+  - AND this run did not disable the merge prompt;
   - AND mode is `remote` and a PR was opened.
 
 - **Prompt** (`AskUserQuestion`, 4 options, in this order — first is the default):
@@ -191,7 +191,7 @@ The **only** exception is the `inline` delegation tier (host with no subagent me
   - Surface the outcome in the **chat** report, one line: "Merged via merge commit; branch deleted." / "PR left open at user's request." / "Merge attempted but failed (`<reason>`); merge manually."
   - A *failed* merge also lands in the file's "⚠️ Needs human".
 
-- When the prompt is **off** for this run (`git.offer_merge: false` or `skip merge-prompt` override) → Phase 9 ends after the finalize bookkeeping; PR stays open for the human.
+- When the prompt is **off** for this run (`git.offer_merge: false`, or this run disabled it) → Phase 9 ends after the finalize bookkeeping; PR stays open for the human.
 
 ## Epic mode (`/auto-bmad epic`)
 Epic mode produces **one** of each artifact for a whole epic (`epic-pipeline.md`): one branch → one PR → one CI wait → one merge prompt. The run-level machinery above — the **draft predicate** (clauses 1–4), the **CI wait**, the **merge prompt** — reuses **unchanged**, evaluated on the **epic anchor** (its inputs are aggregated up to the anchor as each story lands — `epic-pipeline.md` E5h). Only the per-story-shaped items get an `epic-{e}` variant:

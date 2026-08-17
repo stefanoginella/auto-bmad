@@ -298,7 +298,7 @@ def _strip_comment(value: str) -> str:
 
 # ci_status values that fire clause 4 (matched case-insensitively, like the
 # sibling clauses). passed/none/unknown do NOT — `unknown` means the CI wait
-# never ran (offer_merge off / skip merge-prompt override).
+# never ran (offer_merge off, or the run disabled the merge prompt).
 _CI_FIRES = ("failed", "timeout")
 
 
@@ -456,7 +456,7 @@ def build_finalize_result(state_dir: str, story_key: str, ci_status=None, no_pr_
             "ci_status": ci,
             "ci_status_source": ci_source,
             "clauses": clauses,
-            # --no-pr-draft forces ONLY draft to false (overrides.md): the PR
+            # --no-pr-draft forces ONLY draft to false: the PR
             # ships non-draft, but the completion is still caveated.
             "draft": any_clause and not no_pr_draft,
             "clean_completion": not any_clause,
@@ -817,7 +817,7 @@ def main(argv=None):
     parser.add_argument("--scope", choices=["story", "epic"], default="story", help="state scope: per-story files under --state-dir (default), or the epic anchors under <state-dir>/epic")
     parser.add_argument("--finalize", action="store_true", help="evaluate the Phase 9 draft predicate / clean-completion verdict for --story-key")
     parser.add_argument("--ci-status", choices=["passed", "failed", "timeout", "none", "unknown"], help="with --finalize: the live post-CI-wait value (overrides the state file)")
-    parser.add_argument("--no-pr-draft", action="store_true", help="with --finalize: the no_pr_draft override — forces draft=false, never touches clean_completion")
+    parser.add_argument("--no-pr-draft", action="store_true", help="with --finalize: the no_pr_draft flag — forces draft=false, never touches clean_completion")
     parser.add_argument("--self-test", action="store_true", help="run built-in fixtures and exit")
     args = parser.parse_args(argv)
 

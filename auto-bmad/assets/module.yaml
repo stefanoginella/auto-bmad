@@ -7,8 +7,8 @@ module_greeting: >
   auto-bmad is installed. Run `/auto-bmad` in a BMAD project to drive the next story
   end-to-end (bmad-build-auto plan -> build -> follow-up review, plus risk-gated TEA and
   epic-boundary work), or `/auto-bmad epic` to drive a WHOLE epic in one run (one branch,
-  one PR; it warns + confirms first). You can pass override instructions, e.g.
-  `/auto-bmad stop before review` or `/auto-bmad --story 1-3 approve spec`. Prerequisites:
+  one PR; it warns + confirms first). You can steer a single run with plain-language
+  instructions, e.g. `/auto-bmad stop before the review`. Prerequisites:
   BMAD >= 6.11, `uv` + Python 3.11, and nested subagents enabled for your host (preflight
   tells you the exact fix). Retune delegate models in `{output_folder}/auto-bmad/config.yaml`;
   run `/auto-bmad reprovision` after changing review-layer settings.

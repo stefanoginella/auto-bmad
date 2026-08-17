@@ -4,7 +4,7 @@ Epic mode drives a **whole epic** — every actionable story — in one run, the
 
 Epic mode runs **unattended between E0 and E_final** (warned + confirmed at E0.11):
 - There are **no per-story human checkpoints**: no spec-approval halt, no Phase 7 review halt (`hitl_halt: "auto-continued (epic — no halt)"`), no external-change re-review.
-- Review stays automatic: build-auto's own review layers inside every build run, plus the Phase 7 follow-up pass on the secondary model when its gate holds. A story that still recommends a follow-up review after its last pass — or `skip code-review` — sets `review_unverified` on the epic anchor, and the epic **ships a draft**.
+- Review stays automatic: build-auto's own review layers inside every build run, plus the Phase 7 follow-up pass on the secondary model when its gate holds. A story that still recommends a follow-up review after its last pass — or a run whose instructions skip the follow-up review — sets `review_unverified` on the epic anchor, and the epic **ships a draft**.
 - A per-story `blocked`/`needs-human` **stops the whole epic** (report + resume command).
 
 **The only human touchpoints left** are the **E0 safety asks** (config-drift review, adopt, base-readiness, the previous epic's retro verdict gate, the unattended-run confirm) and the **E_final merge prompt**.
@@ -43,7 +43,7 @@ Rules that hold across E-steps:
 ## E0 — Preflight, enumerate & adopt  *(orchestrator)*
 Runs during the SKILL procedure before any commit: **Phase 0 verbatim, in the `pipeline.md` Phase 0 order** (same precondition, same probes) — only the deltas below.
 
-0. **Overrides:** Phase 0 step 0, with `overrides.md` → "Epic mode" for what composes and what is rejected (reject with its precise message). Epic delta: `dry_run`'s read-only window is the E0 steps below (drift / adopt / gate facts print as notes) and the stop is before E1.
+0. **Run instructions:** Phase 0 step 0 (`SKILL.md` → "Run instructions"). Epic delta: a **dry run**'s read-only window is the E0 steps below (drift / adopt / gate facts print as notes) and the stop is before E1. An instruction that only makes sense per story — entering at a phase, approving each spec, staying on the current branch — does not map onto the E-steps: say so and stop rather than guessing.
 1. **Host/tier:** Phase 0 step 1.
 2. **Epic-anchor resume pre-read** (no `uv`, no git): `python3 {skill-root}/scripts/state_plan.py --state-dir <state-dir> --scope epic`.
    - An in-flight anchor (`status != done`) whose `epic_num` is `{e}` (or, with no `--epic N`, the first in-flight anchor) ⇒ **resume target** — carry its `branch` (⇒ `--expected-branch` for step 3), `active_story`, and read the anchor for `stories_landed`, `stories_skipped`, `epic_slug`, `completed_phases`.
@@ -70,10 +70,10 @@ Runs during the SKILL procedure before any commit: **Phase 0 verbatim, in the `p
    - Every story left after this step is the run's work list; no story ⇒ hard-stop `epic {e} has no story for auto-bmad to run` (list the skip reasons).
 8. **Base-readiness guard** — epic mode branches off `<base>` and assumes `done` stories are in `<base>`. A `done` story with a `{git.branch_prefix}{e}-{s}-*` branch **not merged into `<base>`** (git-only detection: `git-and-pr.md` → "Epic mode") ⇒ **ASK**: proceed off base (that story's work won't be in this epic's PR) / stop and merge it first, then re-run. Skip on a resume (step 2 found the anchor): the epic branch was already cut off `<base>` at the first E0, so the ask was answered then and merging now cannot change the base.
 9. **Epic slug:** derive per `git-and-pr.md` → "Branching" (stored in E1 as `epic_slug`; resume reuses it).
-10. **Retro verdict gate:** `pipeline.md` Phase 0 step 7 (skip when `e == 1`, on a resume, or `skip retro-gate`; not bracketed — the anchor does not exist yet).
-11. **Unattended-run confirm** (once, fresh runs only — skip on a resume with an in-flight anchor; suppressed by `dry_run`; not bracketed — the anchor does not exist yet): `AskUserQuestion` — "Epic {e} (`{epic_title}`, {n} stories: <work list>) will run **unattended** from E1 to E_final: no spec-approval halt, no per-story review halt, no epic-end trace-gate ask; one epic branch, one PR (draft if any caveat); a `blocked`/`needs-human` story stops the whole epic. Proceed?" — **Proceed** / **Stop**. Stop ⇒ hard-stop, nothing written.
+10. **Retro verdict gate:** `pipeline.md` Phase 0 step 7 (skip when `e == 1` or on a resume; not bracketed — the anchor does not exist yet).
+11. **Unattended-run confirm** (once, fresh runs only — skip on a resume with an in-flight anchor; suppressed on a dry run; not bracketed — the anchor does not exist yet): `AskUserQuestion` — "Epic {e} (`{epic_title}`, {n} stories: <work list>) will run **unattended** from E1 to E_final: no spec-approval halt, no per-story review halt, no epic-end trace-gate ask; one epic branch, one PR (draft if any caveat); a `blocked`/`needs-human` story stops the whole epic. Proceed?" — **Proceed** / **Stop**. Stop ⇒ hard-stop, nothing written.
 12. **TEA triage is per story** — NOT run here (the epic spans many risk levels); E5a delegates `tea-triage` per story.
-13. Record E0's decisions for E1's `init --json`: `epic_story_count`, `epic_slug`, the adopt verdicts (`stories_skipped`; the per-story adopt entry phase / spec ride into that story's E5a `init`), the composed `overrides`, `git_mode`, `base_branch`. `{carry_over_block}` is session memory (re-derived at step 5 on every E0). No commit, no state write.
+13. Record E0's decisions for E1's `init --json`: `epic_story_count`, `epic_slug`, the adopt verdicts (`stories_skipped`; the per-story adopt entry phase / spec ride into that story's E5a `init`), this run's `overrides`, `git_mode`, `base_branch`. `{carry_over_block}` is session memory (re-derived at step 5 on every E0). No commit, no state write.
 
 ## E1 — Epic branch + anchor  *(orchestrator, git)*
 - Ensure we are NOT on `<base>`; create the **one** epic branch `{git.epic_branch_prefix}{e}-{slug}` (default `epic/{e}-{slug}`) off `<base>` — `git-and-pr.md` → "Branching"; on resume (the anchor exists) check it out and skip the `init` below.
@@ -82,14 +82,14 @@ Runs during the SKILL procedure before any commit: **Phase 0 verbatim, in the `p
 - Commit: `chore(epic-{e}): start auto-bmad epic pipeline` (also carries a Phase 0 auto-applied `_bmad/custom/bmad-build-auto.toml` / healed `config.yaml`). Marker `1`.
 
 ## E2 — Epic-start setup  *(conditional; reuses Phase 2)*
-Runs **once** at the start of the epic — one sub-step: **only if `tea.enabled`** (and not `skip tea`) delegate **`testarch-test-design (epic level)`** to `tea_epic` for epic `{e}`. Commit `test(epic-{e}): epic-level test design`. Gate false ⇒ no-op, marker `2` still recorded (so a later resume never re-runs epic test design).
+Runs **once** at the start of the epic — one sub-step: **only if `tea.enabled`** delegate **`testarch-test-design (epic level)`** to `tea_epic` for epic `{e}`. Commit `test(epic-{e}): epic-level test design`. Gate false ⇒ no-op, marker `2` still recorded (so a later resume never re-runs epic test design).
 
 ## E5 — Story loop (sequential)  *(per story)*
 For each `{key}` in `epic_stories` order that is **not in `stories_landed` and not in `stories_skipped`**: set `active_story: {key}` on the anchor, then run the per-story phases exactly as `pipeline.md` (delegation, state writes, commit subjects, clean-tree gate, `commits[]` capture) with the epic deltas below. `{branch}` in every prompt is the epic branch.
 
 a. **Per-story state + triage.**
-   - Delegate **`tea-triage`** to `tea_triage` (only if `tea.enabled` and not `skip tea`); classify per `tea-policy.md` (incl. the `trace-advisory` rule — `stories_after_in_epic` / `epic_story_count` from the E0 enumerate).
-   - `python3 {skill-root}/scripts/state_update.py init --state-file <state-dir>/{key}.yaml --json -` with the Phase 1 payload; epic values: `branch` = the epic branch, `overrides` = the composed epic overrides, and `epic_story_count` / `stories_after_in_epic` / `is_first/last_in_epic` from the E0 enumerate. For an **E0-adopted** story also `spec_path` = the spec E0 found and `overrides.start_phase: 5` or `7` per the adopt choice (an orchestrator-set entry marker — the user-facing `start_phase` override stays rejected in epic mode) — the body then starts at that phase (`--allow-regress` is never needed: the entry only moves forward from `in-progress`/`review`).
+   - Delegate **`tea-triage`** to `tea_triage` (only if `tea.enabled`); classify per `tea-policy.md` (incl. the `trace-advisory` rule — `stories_after_in_epic` / `epic_story_count` from the E0 enumerate).
+   - `python3 {skill-root}/scripts/state_update.py init --state-file <state-dir>/{key}.yaml --json -` with the Phase 1 payload; epic values: `branch` = the epic branch, `overrides` = this run's instructions, and `epic_story_count` / `stories_after_in_epic` / `is_first/last_in_epic` from the E0 enumerate. For an **E0-adopted** story also `spec_path` = the spec E0 found and `overrides.start_phase: 5` or `7` per the adopt choice (an orchestrator-set entry marker, not a user instruction) — the body then starts at that phase (`--allow-regress` is never needed: the entry only moves forward from `in-progress`/`review`).
    - Commit `chore(story-{e}-{s}): start auto-bmad pipeline` — this is the clean-tree gate before Phase 3 (fold Phase 3's `timing-start` on BOTH files, plus the anchor's `active_story` write, into it).
    - *(A story E0 marked "resume" reuses its existing per-story state — no `init` — and enters at its first incomplete phase; `set branch` = the epic branch on its per-story file (swept by the next clean-tree gate) so its record names where its work lands from now on.)*
 b. **Phase 3 Plan** (**`build-plan`** → `build`): `{carry_over_block}` = epic {e-1}'s open action items for **every** story; **no spec-approval halt** (`spec_approved: true` on the folded write).
@@ -107,7 +107,7 @@ h. **Land the story on the anchor in ONE write** — a single `state_update.py s
    Never two writes — a crash between them could double-land or double-append a re-entered story. Marker `5` once the work list is empty.
 
 ## E8a — Epic-end gates  *(conditional; reuses Phase 8.1)*
-**Only if `tea.enabled`** (and not `skip tea`): run `pipeline.md` Phase 8 step 1's gates at epic scope; record `gate_decision` + `phase8_steps.trace_gate/nfr/test_review` on the anchor.
+**Only if `tea.enabled`**: run `pipeline.md` Phase 8 step 1's gates at epic scope; record `gate_decision` + `phase8_steps.trace_gate/nfr/test_review` on the anchor.
 - **The trace `FAIL` ask is SUPPRESSED** — epic mode never halts here, on any verdict. Remediation runs mechanically: `testarch-automate` at epic scope, commit `test(epic-{e}): close trace coverage gaps (gate iter {i})`, re-trace — up to `tea.gate_max_iterations`.
 - Verdict deltas: `FAIL`/`WAIVED` ⇒ a finding in the epic report + PR `Needs attention`, and both make the epic PR a draft (`git-and-pr.md` → "Draft predicate"); a terminal `FAIL` (cap reached, still `FAIL`) keeps `gate_decision: FAIL` + `trace_gate: failed` and appends an anchor `blockers[]` entry `epic {e} trace gate FAILED — {n} requirements lack test coverage` (removed when a re-run gate returns non-`FAIL`).
 - Marker `81` (also when the gate is `tea`-disabled — a no-op).
@@ -116,8 +116,8 @@ h. **Land the story on the anchor in ONE write** — a single `state_update.py s
 In order (anchor `phase8_steps` markers `reconcile` → `archive` → `retro`):
 1. **Reconcile** (`deferred_reconcile`): `pipeline.md` Phase 8 step 2 — marker `reconcile`.
 2. **Archive** (orchestrator-direct): `pipeline.md` Phase 8 step 3 — marker `archive`, recording `deferred_work_archived` on the anchor.
-3. **Pre-retro batch flip** (skip when `skip retrospective`): `python3 {skill-root}/scripts/state_plan.py --state-dir <state-dir> --scope epic --story-key epic-{e} --finalize` (no `--ci-status`). `flip_bmad_status: true` ⇒ flip **every story in `stories_landed`** — one `python3 {skill-root}/scripts/story_plan.py --mark-status {key} --to done --sprint-status <impl>/sprint-status.yaml` per story (skip a pre-existing `done`; E0-skipped stories are not landed and are never flipped); the last flip lifts `epic-{e}` to `done` when the epic is complete. Anchor `batch_flip_done: true`, `bmad_status_flipped_at: 82`; the flips + the anchor write fold into this step's commit. Caveated ⇒ flip **none** — **ALL** landed stories stay at `review`, not just the offending one; the retro then judges the epic unfinished. A later CI failure never regresses the entries; the caveat lives in the PR draft state + report. E_final step 4 is the second, idempotent chance.
-4. **Retrospective** (`retrospective`; skip on `skip retrospective`): `pipeline.md` Phase 8 step 5. Epic deltas: `retro.doc` / `retro.verdict` / `retro.open_action_items` are written to the **anchor**, and the verdict gates the NEXT epic's E0 (step 10). Marker `retro: done`.
+3. **Pre-retro batch flip** (skip it when this run skips the retrospective — E_final flips instead): `python3 {skill-root}/scripts/state_plan.py --state-dir <state-dir> --scope epic --story-key epic-{e} --finalize` (no `--ci-status`). `flip_bmad_status: true` ⇒ flip **every story in `stories_landed`** — one `python3 {skill-root}/scripts/story_plan.py --mark-status {key} --to done --sprint-status <impl>/sprint-status.yaml` per story (skip a pre-existing `done`; E0-skipped stories are not landed and are never flipped); the last flip lifts `epic-{e}` to `done` when the epic is complete. Anchor `batch_flip_done: true`, `bmad_status_flipped_at: 82`; the flips + the anchor write fold into this step's commit. Caveated ⇒ flip **none** — **ALL** landed stories stay at `review`, not just the offending one; the retro then judges the epic unfinished. A later CI failure never regresses the entries; the caveat lives in the PR draft state + report. E_final step 4 is the second, idempotent chance.
+4. **Retrospective** (`retrospective`; when this run skips it, still record the marker `retro: done`): `pipeline.md` Phase 8 step 5. Epic deltas: `retro.doc` / `retro.verdict` / `retro.open_action_items` are written to the **anchor**, and the verdict gates the NEXT epic's E0 (step 10). Marker `retro: done`.
 Commit once: `docs(epic-{e}): gate, deferred-work reconcile + archive, retrospective` (carries the flips + anchor writes; E8a remediation commits are already separate). Marker `82`.
 
 ## E_final — Finalize  *(orchestrator, git)*
@@ -136,6 +136,6 @@ Commit once: `docs(epic-{e}): gate, deferred-work reconcile + archive, retrospec
 - **Skip `stories_landed` and `stories_skipped`** — a resume never re-enters a story this run already landed or skipped, even though it sits at `review` with a complete per-story state file.
 - Bare-`/auto-bmad` redirect (epic-ownership guard): `state-and-resume.md` → "Target selection".
 
-## Overrides in epic mode
-Composition and rejections: `overrides.md` → "Epic mode".
-Every composed override rides in the anchor's `overrides` and in each per-story `init` payload.
+## Run instructions in epic mode
+Interpretation and echo: `SKILL.md` → "Run instructions"; the epic delta is E0 step 0.
+Whatever applies rides in the anchor's `overrides` and in each per-story `init` payload.

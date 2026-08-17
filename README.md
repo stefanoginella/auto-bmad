@@ -101,8 +101,8 @@ Run from the root of a BMAD-enabled project:
 /auto-bmad --story 1-3-user-auth
 /auto-bmad epic                  # implement an ENTIRE epic in one run (see "Run a whole epic")
 /auto-bmad epic --epic 2         # implement a specific epic
-/auto-bmad stop before review    # steer a single run (see Overrides)
-/auto-bmad --story 1-3 approve spec   # pause after planning so you can approve/edit the spec
+/auto-bmad stop before the review     # steer a single run in plain language (see "Steer a single run")
+/auto-bmad --story 1-3 approve the spec first   # pause after planning so you can approve/edit the spec
 /auto-bmad setup                 # (re)configure: register, first-run interview, sync review layers
 /auto-bmad reprovision           # re-sync the review layers in _bmad/custom/bmad-build-auto.toml
 /auto-bmad reset-defaults        # discard profile retunes, restore shipped defaults
@@ -113,7 +113,7 @@ Run from the root of a BMAD-enabled project:
 
 - **No-argument `/auto-bmad` resumes unfinished work first** — an interrupted pipeline if one exists, otherwise the story BMAD's own `sprint_plan.py status` recommends (`in-progress → review → ready-for-dev → backlog`); it doesn't jump straight to a fresh backlog item. Pass `--story` to target one explicitly. The pipeline is **resumable** (re-run to continue from the last completed phase), and a **clean run marks the story `done`** in `sprint-status.yaml` so the next run advances instead of re-picking it.
 - **The story spec is `bmad-build-auto`'s** — auto-bmad never edits it. It sits under your BMM implementation-artifacts folder (`spec-<epic>-<story>-<slug>.md`); the report and PR link to it. If build-auto stops with `blocked`, the report tells you which spec status to set to resume, and re-running `/auto-bmad --story <key>` picks up from there.
-- A per-story **report log** is saved to `<output_folder>/auto-bmad/reports/<story>.md` — each run appends a timestamped section (never overwritten on resume), and a clean run **commits it before push so it ships in the PR diff**. It holds the story-level outputs: overrides, TEA outcomes, the build-auto result, follow-up review passes, timing (total elapsed plus an AI-run vs human-wait split), open questions, deferred work, blockers, the epic-end retrospective verdict, and the one-line pipeline **disposition** (clean / caveated / halted + reason). PR/CI links, merge method, and the final status flip are printed to chat only.
+- A per-story **report log** is saved to `<output_folder>/auto-bmad/reports/<story>.md` — each run appends a timestamped section (never overwritten on resume), and a clean run **commits it before push so it ships in the PR diff**. It holds the story-level outputs: this run's instructions, TEA outcomes, the build-auto result, follow-up review passes, timing (total elapsed plus an AI-run vs human-wait split), open questions, deferred work, blockers, the epic-end retrospective verdict, and the one-line pipeline **disposition** (clean / caveated / halted + reason). PR/CI links, merge method, and the final status flip are printed to chat only.
 - **Everything auto-bmad does per phase, and every point where it stops for you, is in the two tables below** — the phase playbook and the human-in-the-loop stops.
 
 ## What it does per story
@@ -138,13 +138,13 @@ Each orchestrator phase ends with a conventional commit (build-auto's own commit
 `/auto-bmad epic` (or `/auto-bmad epic --epic N`) drives an **entire epic** — every actionable story — in one run, then **one PR**. It runs the same per-story lane (plan → build → follow-up review, with TEA) for each story in order, on one `epic/N-slug` branch, with one CI wait and one merge prompt at the end.
 
 - **It warns and asks you to confirm up front** — an epic runs **fully unattended between preflight and the merge prompt**: no spec-approval halt, no per-story review halt, no epic-end trace-gate ask (remediation runs mechanically up to the cap). The only stops left are the **preflight safety asks** (config update, adopting a half-done epic, a base-branch readiness check, the previous epic's retro verdict) and the final **merge prompt**.
-- **Review stays automatic:** every build run carries build-auto's review layers plus auto-bmad's security/cross-model layers, and the follow-up pass on the second model runs whenever its gate holds. A story whose spec still recommends another review after its last pass — or a `skip code-review` run — makes the epic **ship a draft**.
+- **Review stays automatic:** every build run carries build-auto's review layers plus auto-bmad's security/cross-model layers, and the follow-up pass on the second model runs whenever its gate holds. A story whose spec still recommends another review after its last pass — or a run you told to skip that pass — makes the epic **ship a draft**.
 - **A per-story `blocked`/needs-human stops the whole epic** with the resume command (`/auto-bmad epic --epic N`).
 - **It completes a half-done epic:** stories already `done` are skipped (assumed merged into your base branch — it asks if a `done` story's branch isn't); stories worked outside auto-bmad are adopted at the matching phase (build or follow-up review) after a quick question, or skipped.
 - **One report, one status flip:** a single `reports/epic-N.md` rolls up every story; on a clean run all the epic's stories flip to `done` together (before the retrospective, so it judges a finished epic). If anything is caveated (an unverified review, a waived gate, a blocker, red CI), the whole epic stays at `review` — a single PR is either mergeable or not.
-- **The retrospective's verdict is recorded** in the report, the PR body and the merge prompt; a `rejected` verdict gates the *next* epic's start (it asks before proceeding; `skip retro-gate` suppresses that).
+- **The retrospective's verdict is recorded** in the report, the PR body and the merge prompt; a `rejected` verdict gates the *next* epic's start (it asks before proceeding).
 
-Delegation, profiles, TEA, resume, and the overrides that still apply all work as in per-story mode. Full mechanics: `references/epic-pipeline.md`.
+Delegation, profiles, TEA and resume all work as in per-story mode. Full mechanics: `references/epic-pipeline.md`.
 
 ## Human-in-the-loop stops
 
@@ -153,30 +153,33 @@ auto-bmad runs autonomously between the points below — delegated subagents ans
 | Stop | When | What you decide / do |
 |------|------|----------------------|
 | **First-run setup** | First `/auto-bmad` in a project (or `/auto-bmad setup`) | One-time questions: **Quick** (TEA on/off — plus a one-time framework/CI scaffolding offer if TEA's on and none is set up) or **Full** (also git mode/prefix, the follow-up review policy, which extra review layers to write, spec approval). Writes `config.yaml` + the review layers, then stops — **start a new session and re-run `/auto-bmad`** so the first story runs on fresh context. |
-| **Config update** | Preflight, only when an auto-bmad update shipped new config keys/profiles | Apply the new defaults & continue (append-only — your values are kept), or stop to edit `config.yaml` first. Skippable with `skip config-pause`; epic mode asks once, up front. |
-| **Spec approval** *(opt-in)* | After Phase 3, when `build.spec_approval: true` or the `approve spec` override — never in epic mode | Approve & continue, or stop to edit the spec; the next `/auto-bmad --story <key>` re-opens the halt (your spec edits are committed as `spec edits (human)`). |
+| **Config update** | Preflight, only when an auto-bmad update shipped new config keys/profiles | Apply the new defaults & continue (append-only — your values are kept), or stop to edit `config.yaml` first. Epic mode asks once, up front. |
+| **Spec approval** *(opt-in)* | After Phase 3, when `build.spec_approval: true`, or you ask for it in the invocation — never in epic mode | Approve & continue, or stop to edit the spec; the next `/auto-bmad --story <key>` re-opens the halt (your spec edits are committed as `spec edits (human)`). |
 | **Follow-up review done** | Phase 7 — after the follow-up review pass (or when the review is unverified because no pass ran) | Choose: run another review pass (a fresh build-auto review on the second model), continue, or stop. While paused you're encouraged to run an external review (a human, another model/AI); on continue auto-bmad **re-reviews any changes you made** (one more build-auto pass) and, if they were meaningful, asks once more. When the spec still recommends another review, a **Continue — ship as ready** option overrides the draft. If you stop, re-running `/auto-bmad --story <key>` re-opens the halt. |
 | **Epic trace gate failed** | Phase 8 — `bmad-testarch-trace` returns `FAIL` (requirements/ACs lack test coverage) | Choose: remediate & re-gate (auto-expand coverage, then re-run trace; capped by `tea.gate_max_iterations`, default 2), waive and continue (PR opened as a **draft** with the gaps noted), or stop. `CONCERNS` is advisory and doesn't pause. Epic mode remediates without asking. |
-| **Previous epic rejected** | Starting the first story of an epic (or an epic run) when the previous epic's retrospective verdict is `rejected` | Proceed anyway, or stop and resolve the previous epic first. `skip retro-gate` suppresses it. |
-| **Merge the PR?** | Phase 9 — clean completion only (no blocker, review verified, gates passed, CI green — auto-bmad waits for in-progress CI, cap `git.ci_wait_minutes`, default 30), with `git.offer_merge: true` (default). A run that instead ends as a **draft** PR (CI red or timed-out, unverified review, waived gate) or with a recorded blocker gets **no merge prompt** and stays at `review` for you to finish. | Choose: **Merge commit (default — preserves the per-phase and build-auto commits for AI archaeology)** / **Rebase and merge** / **Squash and merge** / **Don't merge**. If you pick a merge style, a follow-up asks whether to **delete the branch**. auto-bmad runs the chosen `gh pr merge`; on failure (branch protection, required reviews, etc.) it surfaces the error and leaves the PR open. Opt out with `git.offer_merge: false` or `skip merge-prompt`. |
+| **Previous epic rejected** | Starting the first story of an epic (or an epic run) when the previous epic's retrospective verdict is `rejected` | Proceed anyway, or stop and resolve the previous epic first. |
+| **Merge the PR?** | Phase 9 — clean completion only (no blocker, review verified, gates passed, CI green — auto-bmad waits for in-progress CI, cap `git.ci_wait_minutes`, default 30), with `git.offer_merge: true` (default). A run that instead ends as a **draft** PR (CI red or timed-out, unverified review, waived gate) or with a recorded blocker gets **no merge prompt** and stays at `review` for you to finish. | Choose: **Merge commit (default — preserves the per-phase and build-auto commits for AI archaeology)** / **Rebase and merge** / **Squash and merge** / **Don't merge**. If you pick a merge style, a follow-up asks whether to **delete the branch**. auto-bmad runs the chosen `gh pr merge`; on failure (branch protection, required reviews, etc.) it surfaces the error and leaves the PR open. Opt out with `git.offer_merge: false`. |
 | **Re-running a completed story** | You target an already-`done` story with `--story` | Confirm before the story is re-run (and its report log overwritten); otherwise it won't redo the story. |
 | **Story worked outside auto-bmad** | The story sits at `review`/`in-progress` but has **no auto-bmad state** (hand-driven story, a bare `/bmad-build-auto` run, or a lost state dir) | Choose: **enter at the matching phase** (recommended — `in-progress` ⇒ build, `review` ⇒ follow-up review, using the spec build-auto left), run the full pipeline anyway (a deliberate redo), or stop. |
 | **Blocker / needs-human** | Any phase | Hard-stop: build-auto reports `blocked` (missing secret/credential, required external service or manual step, unclear intent, no subagents), a merge/rebase conflict, a dirty tree on the wrong branch, not a BMAD project, a missing prerequisite or required skill, or an ambiguous/not-found `--story`. It reports exactly what's needed (for a build-auto block: the blocking condition verbatim and how to resume) and never pushes past it. |
 
-Use overrides (below) if you want to add your own stops — e.g. `stop before review`, or `approve spec` on every story.
+Want an extra stop? Add a plain-language instruction to the invocation (below) — e.g. `stop before the review` — or set `build.spec_approval: true` to approve every spec.
 
-## Overrides
+## Steer a single run
 
-Steer a single run by adding instructions to the invocation (natural language or flags). Overrides apply to that run only — they are never written to `config.yaml`. The orchestrator echoes how it interpreted them and which phases will run before executing.
+Add plain-language instructions to the invocation. There is **no fixed vocabulary** — auto-bmad reads what you wrote, echoes how it understood it and which phases will run, then executes. Instructions apply to that run only; they are never written to `config.yaml`.
 
-- **Phase window:** `start at phase 5`, `stop before review`, `stop after phase 7` (phase names/numbers: 0 preflight, 1 branch, 2 epic-start/test-design, 3 plan/spec, 4 atdd, 5 build/implement, 6 automate, 7 review/followup/code-review, 8 epic-end/gates/retro, 9 finalize/pr). Starting mid-pipeline validates that the earlier outputs exist (e.g. a spec at `ready-for-dev`, or a `done` spec for phase 7).
-- **Skips:** `skip <phase>`, `skip tea`, `skip code-review` (no follow-up pass — the PR ships as a **draft**), `skip retrospective`, `skip trace-advisory`, `skip pr`, `skip branch`, `skip merge-prompt`, `skip config-pause`, `skip retro-gate`.
-- **`approve spec`** — pause after planning for your OK on the spec (per-story only; same as `build.spec_approval: true` for this run).
-- **`git mode local`** — no push, no PR, regardless of detection.
-- **`no_pr_draft`** — open a normal (non-draft) PR even if caveats were recorded (the caveats still land in the report and PR body).
-- **`dry run`** — run preflight read-only, print the plan (target story, phases, per-phase models), change nothing.
+```text
+/auto-bmad stop before the review
+/auto-bmad --story 1-3 approve the spec first
+/auto-bmad skip TEA this time
+/auto-bmad dry run                # preflight read-only, print the plan, change nothing
+```
 
-Not supported on the build lane: `skip git-commits` (build-auto commits its own work) — use `git mode local` / `skip pr` to keep everything local. Epic mode composes with `dry run`, `skip tea`, `skip code-review`, `skip retrospective`, `skip trace-advisory`, `skip merge-prompt`, `skip config-pause`, `skip retro-gate`, `git mode local`, `no_pr_draft`; the phase window, phase skips, `approve spec` and `skip branch` are per-story only. Full vocabulary: `references/overrides.md`.
+Two things to know before you ask for them:
+
+- **Skipping the follow-up review** removes the second-model quality gate, so the PR ships as a **draft** and the story stays at `review` (build-auto's own review layers still ran during the build).
+- **Skipping git commits isn't possible** — build-auto commits its own work. To keep a run off GitHub, ask for a local run, or set `git.mode: local`.
 
 ## Split a story across tools
 
@@ -186,13 +189,13 @@ You can also hand a story off **by hand**, mid-pipeline — handy when you'd rat
 
 ```text
 # In Claude Code — runs phases 0–6 (plan → build), committing each phase
-/auto-bmad stop before review
+/auto-bmad stop before the review
 
 # In Codex, same project directory — resumes at phase 7 (follow-up review) through the PR
 /auto-bmad
 ```
 
-Swap the tools for the reverse. A plain no-arg `/auto-bmad` resumes the interrupted pipeline at the next unfinished phase; `start at phase 7` is the explicit equivalent (it first validates the spec is `done`). The same pattern works at any phase boundary — e.g. `stop after phase 5`, then resume.
+Swap the tools for the reverse. A plain no-arg `/auto-bmad` resumes the interrupted pipeline at the next unfinished phase. The same pattern works at any phase boundary — e.g. stop after the build, then resume.
 
 **Prerequisites for the manual hand-off:** install the `auto-bmad` and `bmm` skills in **both** tools, and enable nested subagents in both (see Prerequisites). The per-phase commits and the shared `<output_folder>/auto-bmad/state/` file are what let the other tool pick up where the first left off.
 
@@ -205,7 +208,7 @@ Swap the tools for the reverse. A plain no-arg `/auto-bmad` resumes the interrup
   - `code_review.security_layer` (default `true`) — write auto-bmad's **security review layer** into `_bmad/custom/bmad-build-auto.toml`, so build-auto's own review step runs it alongside its shipped layers.
   - `code_review.cross_model_layer`: `codex` | `claude` | `opencode` | `""` — a **cross-model review layer** that shells out to that tool's CLI (at the `cross_model_layer` profile's model + effort) during build-auto's review. Detected at first run as the first of `codex`, `claude`, `opencode` on PATH that isn't your host; `""` disables it.
   - ⚠️ **Both layers are project-wide:** they live in BMAD's team customization file, so they also run for a manual `/bmad-build-auto` in this project. Change either setting, then run `/auto-bmad reprovision` to re-sync (removing a layer = disable it and re-sync).
-- **Build** — `build.spec_approval` (default `false`): pause after every plan for your OK on the spec (per-run: `approve spec`).
+- **Build** — `build.spec_approval` (default `false`): pause after every plan for your OK on the spec (or ask for it in a single invocation).
 - **TEA** — `tea.enabled`, plus the epic trace-gate remediation cap (`tea.gate_max_iterations`) and the non-blocking long-epic per-story trace advisory (`tea.story_trace_advisory`: toggle + epic-length & distance-to-gate thresholds).
 - **Git** — mode (`auto` = detect PR vs local-only, or forced), branch prefixes, `offer_merge`, `ci_wait_minutes`.
 - **Profiles = models.** `profiles` holds, per profile, the model per tool (`claude.model`, `codex.model` + `codex.reasoning_effort`, `opencode.model` + `opencode.variant`); `phase_profiles` maps each phase (`build`, `followup_review`, `security_layer`, `cross_model_layer`, `tea_triage`, `tea_per_story`, `tea_epic`, `tea_epic_audit`, `retrospective`, `deferred_reconcile`) to a profile. Shipped profiles, three tiers: `light` (mechanical/advisory steps — Sonnet / `gpt-5.6-luna`), `standard` (the default, incl. plan/build — Opus / `gpt-5.6-terra`), `critical` (the follow-up review only — Fable / `gpt-5.6-sol`, a *different*, stronger model than `build`); add your own (any name, same fields) and point `phase_profiles` at it. What the knobs buy in-tool: **Claude Code** honours the model per phase (effort inherits your session), **Codex** honours model + reasoning effort per phase, **opencode** subagents inherit your default model (`opencode.model`/`variant` are used only by the `cli_phases` route and the cross-model layer). After editing the profiles the two layers use, run `/auto-bmad reprovision`; `/auto-bmad reset-defaults` restores the shipped profiles (your git/TEA/review answers are never touched).

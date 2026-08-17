@@ -1,7 +1,7 @@
 ---
 name: auto-bmad
 description: "Run the FULL BMAD build lane end-to-end — one story at a time, or an ENTIRE EPIC in one run with `epic`."
-argument-hint: "[epic [--epic <N>] | --story <id> | setup | reprovision | reset-defaults | config-check | <overrides… e.g. approve spec, stop before review, start at phase 5, skip tea, dry run>]"
+argument-hint: "[epic [--epic <N>] | --story <id> | setup | reprovision | reset-defaults | config-check | <plain-language instructions for this run, e.g. approve the spec first, stop before the review, dry run>]"
 disable-model-invocation: true
 ---
 
@@ -30,7 +30,7 @@ python3 {skill-root}/scripts/preflight.py --project-root <project_root> --centra
 ```
 Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `_bmad/config.toml` ⇒ **hard-stop**: "Not a BMAD project (no `_bmad/config.toml`). Run the BMAD installer (>= 6.11.0) first." Read `central_config.output_folder` (and `implementation_artifacts`, `planning_artifacts`, `project_name`) from its JSON. Nothing else in auto-bmad reads the central TOML.
 
-**Trigger setup when EITHER holds:** invoked with `setup`/`configure`/`install`; **or** auto-bmad is **not provisioned** — the single condition: `{output_folder}/auto-bmad/config.yaml` is absent (nothing else marks provisioning; no agent files exist) — **and the invocation is run-intent** (bare, `--story`, `epic`, or overrides), so a config command never triggers setup. auto-bmad never writes the installer-owned central BMAD config (`_bmad/config.toml` + its layers) — the gate keys off the runtime config only.
+**Trigger setup when EITHER holds:** invoked with `setup`/`configure`/`install`; **or** auto-bmad is **not provisioned** — the single condition: `{output_folder}/auto-bmad/config.yaml` is absent (nothing else marks provisioning; no agent files exist) — **and the invocation is run-intent** (bare, `--story`, `epic`, or free-form instructions), so a config command never triggers setup. auto-bmad never writes the installer-owned central BMAD config (`_bmad/config.toml` + its layers) — the gate keys off the runtime config only.
 
 **The config commands.** Each is **config-only**: report what was written (or previewed), then **stop** — never start a pipeline. All except `setup` need an existing `config.yaml`; absent ⇒ print "run `/auto-bmad setup` first" and stop.
 - **`setup` / `configure` / `install`** — load `{skill-root}/assets/module-setup.md` and complete it first (help-catalog registration into `_bmad/_config/bmad-help.csv`), then the **first-run flow** in `references/config-commands.md` (writes the runtime config, syncs the review layers). Always re-runs registration, even if already set up.
@@ -62,6 +62,14 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
 - **The delegate prompt is assembled from `references/delegation.md`** — role line + the entry's body (placeholders filled, always absolute paths) + the shared tail.
 - **After each delegated step:** read the six-field result (`references/delegation.md`); read build-auto's outcome through `story_plan.py --spec <spec_path>`; then checkpoint (commit) and update state (via `state_update.py`). Identical across tiers.
 
+## Run instructions
+
+The invocation may carry free-form instructions for this run — plain language, **no fixed vocabulary** (`stop before the review`, `skip TEA this time`, `approve the spec first`, `dry run`). Read them and apply them with judgment.
+- **Echo your interpretation before running** — which phases will run and which will not. Never apply an instruction silently, and never silently drop one you cannot honor.
+- **This run only** — never write an instruction into `config.yaml`.
+- **Record it** in state (the `overrides` map) and in the report's **Overrides** line.
+- The pipeline's own safety rules still bind: nothing ever lands on the base branch (`references/git-and-pr.md`), and a phase you don't run still sets whatever state its phase heading specifies (e.g. no Phase 7 pass ⇒ `review_unverified: true` ⇒ a draft PR — `references/pipeline.md` Phase 7).
+
 ## Procedure
 
 ### Step 0 — Resolve paths & config
@@ -71,16 +79,16 @@ Obey its `hard_stop` before anything else — `python3` older than 3.11, or no `
    - Present → continue to Step 1. First-run is the main interactive moment; every other pause is indexed at the end of this file.
 
 ### Step 1 — Preflight & triage (Phase 0)
-Read `references/pipeline.md` Phase 0 (target/resume detail: `references/state-and-resume.md`; `references/overrides.md` if the invocation carried instructions). Run **Phase 0 in its normative step order** — it writes no state and makes no commit; every decision rides in Phase 1's `init --json`.
+Read `references/pipeline.md` Phase 0 (target/resume detail: `references/state-and-resume.md`). Run **Phase 0 in its normative step order** — it writes no state and makes no commit; every decision rides in Phase 1's `init --json`.
 - Epic mode ⇒ `references/epic-pipeline.md` E0 instead.
-- `dry_run` ⇒ the read-only steps only, then print the plan and stop before Phase 1 (`references/overrides.md`).
+- A **dry run** ⇒ the read-only steps only, then print the plan and stop before Phase 1 (`pipeline.md` Phase 0 step 0).
 
 ### Step 2 — Run the pipeline
 **Epic mode** — execute the **E-steps** in `references/epic-pipeline.md` (E0…E_final) **instead of** Phases 1–9, then go to Step 3: same delegation, checkpoint/commit and timing discipline; no per-story halts (all deltas live there; the per-story loop below is its inner loop, E5).
 
 **Otherwise (per-story run)** — execute Phases 1–9 exactly as specified in `references/pipeline.md`, in order.
 - Skip phases whose conditions don't apply — each phase heading in `pipeline.md` states its own gate.
-- **Honor this run's overrides** — run a phase only inside the start/stop window and not in `skip`; phases outside it are recorded as skipped with reason `override` (`references/overrides.md`).
+- **Honor this run's instructions** (above) — a phase you were told not to run is recorded as skipped with reason `override`.
 - For each phase that runs:
   - delegate to the profile named in the pipeline per Delegation mechanics (build-auto invocations only after the clean-tree gate; capture `head_before` around them);
   - on a `blocked` / `needs-human` outcome → **stop the pipeline** and jump to the report (`pipeline.md` → "Outcome vocabulary" / "Blocked handling");
@@ -91,7 +99,7 @@ Always produce a report (even on hard-stop). It is **split** — a story-level *
 
 **File portion** — the persistent log at `<output_folder>/auto-bmad/reports/{key}.md` (epic mode `reports/epic-{e}.md`, via `report-section --epic`). Its lifecycle (append-only, disposition tags, the pre-push write, the one confirmed-overwrite exception) and its fields/heading order/semantics have their **single home** in `references/state-and-resume.md` → "reports/{key}.md" / "Section template" — rendered literally by `scripts/state_update.py report-section` (payload keys exact; unknown keys rejected). Step 3's own part:
 - Clean path: Phase 9 / E_final already wrote + committed it before push — Step 3 does not re-write it.
-- Any path that didn't reach that pre-push write (a hard-stop in Phases 0–8, `needs-human`, a `stopped` halt, or an override that ended the run early) → append the section now as a fallback, tagged `(halted — <reason>)`; **no commit** (the human commits alongside their fix).
+- Any path that didn't reach that pre-push write (a hard-stop in Phases 0–8, `needs-human`, a `stopped` halt, or an instruction that ended the run early) → append the section now as a fallback, tagged `(halted — <reason>)`; **no commit** (the human commits alongside their fix).
 - A hard-stop BEFORE Phase 1's `init` (no state file yet — e.g. dirty tree, missing skill) → pass `--allow-missing-state` to `report-section` (it renders against a default state instead of erroring).
 
 **Chat-only — additional lines.** Printed at the end of every run, never committed — the finalization **artifacts/links**: the full file portion **plus** the lines below, which add the PR/CI/merge specifics on top of the disposition the `Pipeline status` line already carries.
@@ -111,7 +119,7 @@ Each entry names the condition; the **verbatim message lives at the producing si
 - Not a BMAD project / `python3` < 3.11 at the activation gate — verbatim in §On activation.
 - No `sprint-status.yaml`, empty `development_status`, or all stories done (`pipeline.md` P0.5 — see the stops below).
 - Ambiguous / not-found `--story` or `--epic` (`pipeline.md` P0.2, P0.5); an ambiguous `--find-spec` match (`pipeline.md` P3).
-- Both `--story` and `epic`; an unknown override; `skip git-commits`; `skip branch` on base (`overrides.md`).
+- Both `--story` and `epic` in one invocation (`state-and-resume.md` → "Target selection").
 - A per-story target owned by an in-flight epic anchor (`state-and-resume.md` → "Target selection").
 - Epic mode only: the epic is already `done`, or has no story to run (`epic-pipeline.md` E0.6–E0.7) — per-story that same verdict is only informational (`pipeline.md` P0.5).
 - The review-layers TOML invalid, or a layer id of ours outside the managed region (`pipeline.md` P0.4).
@@ -120,8 +128,8 @@ Each entry names the condition; the **verbatim message lives at the producing si
 
 ## Not-silent asks & stops — index
 **These pipeline situations are NOT silent hard-stops** — each **asks the user**; the question, its options and its conditions live at the ask site:
-- Config-drift review at preflight — conditional, `skip config-pause`; epic asks once at E0 (`pipeline.md` P0.4).
-- The previous epic's retro verdict is `rejected` — `skip retro-gate` (`pipeline.md` P0.7).
+- Config-drift review at preflight — conditional; epic asks once at E0 (`pipeline.md` P0.4).
+- The previous epic's retro verdict is `rejected` (`pipeline.md` P0.7).
 - The status-mismatch guard — `review`/`in-progress` with no state file (`state-and-resume.md` → "Target selection & resume logic").
 - An explicit `--story` on a completed (`done`-state) story (`state-and-resume.md`, the `done` rule).
 - The spec-approval halt after the plan — opt-in, never in epic mode (`pipeline.md` P3.6).

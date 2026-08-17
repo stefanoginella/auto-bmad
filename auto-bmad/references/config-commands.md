@@ -111,7 +111,7 @@ This is the single interactive episode in normal operation. Use AskUserQuestion.
 
 **How to act** (shown whenever you don't apply):
 - **Customise before applying** — edit the named keys in `config.yaml` (the heal is **append-only**, so a value you set / a profile block you add is preserved), then re-run `config-check` (or just run the story/epic; Phase 0 applies the rest).
-- **Accept the new defaults** — apply now (step 5), or just run the story/epic (it auto-applies at the pre-run pause, or with `skip config-pause`).
+- **Accept the new defaults** — apply now (step 5), or just run the story/epic (it auto-applies at the pre-run pause).
 - **Discard retunes** back to shipped values — `reset-defaults`.
 
 - **Read-only until you confirm:** writes `config.yaml` (append-only) and re-syncs the review-layers TOML **only** on the explicit "Update" choice in step 5; the preview path never restamps and writes nothing. Never starts a pipeline.

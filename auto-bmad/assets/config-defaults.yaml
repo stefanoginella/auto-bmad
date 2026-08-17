@@ -52,4 +52,4 @@ code_review:
                             # _bmad/custom/bmad-build-auto.toml managed region — build-auto runs it with its own layers.
 build:
   spec_approval: false      # opt-in per-story human approval of the spec between Phase 3 (plan) and Phase 5 (build);
-                            # per-run override: `approve spec`. Epic mode never halts here.
+                            # a single run can also ask for it. Epic mode never halts here.
