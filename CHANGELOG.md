@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-08-17
+
 ### Removed
 
 - **Steer a run in plain language — the fixed override vocabulary is gone.** No more
@@ -1038,7 +1040,8 @@ First tagged release — the matching `v0.1.1` git tag for the module already pu
 - **Distribution** via the BMAD installer (custom Git source) and a Claude plugin `marketplace.json`,
   plus a README "Updating" section, `CHANGELOG.md`, and the `scripts/bump-version.py` release helper.
 
-[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/stefanoginella/auto-bmad/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/stefanoginella/auto-bmad/compare/v0.27.2...v0.28.0
 [0.27.2]: https://github.com/stefanoginella/auto-bmad/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/stefanoginella/auto-bmad/compare/v0.27.0...v0.27.1

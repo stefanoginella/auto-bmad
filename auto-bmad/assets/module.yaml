@@ -1,7 +1,7 @@
 code: abm
 name: "Auto-BMAD Orchestrator"
 description: "Drive the BMAD build lane end-to-end — bmad-build-auto plan → build → follow-up review per story, or a whole epic in one run (`/auto-bmad epic`) — with risk-gated TEA, epic-boundary gates + retrospective, git branch/commits/PR/CI and a report; every step delegated to a model-tuned subagent on Claude Code, Codex, or opencode."
-module_version: 0.28.0
+module_version: 0.29.0
 default_selected: false
 module_greeting: >
   auto-bmad is installed. Run `/auto-bmad` in a BMAD project to drive the next story
