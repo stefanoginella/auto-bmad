@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Delegated phases no longer start in the background and lose the run.** The foreground rule sat
+  only in `delegation-runtime.md`, read once at Phase 0; it is now repeated where each spawn happens
+  (`pipeline.md`, `delegation.md`).
+
 ## [0.30.1] - 2026-08-17
 
 ### Fixed

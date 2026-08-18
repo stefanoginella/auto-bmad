@@ -6,6 +6,7 @@ The orchestrator runs these phases **in order** for a single story. The story pr
    - Each phase also names its `phase_profiles` **key** — the underscored form, e.g. `→ build`. Resolve key → profile → model (+ effort where the host honors it) via config; the mapping lives only in config — **never** hardcode a profile name here.
    - `delegation.md` owns the exact `/bmad-*` command + prompt (assembled there: role line + body + shared tail).
    - Spawn it for the current host/tier per `delegation-runtime.md` — check `delegation.cli_phases` first (the phase key present ⇒ the external-CLI route of `cli-route.md`; still delegation).
+   - **Spawn it in the FOREGROUND** — blocking, awaited in the same turn (Claude Code: `run_in_background: false`); never backgrounded/detached. The delegate prompt's own "never in the background" line binds the *delegate*, not this spawn (`delegation-runtime.md` → "Foreground rule"). Only a `cli_phases`-routed phase is backgrounded, and that is a host **shell** call (`cli-route.md`).
 3. Read the result.
    - `blocked` / `needs-human` → stop and report (outcome vocabulary below).
    - Otherwise → `python3 {skill-root}/scripts/state_update.py phase-done --state-file <state> --phase N --json -` with the folded `set` patch (`state-and-resume.md`).

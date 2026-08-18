@@ -13,6 +13,8 @@
 
 Fill the placeholders (absolute paths only), keep the body **minimal** — the command plus the inputs the skill needs — and send the result to the profile `phase_profiles` assigns to the step's phase.
 
+**Spawn every delegate in the FOREGROUND** — blocking, awaited in the same turn (Claude Code: `run_in_background: false`); never backgrounded/detached. The universal tail's "never in the background/detached" line is *inside the prompt* and binds the **delegate's own** subagents — it does not cover this spawn (`delegation-runtime.md` → "Foreground rule"). The single exception is a `cli_phases`-routed phase, which is backgrounded as a host **shell** call (`cli-route.md`).
+
 **Role lines** (verbatim; the first line of each prompt, prefixed `Role: `):
 
 | entry | role line |
