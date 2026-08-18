@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The epic NFR audit no longer names a domain TEA dropped.** TEA 1.23.2 renamed the fourth NFR
+  domain from scalability to maintainability; the delegate prompt now says maintainability.
 - **Delegated phases no longer start in the background and lose the run.** The foreground rule sat
   only in `delegation-runtime.md`, read once at Phase 0; it is now repeated where each spawn happens
   (`pipeline.md`, `delegation.md`).

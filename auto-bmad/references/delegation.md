@@ -244,7 +244,7 @@ PERSIST: `story_trace.verdict` (+ its coverage numbers) comes from the delegate'
 ### testarch-nfr (epic gate)  (Phase 8.1 / E8a → profile `tea_epic_audit`)
 ```
 Run `/bmad-testarch-nfr` in <project_root> for epic {e} ([C] Create). Audit NFR evidence
-(security/performance/reliability/scalability) for the work completed in this epic.
+(security/performance/reliability/maintainability) for the work completed in this epic.
 ```
 
 ### testarch-test-review (epic gate)  (Phase 8.1 / E8a → profile `tea_epic_audit`)
