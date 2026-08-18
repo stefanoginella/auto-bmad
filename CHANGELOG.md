@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.2] - 2026-08-18
+
 ### Fixed
 
 - **The epic NFR audit no longer names a domain TEA dropped.** TEA 1.23.2 renamed the fourth NFR
@@ -1072,7 +1074,8 @@ First tagged release — the matching `v0.1.1` git tag for the module already pu
 - **Distribution** via the BMAD installer (custom Git source) and a Claude plugin `marketplace.json`,
   plus a README "Updating" section, `CHANGELOG.md`, and the `scripts/bump-version.py` release helper.
 
-[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.30.1...HEAD
+[Unreleased]: https://github.com/stefanoginella/auto-bmad/compare/v0.30.2...HEAD
+[0.30.2]: https://github.com/stefanoginella/auto-bmad/compare/v0.30.1...v0.30.2
 [0.30.1]: https://github.com/stefanoginella/auto-bmad/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/stefanoginella/auto-bmad/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/stefanoginella/auto-bmad/compare/v0.28.0...v0.29.0

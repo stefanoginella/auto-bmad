@@ -12,7 +12,7 @@ The interactive config commands that write this config — the first-run flow, `
 ## config.yaml
 ```yaml
 version: 1                          # schema version
-profiles_source_version: "0.30.1"   # abm version whose assets/profiles.yaml seeded the profiles + phase_profiles blocks below;
+profiles_source_version: "0.30.2"   # abm version whose assets/profiles.yaml seeded the profiles + phase_profiles blocks below;
                                     #   restamped by the Phase 0 additive heal or a full `reset-defaults`
 delegation:                         # spawn mechanism — host/mode re-detected every run (stored values are inert)
   host: auto                        # auto | claude-code | codex | opencode | other
